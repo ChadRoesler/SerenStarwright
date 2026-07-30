@@ -78,4 +78,4 @@ exec bash "$CORE" \
   --config       "$CFG_PATH" \
   --health-port  "$HEALTH_PORT" \
   --memory-max   none \
-  --description  "SerenProbe$INSTANCE - local health and telemetry probe"
+  --description  "SerenProbe$INSTANCE - memory (RAG) Evaluation probe"

@@ -2,7 +2,7 @@
 # ==========================================================================
 #  seren-probe-setup.sh  -  one-shot SerenProbe installer (Linux + macOS)
 #
-#  Local-only health/telemetry probe. No MCP, no TLS, no bearer token —
+#  Local-only memory (RAG) Evaluation probe. No MCP, no TLS, no bearer token —
 #  it's a private infra tool that only binds to 127.0.0.1.
 #
 #  USAGE
@@ -64,7 +64,7 @@ APP_DIR="$HOME/seren-probe"
 # -- Starwright contract: identity + machine-readable metadata ----------------
 SVC_NAME="seren-probe"
 SVC_DISPLAY="Seren Probe"
-SVC_DESC="Local health and telemetry probe"
+SVC_DESC="Memory (RAG) Evaluation"
 SVC_GROUP="auxiliary"
 SVC_PACKAGE="seren-probe"
 # Card colour in Seren Starwright - no viewer yet; green picked for the installer only

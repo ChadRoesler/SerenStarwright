@@ -573,19 +573,21 @@ def build_command(svc: ServiceDef, cfg: dict, universal: dict) -> list[str]:
 # ═══════════════════════════════════════════════════════════════════════
 #  Screens
 # ═══════════════════════════════════════════════════════════════════════
+# This Ascii font is called Medium
 BANNER = r"""
 ╓─────┐ ╥──┐ ╥──┐ ╥──┐ ╓──┐      ╓─────┐ ╓─╥─┐ ╓──┐ ╥──┐ ╥ ╥ ┬ ╥──┐ ─╥─ ╓──┐ ╥  ┬ ╓─╥─┐
 ║       ╟─   ╟─┬┘ ╟─   ║  │      ║         ║   ╟──┤ ╟─┬┘ ║ ║ │ ╟─┬┘  ║  ║ ─┐ ╟──┤   ║  
 ╙─────┐ ╨──┘ ╨ ┴  ╨──┘ ╨  ┴      ╙─────┐   ╨   ╨  ┴ ╨ ┴  ╙─╨─┘ ╨ ┴  ─╨─ ╙──┘ ╨  ┴   ╨  
-      │                                │                                             
-╙─────┘                          ╙─────┘                                             
+      │                                │
+╙─────┘                          ╙─────┘
 """
 
 BANNER_NARROW = r"""
- ___ ___ ___ ___ _  _
-|_ _/ __| _ \ __| \| |  S H I P W R I G H T
- _\ \__ \   / _|| .` |
-|___/___/_|_\___|_|\_|
+╓─────┐ ╥──┐ ╥──┐ ╥──┐ ╓──┐
+║       ╟─   ╟─┬┘ ╟─   ║  │  
+╙─────┐ ╨──┘ ╨ ┴  ╨──┘ ╨  ┴  
+      │
+╙─────┘ S T A R W R I G H T
 """
 
 
@@ -960,10 +962,20 @@ class PrepareNodeScreen(Screen):
                         yield Static(f"    unavailable: {why}", classes="card-req")
                 yield Rule()
                 yield Static("Install source", classes="section")
+                # ALWAYS composed, then enabled/disabled by _apply_modes().
+                #
+                # Composing conditionally looked right and was wrong: compose()
+                # runs once at mount, while the platform is still undetected, so
+                # modes is only ["prebuilts"] and the build option would never
+                # be created - even on Xavier, which has a build path. The
+                # platform picker re-queries afterwards, and you cannot
+                # retroactively add a widget that was never composed.
                 if node.supports("build"):
                     with RadioSet(id="mode"):
                         yield RadioButton("prebuilts (download)", value=True)
-                        yield RadioButton("build from source (hours)")
+                        yield RadioButton("build from source (hours)",
+                                          id="mode-build")
+                    yield Static("", id="mode-note", classes="card-req")
                 if node.supports("tag"):
                     yield Label("pin a prebuilt release tag (blank = latest)")
                     yield Input(placeholder="2026.04.29-xavier", id="np-tag")
@@ -1029,9 +1041,31 @@ class PrepareNodeScreen(Screen):
             cb.disabled = not c.available
             if not c.available:
                 cb.value = False
+        self._apply_modes(node)
         avail = [c.name for c in node.components if c.available]
         warn.update(f"treating this node as '{chosen}' - available: "
                     + (", ".join(avail) if avail else "nothing"))
+
+    def _apply_modes(self, node: NodeDef) -> None:
+        """Enable the build option only where a build path actually exists.
+
+        The Spark ACCEPTS the build flag - the dispatcher parses it - but ships
+        no build.sh, so the run would refuse itself. `flags` says what is
+        accepted; `modes` says what is possible. This reads modes.
+        """
+        try:
+            btn = self.query_one("#mode-build", RadioButton)
+            note = self.query_one("#mode-note", Static)
+        except Exception:                                # noqa: BLE001
+            return
+        can_build = "build" in node.modes
+        btn.disabled = not can_build
+        if not can_build:
+            btn.value = False
+            note.update("  prebuilts only - this platform ships no "
+                        "source-build path")
+        else:
+            note.update("")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":

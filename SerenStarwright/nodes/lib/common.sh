@@ -134,7 +134,15 @@ seren_describe_node() {
     printf ',"platform":%s,"jp_family":%s,"cuda_arch":%s' "$detected" "$fam" "$arch"
     printf ',"hostname":"%s"' "$(seren_json_escape_str "$(hostname 2>/dev/null || echo '')")"
     printf ',"components":[%s]' "$comps"
-    printf ',"modes":["prebuilts","build"]'
+    # DERIVED, not hardcoded. This used to claim ["prebuilts","build"] for every
+    # platform, which was a lie about the Spark - it has no build.sh - so a UI
+    # reading this offered "build from source" for a path that does not exist.
+    # Same rule as flags and components: report what is actually on disk.
+    local modes='"prebuilts"'
+    if [ "$detected" != "null" ] && [ -f "$script_dir/$PLATFORM/build.sh" ]; then
+        modes="$modes,\"build\""
+    fi
+    printf ',"modes":[%s]' "$modes"
     printf ',"platforms":["xavier","nano","spark"]'
     # Derived, never declared - see seren_node_flags_from_self.
     local flags_json="" f

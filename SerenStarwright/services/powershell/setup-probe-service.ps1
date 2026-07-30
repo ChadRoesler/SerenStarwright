@@ -1,4 +1,4 @@
-﻿<#
+<#
 # ══════════════════════════════════════════════════════════════════════════
 #  setup-probe-service.ps1  -  SerenProbe pointed wrapper (Windows/NSSM)
 #
@@ -70,4 +70,4 @@ if (-not $core -or -not (Test-Path $core)) {
   -LogDir      $LogDir `
   -HealthPort  $HealthPort `
   -DisplayName $ServiceName `
-  -Description "SerenProbe$Instance local health and telemetry probe"
+  -Description "SerenProbe$Instance memory (RAG) Evaluation"

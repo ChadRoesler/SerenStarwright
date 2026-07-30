@@ -23,7 +23,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TUI="$SCRIPT_DIR/starwright/seren-starwright.py"
+TUI="$SCRIPT_DIR/seren_starwright/seren-starwright.py"
 VENV="${SEREN_STARWRIGHT_VENV:-$HOME/seren-venvs/starwright}"
 
 G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; NC='\033[0m'

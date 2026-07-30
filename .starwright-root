@@ -29,5 +29,9 @@
 # which is what "root" should mean) and points inward. This is precisely the
 # edit this file exists to make cheap: a reorg costs two lines here instead of
 # a code change and a re-test.
+# Values are relative to THIS FILE (which sits at the repo root), so they are
+# "repo root -> the directory", not the full path spelled out from above the
+# checkout. Getting that wrong by one level is exactly how this file shipped
+# with an extra "SerenStarwright/" and made every builder report zero scripts.
 services = SerenStarwright/services
 nodes    = SerenStarwright/nodes

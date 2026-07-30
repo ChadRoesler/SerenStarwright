@@ -1,11 +1,8 @@
 <Solution>
+  <Folder Name="/.github/" />
   <Folder Name="/.github/workflows/">
     <File Path=".github/workflows/release.yml" />
     <File Path=".github/workflows/test.yml" />
-  </Folder>
-  <Folder Name="/docs/">
-    <File Path="SerenStarwright/docs/PREPARE-NODE-PLAN.md" />
-    <File Path="SerenStarwright/docs/REPO-LAYOUT.md" />
   </Folder>
   <Folder Name="/Entry Points/">
     <File Path="SerenStarwright/starwright.sh" />
