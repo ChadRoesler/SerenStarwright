@@ -1,0 +1,33 @@
+# Marks the root of a SerenStarwright checkout.
+#
+# WHY THIS FILE EXISTS: Starwright used to find its repo by walking up looking
+# for a directory named "Bash/". That broke twice - once inside a zipapp (where
+# __file__ resolves to the archive itself, so there is no directory to find),
+# once on a box with no checkout at all - and the reorg into services/ + nodes/
+# would have broken it a third time, because the directory names it sniffed for
+# were exactly the thing being renamed.
+#
+# An explicit marker makes the layout something the repo DECLARES rather than a
+# convention the tooling has memorised. Rename any directory below and update
+# one line here; nothing else needs to know.
+#
+# Resolution order in seren-starwright.py:
+#   1. $SEREN_STARWRIGHT_ROOT   - explicit operator override
+#   2. walk up for this file    - normal checkout
+#   3. copy bundled in the .pyz - single-file deploy on a bare box
+#
+# Parsed with a deliberately dumb key = value reader (no toml dependency on a
+# fresh Jetson). Values are paths relative to this file.
+
+# The repo uses the nested Visual Studio layout the rest of the Seren stack
+# uses - solution and solution-items at the top, the project one level down:
+#
+#   SerenStarwright/              <- this file, .slnx, LICENSE, README, .github
+#   SerenStarwright/SerenStarwright/   <- the .pyproj and everything it owns
+#
+# So the marker stays at the TRUE repo root (where .git and the README live,
+# which is what "root" should mean) and points inward. This is precisely the
+# edit this file exists to make cheap: a reorg costs two lines here instead of
+# a code change and a re-test.
+services = SerenStarwright/services
+nodes    = SerenStarwright/nodes
