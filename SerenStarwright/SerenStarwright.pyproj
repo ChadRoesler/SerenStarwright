@@ -41,7 +41,6 @@
     <Folder Include="nodes\nano\" />
     <Folder Include="nodes\spark\" />
     <Folder Include="nodes\xavier\" />
-    <Folder Include="docs\" />
     <Folder Include=".github\" />
     <Folder Include=".github\workflows\" />
   </ItemGroup>
