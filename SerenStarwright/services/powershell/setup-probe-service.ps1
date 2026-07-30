@@ -1,4 +1,4 @@
-<#
+﻿<#
 # ══════════════════════════════════════════════════════════════════════════
 #  setup-probe-service.ps1  -  SerenProbe pointed wrapper (Windows/NSSM)
 #
