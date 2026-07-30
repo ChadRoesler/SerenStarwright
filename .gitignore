@@ -35,3 +35,4 @@ seren-setup.log
 *.swp
 .DS_Store
 Thumbs.db
+/SerenStarwright/dist
