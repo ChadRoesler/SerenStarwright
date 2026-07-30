@@ -1,8 +1,8 @@
-﻿<#
+<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-probe-setup.ps1  -  one-shot SerenProbe installer (Windows)
 #
-#  Local-only health/telemetry probe. No MCP, no TLS, no bearer token —
+#  Local-only memory (RAG) Evaluation probe. No MCP, no TLS, no bearer token —
 #  it's a private infra tool that only binds to 127.0.0.1.
 #
 #  USAGE
@@ -53,7 +53,7 @@ if ($Describe) {
         ScriptPath  = $PSCommandPath
         Name        = 'seren-probe'
         Display     = 'Seren Probe'
-        Description = 'Local health and telemetry probe'
+        Description = 'Memory (RAG) Evaluation'
         Group       = 'auxiliary'
         Package     = 'seren-probe'
         Accent      = '#7fd88f'

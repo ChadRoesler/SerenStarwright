@@ -98,7 +98,13 @@ jobs:
           cp dist/starwright.pyz "$work/"
           cd "$work"
           python3 starwright.pyz --dump | tee out.txt
-          grep -q seren- out.txt || { echo "artifact discovered nothing"; exit 1; }
+          # Match a SERVICE ROW, not the string "seren-". The failure path
+          # prints "no installers found under ~/.seren-starwright/..." which
+          # contains "seren-", so `grep -q seren-` passes on the error message
+          # and green-lights an artifact that discovered nothing. Real row:
+          #   brain      seren-memory    :7420   extras=[...]
+          grep -qE '^[a-z]+[[:space:]]+seren-[a-z-]+[[:space:]]+:[0-9]+' out.txt \
+            || { echo "artifact discovered nothing"; exit 1; }
 
       - name: Checksum
         run: |

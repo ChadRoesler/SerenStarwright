@@ -35,7 +35,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = $PSScriptRoot
-$Tui       = Join-Path $ScriptDir "starwright\seren-starwright.py"
+$Tui       = Join-Path $ScriptDir "seren_starwright\seren-starwright.py"
 
 $VenvRoot = $env:SEREN_STARWRIGHT_VENV
 if (-not $VenvRoot) { $VenvRoot = Join-Path $env:USERPROFILE "seren-venvs\starwright" }

@@ -43,7 +43,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC="$SCRIPT_DIR/starwright/seren-starwright.py"
+SRC="$SCRIPT_DIR/seren_starwright/seren-starwright.py"
 OUT="$SCRIPT_DIR/dist/starwright.pyz"
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
@@ -175,14 +175,34 @@ ok "dependency tree is pure Python (no .so/.pyd)"
 mkdir -p "$(dirname "$OUT")"
 "$PYBIN" -m zipapp "$BUILD" -o "$OUT" -p "/usr/bin/env python3" -c
 chmod +x "$OUT"
+OUT_ABS="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 ok "built $OUT ($(du -h "$OUT" | cut -f1))"
 
 # -- prove it actually runs, rather than assuming ------------------------------
-if "$PYBIN" "$OUT" --dump >/dev/null 2>&1; then
-  ok "smoke test passed (--dump discovered services)"
+# FROM A NEUTRAL DIRECTORY, WITH THE ROOT OVERRIDES CLEARED. An on-disk checkout
+# always beats the bundled copy, so running --dump from inside the repo proves
+# the REPO works and says nothing about the ARCHIVE - it passes just as happily
+# with a bundle that discovers nothing. Fatal, not a warning: a .pyz that can't
+# find its own scripts is dead on a bare Jetson, which is the only box it exists
+# for. Same shape the release workflow already uses.
+#
+# MATCH A SERVICE ROW, NOT THE STRING "seren-". The failure path prints
+#   no installers found under ~/.seren-starwright/<key>/_seren_scripts
+# which contains "seren-" itself, so a `grep -q seren-` passes on the error
+# message and reports a broken archive as healthy. It did exactly that here.
+# A real row is:  brain      seren-memory    :7420   extras=[...]
+SMOKE_DIR="$(mktemp -d)"
+SMOKE_RE='^[a-z]+[[:space:]]+seren-[a-z-]+[[:space:]]+:[0-9]+'
+if ( cd "$SMOKE_DIR" && env -u SEREN_STARWRIGHT_ROOT -u SEREN_SHIPWRIGHT_ROOT \
+        -u SEREN_SETUP_SCRIPTS "$PYBIN" "$OUT_ABS" --dump 2>/dev/null \
+        | grep -qE "$SMOKE_RE" ); then
+  ok "smoke test passed (bundled scripts found with no checkout present)"
+  rm -rf "$SMOKE_DIR"
 else
-  echo "  ! smoke test found no services - fine if you're building outside" >&2
-  echo "    the repo; set SEREN_SETUP_SCRIPTS when you run it." >&2
+  rm -rf "$SMOKE_DIR"
+  die "the built archive discovered no services when run outside a checkout.
+  The bundled scripts or the generated .starwright-root marker are wrong - this
+  .pyz would be dead on a bare Jetson. Not shipping it."
 fi
 
 echo >&2

@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-TUI = HERE / "starwright" / "seren-starwright.py"
+TUI = HERE / "seren_starwright" / "seren-starwright.py"
 
 try:
     from textual.widgets import Button, Checkbox, Input, Static
@@ -382,6 +382,7 @@ async def main() -> int:
     await test_node_screen()
     await test_node_flags_derived()
     await test_node_options_roundtrip()
+    await test_version()
     await test_command_building()
 
     print("\n" + "=" * 46)

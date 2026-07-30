@@ -342,7 +342,18 @@ $INSTALL_COMFYUI && NEEDS_PREBUILTS=true
 $INSTALL_CORAL   && NEEDS_PREBUILTS=true
 
 if $NEEDS_PREBUILTS; then
+    # NOT every platform ships every module. Xavier and Nano have the full set
+    # (build.sh, prebuilts.sh, coral.sh); the Spark deliberately has neither a
+    # build path nor prebuilts, because JetPack 7 ships what those exist to
+    # provide. Before these guards, `--llama` on a Spark fell through to an
+    # undefined run_prebuilts_download and died on "command not found" under
+    # set -e - a bash error, on brand new hardware, before installing anything.
     if $USE_BUILD_FLAG; then
+        if [ ! -f "$PLATFORM_DIR/build.sh" ]; then
+            fail "Platform '$PLATFORM' has no source-build path (no $PLATFORM_DIR/build.sh)."
+            fail "Drop the build flag - this platform installs from packages instead."
+            exit 1
+        fi
         # shellcheck disable=SC1091
         source "$PLATFORM_DIR/build.sh"
         run_build_path
@@ -350,8 +361,13 @@ if $NEEDS_PREBUILTS; then
         # prebuilts.sh already sourced above for foundation
         if declare -F run_prebuilts_download_services >/dev/null; then
             run_prebuilts_download_services
+        elif declare -F run_prebuilts_download >/dev/null; then
+            run_prebuilts_download   # platforms without the split functions
         else
-            run_prebuilts_download   # fallback for platforms without split fns
+            # No prebuilts machinery at all. On the Spark that's correct, not
+            # broken: JetPack 7 ships CUDA/Python/SQLite new enough that there
+            # is nothing to stage. Say so and carry on to the services.
+            info "No prebuilt staging for '$PLATFORM' - services install directly."
         fi
     fi
 else
