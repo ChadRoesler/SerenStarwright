@@ -1,4 +1,4 @@
-<#
+﻿<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-probe-setup.ps1  -  one-shot SerenProbe installer (Windows)
 #
