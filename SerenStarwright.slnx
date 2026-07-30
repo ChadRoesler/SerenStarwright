@@ -1,0 +1,31 @@
+<Solution>
+  <Folder Name="/.github/workflows/">
+    <File Path=".github/workflows/release.yml" />
+    <File Path=".github/workflows/test.yml" />
+  </Folder>
+  <Folder Name="/docs/">
+    <File Path="SerenStarwright/docs/PREPARE-NODE-PLAN.md" />
+    <File Path="SerenStarwright/docs/REPO-LAYOUT.md" />
+  </Folder>
+  <Folder Name="/Entry Points/">
+    <File Path="SerenStarwright/starwright.sh" />
+    <File Path="SerenStarwright/starwright.ps1" />
+    <File Path="SerenStarwright/build-starwright.sh" />
+    <File Path="SerenStarwright/build-starwright.ps1" />
+    <File Path="SerenStarwright/verify-powershell.ps1" />
+    <File Path="SerenStarwright/test-starwright.py" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitattributes" />
+    <File Path=".gitignore" />
+    <File Path=".starwright-root" />
+    <File Path=".github/dependabot.yml" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+    <File Path="SECURITY.md" />
+  </Folder>
+  <Project Path="SerenStarwright/SerenStarwright.pyproj" Type="888888a0-9f3d-457c-b088-3a5042f75d52" Id="7a4f1c2e-9d63-4b18-8f5a-2c6e1b3d90aa">
+    <Build Project="false" />
+  </Project>
+</Solution>

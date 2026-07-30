@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read          # widened to write only on the job that needs it
+
+jobs:
+  # Re-run the gates rather than trusting that the tagged commit was green on
+  # some earlier push. A tag can be pushed to any commit, including one that
+  # never ran CI.
+  verify:
+    name: Verify before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: No CRLF in shell scripts
+        run: |
+          bad=$(find . -name '*.sh' -not -path './.git/*' -not -path './.vs/*' -exec file {} \; | grep CRLF || true)
+          [ -z "$bad" ] || { echo "$bad"; exit 1; }
+
+      - name: bash -n every script
+        run: |
+          fail=0
+          while IFS= read -r f; do bash -n "$f" || { echo "SYNTAX: $f"; fail=1; }; done \
+            < <(find . -name '*.sh' -not -path './.git/*' -not -path './.vs/*')
+          exit $fail
+
+      # A .ps1 with non-ASCII and no BOM is read by Windows PowerShell 5.1 as
+      # the ANSI codepage, and a multi-byte char inside a quoted string
+      # terminates it early - the whole file fails to parse. Ten files were in
+      # that state once. Gate it; a release must not ship it.
+      - name: PowerShell files with non-ASCII carry a UTF-8 BOM
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+          BOM = b'\xef\xbb\xbf'
+          bad = []
+          for p in pathlib.Path('.').rglob('*.ps1'):
+              if '.git' in p.parts: continue
+              raw = p.read_bytes()
+              if any(b > 127 for b in raw) and not raw.startswith(BOM):
+                  bad.append(str(p))
+          if bad:
+              print("non-ASCII without a BOM (5.1 will misparse):")
+              for b in bad: print("  ", b)
+              sys.exit(1)
+          print("all .ps1 encodings ok")
+          PY
+
+      - run: pip install --quiet textual
+      - run: python3 SerenStarwright/test-starwright.py
+
+  build:
+    name: Build and publish
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # only this job creates the release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the one-file bundle
+        # Hand the builder the tag being released. Without this it falls back
+        # to `git describe`, which on a CI checkout can be a bare SHA - and a
+        # released artifact should say "v1.2.0", not "a3f19c2".
+        env:
+          SEREN_STARWRIGHT_VERSION: ${{ github.ref_name }}
+        run: bash SerenStarwright/build-starwright.sh --out dist/starwright.pyz
+
+      - name: Artifact reports the tag it was built from
+        run: |
+          got="$(python3 dist/starwright.pyz --version)"
+          echo "$got"
+          case "$got" in
+            *"${GITHUB_REF_NAME}"*) echo "version stamp matches the tag" ;;
+            *) echo "STAMP MISMATCH: expected ${GITHUB_REF_NAME} in '$got'"; exit 1 ;;
+          esac
+
+      # Prove the artifact we're about to publish actually runs on a machine
+      # with nothing installed and no checkout - which is the entire promise of
+      # shipping a .pyz. Publishing an unrun binary is how you find out from a
+      # stranger's bug report.
+      - name: Smoke test the artifact standalone
+        run: |
+          python3 -c 'import textual' 2>/dev/null && { echo "textual present - test void"; exit 1; }
+          work="$(mktemp -d)"
+          cp dist/starwright.pyz "$work/"
+          cd "$work"
+          python3 starwright.pyz --dump | tee out.txt
+          grep -q seren- out.txt || { echo "artifact discovered nothing"; exit 1; }
+
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum starwright.pyz > starwright.pyz.sha256
+          cat starwright.pyz.sha256
+
+      - name: Release notes
+        run: |
+          {
+            echo "## Seren Starwright ${GITHUB_REF_NAME}"
+            echo
+            echo '```bash'
+            echo "curl -LO https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/starwright.pyz"
+            echo "python3 starwright.pyz"
+            echo '```'
+            echo
+            echo "One file. Textual, Rich and every installer script are inside it."
+            echo "Needs a \`python3\` on the target and nothing else."
+            echo
+            echo "\`\`\`"
+            echo "sha256: $(cut -d' ' -f1 dist/starwright.pyz.sha256)"
+            echo "size:   $(du -h dist/starwright.pyz | cut -f1)"
+            echo "\`\`\`"
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          files: |
+            dist/starwright.pyz
+            dist/starwright.pyz.sha256

@@ -1,0 +1,118 @@
+name: Test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Least privilege: this workflow only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: Shell syntax + contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # CRLF in a .sh is a PARSE ERROR, not a style issue, and it has bitten
+      # this repo before: nine scripts were simultaneously unrunnable while
+      # looking perfect in an editor and in a GitHub diff. .gitattributes pins
+      # *.sh eol=lf; this proves the pin is working on a fresh clone.
+      - name: No CRLF in shell scripts
+        run: |
+          bad=$(find . -name '*.sh' -not -path './.git/*' -not -path './.vs/*' -exec file {} \; | grep CRLF || true)
+          if [ -n "$bad" ]; then echo "$bad"; exit 1; fi
+          echo "all .sh are LF"
+
+      - name: bash -n every script
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            bash -n "$f" || { echo "SYNTAX: $f"; fail=1; }
+          done < <(find . -name '*.sh' -not -path './.git/*' -not -path './.vs/*')
+          exit $fail
+
+      # --describe must be valid JSON with ZERO side effects. Run it in a
+      # throwaway HOME and assert nothing was created - a "describe" that
+      # installs something is not a describe.
+      - name: services --describe is valid JSON and side-effect free
+        run: |
+          export HOME=$(mktemp -d)
+          for f in SerenStarwright/services/bash/seren-*-setup.sh; do
+            bash "$f" --describe
+          done > described.jsonl
+          # Python opens the file itself. `python3 - <<'PY' < file` sends BOTH
+          # the heredoc and the file to stdin, the file wins, and Python tries
+          # to execute the JSON as source ("name 'true' is not defined").
+          python3 - <<'PY'
+          import json
+          rows = [json.loads(l) for l in open("described.jsonl") if l.strip()]
+          assert rows, "no services described"
+          req = {"schema_version", "name", "display", "description", "group",
+                 "package", "default_host", "default_port", "extras", "flags",
+                 "requires", "accent"}
+          for d in rows:
+              missing = req - set(d)
+              assert not missing, "%s: missing %s" % (d.get("name"), sorted(missing))
+          print("%d services, all keys present" % len(rows))
+          PY
+          created=$(find "$HOME" -mindepth 1 | wc -l)
+          [ "$created" -eq 0 ] || { echo "--describe created $created path(s)"; exit 1; }
+          echo "zero side effects"
+
+      - name: node --describe for every platform
+        run: |
+          for p in xavier nano spark; do
+            bash SerenStarwright/nodes/seren-prepare-node.sh --describe --platform "$p" > node.json
+            python3 - <<'PY'
+          import json
+          d = json.load(open("node.json"))
+          assert d["flags"], "node describe advertises no flags"
+          assert d["components"], "node describe lists no components"
+          print("%s: %d components, %d flags"
+                % (d["platform"], len(d["components"]), len(d["flags"])))
+          PY
+          done
+
+  tui:
+    name: TUI suite (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install --quiet textual
+      # Drives the real TUI headless through Textual's pilot - real clicks,
+      # real rendered geometry. Includes the 80-column layout checks, which
+      # is the terminal size that actually matters here.
+      - run: python3 SerenStarwright/test-starwright.py
+
+  bundle:
+    name: One-file bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: bash SerenStarwright/build-starwright.sh --out dist/starwright.pyz
+      # The build script's pure-Python guard is the real gate: zipapp cannot
+      # load a C extension from inside an archive, so a compiled dependency
+      # sneaking into the tree must fail the build rather than ship an archive
+      # that explodes on someone's Jetson.
+      - name: Runs standalone with nothing installed
+        run: |
+          python3 -c 'import textual' 2>/dev/null && { echo "textual leaked into the runner env - test is void"; exit 1; }
+          cd "$(mktemp -d)"
+          cp "$GITHUB_WORKSPACE/dist/starwright.pyz" .
+          python3 starwright.pyz --dump | tee out.txt
+          grep -q seren- out.txt || { echo "bundle discovered nothing"; exit 1; }
+          echo "bundle works with no checkout and no textual"

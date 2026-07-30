@@ -1,0 +1,87 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>7a4f1c2e-9d63-4b18-8f5a-2c6e1b3d90aa</ProjectGuid>
+    <ProjectHome>.</ProjectHome>
+    <!-- F5 starts the TUI. See the debugging note at the bottom of this file
+         for why the textual devtools runner is usually a better way. -->
+    <StartupFile>starwright\seren-starwright.py</StartupFile>
+    <SearchPath>
+    </SearchPath>
+    <WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <Name>SerenStarwright</Name>
+    <RootNamespace>SerenStarwright</RootNamespace>
+    <!-- DELIBERATELY BLANK, unlike the other Seren repos which set Pytest.
+         test-starwright.py is a standalone async runner with its own check()
+         helpers, not a pytest suite. Pointing Test Explorer at it would just
+         report "0 tests found" and look broken. Run it with
+         `bash starwright.sh` plus the selftest flag, or F5 with
+         test-starwright.py as the startup file. -->
+    <TestFramework>
+    </TestFramework>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <ItemGroup>
+    <Folder Include="starwright\" />
+    <Folder Include="services\" />
+    <Folder Include="services\bash\" />
+    <Folder Include="services\lib\" />
+    <Folder Include="services\powershell\" />
+    <Folder Include="nodes\" />
+    <Folder Include="nodes\lib\" />
+    <Folder Include="nodes\nano\" />
+    <Folder Include="nodes\spark\" />
+    <Folder Include="nodes\xavier\" />
+    <Folder Include="docs\" />
+    <Folder Include=".github\" />
+    <Folder Include=".github\workflows\" />
+  </ItemGroup>
+  <!-- ONLY the Python is enumerated, on purpose.
+       The 48 shell scripts and 22 PowerShell scripts are NOT listed as
+       Content items. Enumerating them would mean every script that moves or
+       gets added needs a matching edit in here: a second source of truth about
+       which files exist, which is the bug class this repo spent two days
+       eliminating everywhere else (a drifted manifest, a drifted service
+       table, a drifted flag list, two JSON escapers, a silently dropped
+       service).
+       Solution Explorer's "Show All Files" toggle browses them fine, and
+       NOTHING builds from this file (CI never reads it), so an unlisted script
+       costs a tree entry, not a broken build. -->
+  <ItemGroup>
+    <Compile Include="starwright\seren-starwright.py" />
+    <Compile Include="test-starwright.py" />
+  </ItemGroup>
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
+  <!-- Build is intentionally NOT wired up. The deliverable is
+       dist/starwright.pyz, produced by build-starwright.sh (or the .ps1),
+       which also runs the pure-Python guard and a standalone smoke test.
+       Enabling CoreCompile here would create a second, weaker build path that
+       skips both.
+
+       DEBUGGING A TEXTUAL APP: plain F5 is awkward, because the TUI owns the
+       terminal and VS's console window mangles it. The real workflow is two
+       terminals, using textual's devtools:
+           terminal 1:   textual console
+           terminal 2:   textual run [dev flag] starwright/seren-starwright.py
+       print() and log output then land in the console window instead of
+       fighting the UI for the screen.
+
+       XML NOTE for whoever edits these comments next: a double hyphen is
+       ILLEGAL inside an XML comment, so flag names cannot be written with
+       their leading dashes in here. The first draft of this file was full of
+       them and Visual Studio would have refused to open it. -->
+  <!--<Target Name="CoreCompile" />-->
+  <Target Name="BeforeBuild">
+  </Target>
+  <Target Name="AfterBuild">
+  </Target>
+</Project>
