@@ -573,21 +573,27 @@ def build_command(svc: ServiceDef, cfg: dict, universal: dict) -> list[str]:
 # ═══════════════════════════════════════════════════════════════════════
 #  Screens
 # ═══════════════════════════════════════════════════════════════════════
-# This Ascii font is called Medium
+# The wordmark: a lit lantern, then SEREN, then STARWRIGHT under it.
+# Letterforms are the ASCII font called Medium.
+#
+# ONE BANNER, ON PURPOSE. There used to be a wide 96-column variant with a
+# width<90 switch to this one, and it had gone quietly unreachable: compose()
+# yielded the narrow art and on_mount only ever "switched" to the same thing,
+# so the wide version rendered at no terminal size at all. Worse, four numbers
+# that had to agree didn't - the art was 96 wide, the comment said 85, the
+# switch fired at 90, and #splash was pinned to 92. Restoring it would have
+# put 96 columns of art into a 92-column box, which IS the bug that once
+# shoved the Install button off the side of an SSH session.
+#
+# This one is 38 columns. It fits the 80-column headless terminal this whole
+# tool exists to be used from, so there is nothing left to switch between and
+# no threshold left to drift.
 BANNER = r"""
-╓─────┐ ╥──┐ ╥──┐ ╥──┐ ╓──┐      ╓─────┐ ╓─╥─┐ ╓──┐ ╥──┐ ╥ ╥ ┬ ╥──┐ ─╥─ ╓──┐ ╥  ┬ ╓─╥─┐
-║       ╟─   ╟─┬┘ ╟─   ║  │      ║         ║   ╟──┤ ╟─┬┘ ║ ║ │ ╟─┬┘  ║  ║ ─┐ ╟──┤   ║  
-╙─────┐ ╨──┘ ╨ ┴  ╨──┘ ╨  ┴      ╙─────┐   ╨   ╨  ┴ ╨ ┴  ╙─╨─┘ ╨ ┴  ─╨─ ╙──┘ ╨  ┴   ╨  
-      │                                │
-╙─────┘                          ╙─────┘
-"""
-
-BANNER_NARROW = r"""
-╓─────┐ ╥──┐ ╥──┐ ╥──┐ ╓──┐
-║       ╟─   ╟─┬┘ ╟─   ║  │  
-╙─────┐ ╨──┘ ╨ ┴  ╨──┘ ╨  ┴  
-      │
-╙─────┘ S T A R W R I G H T
+ ╭====╮  ╓─────┐ ╥──┐ ╥──┐ ╥──┐ ╓──┐
+ ╱╮..╭╲  ║       ╟─   ╟─┬┘ ╟─   ║  │
+ │(ᶓᶔ)│  ╙─────┐ ╨──┘ ╨ ┴  ╨──┘ ╨  ┴
+╭│─ᴽᴽ─│╮       │                    
+╰──────╯ ╙─────┘ S T A R W R I G H T
 """
 
 
@@ -623,11 +629,8 @@ class SplashScreen(Screen):
             note += f" · {len(self.app.problems)} problem(s) - see Install"
         self.query_one("#splash-note", Static).update(note)
 
-        # The wide banner is 85 columns. Narrower than that it doesn't clip
-        # gracefully - it loses its right-hand end mid-letter - so a small
-        # terminal gets a compact wordmark instead of mangled art.
-        if self.app.size.width < 90:
-            self.query_one("#banner", Static).update(BANNER_NARROW)
+        # No banner switch here any more - see the note above BANNER. There is
+        # one wordmark, it is 38 columns, and it fits everywhere this runs.
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "install":
