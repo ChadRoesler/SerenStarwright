@@ -997,7 +997,7 @@ class PrepareNodeScreen(Screen):
                     # Jetsons default to a power-capped profile; prep flips them
                     # to MAXN + jetson_clocks. Worth being able to decline on a
                     # box with marginal cooling or a small PSU.
-                    yield Checkbox("skip max-power profile (MAXN + jetson_clocks)",
+                    yield Checkbox("skip max-power profile (Jetson only: MAXN + jetson_clocks)",
                                    id="np-nomaxpower")
                 yield Static("", id="cfg-warn")
         with Horizontal(id="actions"):

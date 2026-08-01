@@ -261,6 +261,41 @@ else
   done
 fi
 
+# -- register with the node's Observatory --------------------------------------
+# Observatory reports ONLY what it finds in ~/.seren/services/*.json. Nothing
+# used to write those, so every service installed here was invisible to the
+# node's own management plane - and to Lodestar above it. An operator's only
+# recourse was to hand-author six JSON files and get the schema right from
+# reading Python.
+#
+# This is the right place for it: by the time we're here we already know the
+# service name, the unit name, the resolved port and the config path, so the
+# manifest is DERIVED from what was actually installed rather than declared a
+# second time. Linux/systemd only - launchd nodes aren't part of a cluster.
+if ! $IS_MAC; then
+  SEREN_SERVICES_DIR="$HOME/.seren/services"
+  if mkdir -p "$SEREN_SERVICES_DIR" 2>/dev/null; then
+    MANIFEST_PATH="$SEREN_SERVICES_DIR/${SERVICE_NAME}.json"
+    cat > "$MANIFEST_PATH" <<JSON
+{
+  "schema_version": 2,
+  "service": "${SERVICE_NAME}",
+  "service_type": "systemd",
+  "systemd_unit": "${SERVICE_NAME}.service",
+  "port": ${HEALTH_PORT:-0},
+  "description": "${DESCRIPTION}",
+  "config_path": "${CFG_PATH}",
+  "app_dir": "${APP_DIR}",
+  "health_url": "http://127.0.0.1:${HEALTH_PORT:-0}${HEALTH_PATH}",
+  "installed_by": "setup-seren-service.sh"
+}
+JSON
+    ok "Registered with this node's Observatory ($MANIFEST_PATH)"
+  else
+    warn "Couldn't write $HOME/.seren/services - Observatory won't list this service"
+  fi
+fi
+
 echo
 echo -e "${G}Manage it:${NC}"
 if $IS_MAC; then

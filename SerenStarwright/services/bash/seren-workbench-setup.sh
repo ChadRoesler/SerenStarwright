@@ -14,7 +14,7 @@
 #    bash seren-workbench-setup.sh --corp           # OS trust store (corp proxy)
 #
 #  FLAGS
-#    --port N         Port to listen on            (default 7444)
+#    --port N         Port to listen on            (default 7425)
 #    --host HOST      Bind address                 (default 127.0.0.1)
 #    --token TOKEN    Set a bearer token
 #    --gen-token      Generate a random bearer token
@@ -58,7 +58,7 @@ lib="$(find_upward "services/lib/seren-install-lib.sh" || true)"
 source "$lib"
 
 # -- defaults ------------------------------------------------------------------
-PORT=7444
+PORT=7425
 HOST="127.0.0.1"
 TOKEN=""
 GEN_TOKEN=false
@@ -115,7 +115,7 @@ VENV_DIR="$VENV_DIR$INSTANCE"
 APP_DIR="$APP_DIR$INSTANCE"
 CFG_PATH="$APP_DIR/seren-workbench.yaml"
 CONNECT_HOST="$HOST"; [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
-[[ -n "$INSTANCE" && "$PORT" == "7444" ]] && warn "Instance '$INSTANCE' using default port 7444 — may collide."
+[[ -n "$INSTANCE" && "$PORT" == "7425" ]] && warn "Instance '$INSTANCE' using default port 7425 — may collide."
 
 echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenWorkbench setup (macOS)${NC}" || echo -e "${G}  SerenWorkbench setup (Linux)${NC}"

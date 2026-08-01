@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # nano/build.sh — Build artifacts from source (Nano, --build flag)
 #
-# Sourced by seren-setup.sh when --build is passed. Same pattern as
+# Sourced by seren-prepare-node.sh when --build is passed. Same pattern as
 # xavier/build.sh but skips python/sqlite (Nano gets those natively).
 # ══════════════════════════════════════════════════════════════
 

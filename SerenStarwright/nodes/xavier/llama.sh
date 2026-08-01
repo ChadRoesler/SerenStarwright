@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/llama.sh — Install llama.cpp inference server (Xavier)
 #
-# Sourced by seren-setup.sh. Defines install_llama() which copies
+# Sourced by seren-prepare-node.sh. Defines install_llama() which copies
 # the staged llama-server binary into ~/llama.cpp/build/bin/.
 #
 # Expects $STAGED_LLAMA_BIN set by prebuilts.sh or build.sh.

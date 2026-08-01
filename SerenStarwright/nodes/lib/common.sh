@@ -1,8 +1,8 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# common.sh — Shared helpers for seren-setup.sh
+# common.sh — Shared helpers for seren-prepare-node.sh
 #
-# Sourced by seren-setup.sh and platform modules.
+# Sourced by seren-prepare-node.sh and platform modules.
 # Provides:
 #   - Logging (log/warn/fail/info)
 #   - Phase tracking (jq-backed, resumable)
@@ -315,7 +315,7 @@ _set_platform_vars() {
 # ─────────────────────────────────────────────────────────────
 # Phase tracking
 # ─────────────────────────────────────────────────────────────
-# State file is per-script-run, set by seren-setup.sh as $STATE_FILE.
+# State file is per-script-run, set by seren-prepare-node.sh as $STATE_FILE.
 # Service phases (llama/kokoro/etc) are NOT tracked — they always re-run
 # when explicitly flagged. Only foundation phases use phase_*.
 ensure_jq() {
@@ -389,8 +389,12 @@ phase_max_power() {
         return 0
     fi
 
+    # NOT a warning, and not phrased as a question. nvpmodel is a Jetson tool;
+    # on a Spark or any non-Tegra node its absence is the expected state, and
+    # "not a Jetson?" reads like something went wrong on exactly the platform
+    # where nothing did.
     if ! command -v nvpmodel &>/dev/null; then
-        warn "nvpmodel not found — not a Jetson? Skipping max power phase."
+        info "No nvpmodel on this platform — power profile is managed by the OS. Skipping."
         return 0
     fi
 
@@ -651,7 +655,7 @@ _seren_json_escape() {
 _seren_manifest_dir() {
     if [ -z "${USER_HOME:-}" ]; then
         echo "ERROR: USER_HOME is empty — manifest helpers can't proceed." >&2
-        echo "       This is usually a bug in seren-setup.sh's init order." >&2
+        echo "       This is usually a bug in seren-prepare-node.sh's init order." >&2
         return 1
     fi
     if [ -z "${TARGET_USER:-}" ]; then
@@ -818,7 +822,7 @@ write_node_manifest() {
 # Agent install — shared between Xavier and Nano
 # ═════════════════════════════════════════════════════════════
 #
-# The Seren agent is the per-Jetson management plane. It's a tiny FastAPI
+# The Seren agent is the per-node management plane. It's a tiny FastAPI
 # app exposing /api/v1/{system,service/*}/* endpoints, manifest-driven,
 # bearer-token authed.
 #
@@ -953,7 +957,7 @@ STOPEOF
     log "Installing seren-agent.service..."
     sudo tee /etc/systemd/system/seren-agent.service > /dev/null << EOF
 [Unit]
-Description=Seren — per-Jetson management plane (FastAPI agent)
+Description=Seren — per-node management plane (FastAPI agent)
 Documentation=https://github.com/ChadRoesler (seren-v5/agent)
 After=network-online.target
 Wants=network-online.target

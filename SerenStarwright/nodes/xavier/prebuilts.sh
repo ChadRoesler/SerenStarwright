@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/prebuilts.sh — Download prebuilt Xavier artifacts
 #
-# Sourced by seren-setup.sh when not in --build mode.
+# Sourced by seren-prepare-node.sh when not in --build mode.
 # Resolves release tag via API (or pinned via --tag), downloads
 # the artifacts that the requested services actually need.
 #

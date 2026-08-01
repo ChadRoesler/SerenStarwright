@@ -1,8 +1,8 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# seren-wipe.sh — Reset a Jetson back to pre-seren state
+# seren-wipe.sh — Reset a node back to pre-seren state
 #
-# Removes everything seren-setup.sh installs:
+# Removes everything seren-prepare-node.sh installs:
 #   - All venvs at /mnt/nvme/seren-venvs/* and ~/seren-venvs/*
 #   - Service repos: ~/Kokoro-FastAPI, ~/ComfyUI, ~/llama.cpp
 #   - Staged prebuilts: ~/seren-prebuilts/
@@ -316,5 +316,5 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  Wipe Complete${NC}"
 echo -e "${GREEN}══════════════════════════════════════════${NC}"
 echo ""
-log "You can now re-run: bash seren-setup.sh -l -k -d -u $TARGET_USER"
+log "You can now re-run: bash seren-prepare-node.sh -l -k -d -u $TARGET_USER"
 echo ""

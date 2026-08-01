@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/kokoro.sh — Install Kokoro-FastAPI TTS (Xavier)
 #
-# Sourced by seren-setup.sh. Defines install_kokoro().
+# Sourced by seren-prepare-node.sh. Defines install_kokoro().
 #
 # Uses a dedicated venv at ~/seren-venvs/kokoro (NVMe-backed). This
 # isolates Kokoro's pinned dep stack from other services:

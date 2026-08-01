@@ -46,7 +46,7 @@ Usage: bash seren-sudoers-update.sh [OPTIONS]
 
 Adds /sbin/shutdown -r * and /sbin/shutdown -c grants to the existing
 /etc/sudoers.d/seren-agent file, enabling the agent's reboot endpoint
-to work without re-running full host-setup.sh / seren-setup.sh.
+to work without re-running full host-setup.sh / seren-prepare-node.sh.
 
 Options:
   -u, --user USER     Target user (default: invoking user)
@@ -74,7 +74,7 @@ SUDOERS_FILE="/etc/sudoers.d/seren-agent"
 
 if [ ! -f "$SUDOERS_FILE" ]; then
     fail "$SUDOERS_FILE not found — agent isn't installed on this box yet."
-    fail "Run host-setup.sh / seren-setup.sh first; this migration only"
+    fail "Run host-setup.sh / seren-prepare-node.sh first; this migration only"
     fail "patches an existing install."
     exit 1
 fi
