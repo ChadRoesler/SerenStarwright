@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/foundation.sh — Xavier (jp5/R35) OS prereq phases
 #
-# Sourced by seren-setup.sh. Defines run_foundation() which executes
+# Sourced by seren-prepare-node.sh. Defines run_foundation() which executes
 # all OS-level prereqs needed before any service can be installed.
 #
 # Phases (jq-tracked, resumable):
@@ -324,7 +324,7 @@ phase_xavier_nvme() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Foundation entry point — called by seren-setup.sh
+# Foundation entry point — called by seren-prepare-node.sh
 # ─────────────────────────────────────────────────────────────
 run_foundation() {
     # Phase 0 runs first so the rest of the install (especially the source

@@ -43,7 +43,7 @@ install_coral() {
             warn "Prebuilt was compiled against kernel $PREBUILT_KERNEL"
             warn "Your running kernel is        $KERNEL_VER"
             warn "Modules MAY load via vermagic forcing, but if modprobe fails,"
-            warn "re-run seren-setup.sh with --build to compile against current kernel."
+            warn "re-run seren-prepare-node.sh with --build to compile against current kernel."
         else
             log "Manifest kernel matches running kernel ✓"
         fi

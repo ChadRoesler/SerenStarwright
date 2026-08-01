@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # nano/prebuilts.sh — Download prebuilt Nano artifacts
 #
-# Sourced by seren-setup.sh when not in --build mode. Same pattern as
+# Sourced by seren-prepare-node.sh when not in --build mode. Same pattern as
 # xavier/prebuilts.sh but with Nano-tagged filenames and jp6 PyTorch.
 #
 # No foundation prebuilts on Nano (Python/SQLite are native), so the

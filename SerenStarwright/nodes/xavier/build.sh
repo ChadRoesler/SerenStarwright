@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/build.sh — Build artifacts from source (--build flag)
 #
-# Sourced by seren-setup.sh when --build is passed. Clones the
+# Sourced by seren-prepare-node.sh when --build is passed. Clones the
 # Nvidia_Jetson_Prebuilt repo, runs build-prebuilts.sh with flags
 # matching the requested services, and stages output the same way
 # prebuilts.sh does (so service modules don't care which path ran).

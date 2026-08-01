@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/coral.sh — Install Coral M.2 TPU support (Xavier)
 #
-# Sourced by seren-setup.sh. Defines install_coral() which:
+# Sourced by seren-prepare-node.sh. Defines install_coral() which:
 #   1. Verifies hardware presence (informational only — install proceeds either way)
 #   2. Installs prebuilt gasket + apex kernel modules from $STAGED_GASKET_KO / $STAGED_APEX_KO
 #   3. Validates kernel match against $STAGED_CORAL_MANIFEST
@@ -47,7 +47,7 @@ install_coral() {
             warn "Prebuilt was compiled against kernel $PREBUILT_KERNEL"
             warn "Your running kernel is        $KERNEL_VER"
             warn "Modules MAY load via vermagic forcing, but if modprobe fails,"
-            warn "re-run seren-setup.sh with --build to compile against current kernel."
+            warn "re-run seren-prepare-node.sh with --build to compile against current kernel."
         else
             log "Manifest kernel matches running kernel ✓"
         fi

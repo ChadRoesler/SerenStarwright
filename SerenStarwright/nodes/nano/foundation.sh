@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # nano/foundation.sh — Orin Nano (jp6/R36) OS prereq phases
 #
-# Sourced by seren-setup.sh. Defines run_foundation() for Nano.
+# Sourced by seren-prepare-node.sh. Defines run_foundation() for Nano.
 #
 # Nano is much lighter than Xavier:
 #   - Python 3.10 native via JetPack 6 (no source build needed)

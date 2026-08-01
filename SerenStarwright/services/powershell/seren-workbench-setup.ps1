@@ -14,7 +14,7 @@
 #>
 [CmdletBinding()]
 param(
-  [int]    $Port     = 7444,
+  [int]    $Port     = 7425,
   [string] $WbHost   = "127.0.0.1",
   [string] $Token    = "",
   [switch] $GenToken,
@@ -76,8 +76,8 @@ $VenvDir = "$VenvDir$Instance"
 $AppDir  = "$env:USERPROFILE\seren-workbench$Instance"
 $CfgPath = "$AppDir\seren-workbench.yaml"
 $global:Instance = $Instance
-if ($Instance -and $Port -eq 7444) {
-  Warn "Instance '$Instance' uses default port 7444 — may collide."
+if ($Instance -and $Port -eq 7425) {
+  Warn "Instance '$Instance' uses default port 7425 — may collide."
 }
 
 Write-Host "==========================================" -ForegroundColor Green

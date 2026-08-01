@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # spark/foundation.sh — DGX Spark (jp7/GB10 Blackwell) OS prereq phases
 #
-# Sourced by seren-setup.sh. Defines run_foundation() for Spark.
+# Sourced by seren-prepare-node.sh. Defines run_foundation() for Spark.
 #
 # The Spark is NOT a Jetson — no /etc/nv_tegra_release, no nvpmodel,
 # no eMMC, no custom Maxwell/Volta/Ampere GPU. It's a desktop-class

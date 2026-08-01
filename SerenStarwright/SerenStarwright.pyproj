@@ -103,6 +103,7 @@
     <Content Include="services\bash\setup-workbench-service.sh" />
     <Content Include="services\lib\seren-install-lib.ps1" />
     <Content Include="services\lib\seren-install-lib.sh" />
+    <Content Include="services\lib\seren-register-services.sh" />
     <Content Include="services\lib\setup-seren-dotnet-service.ps1" />
     <Content Include="services\lib\setup-seren-dotnet-service.sh" />
     <Content Include="services\lib\setup-seren-python-service.sh" />

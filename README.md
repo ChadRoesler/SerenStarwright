@@ -3,7 +3,7 @@
 The thing that builds the vessel that sails by the Lodestar.
 
 A TUI installer for the Seren stack — pick what you want, watch it install.
-Works over SSH on a headless Jetson, which is the whole point.
+Works over SSH on a headless node - Jetson, DGX Spark or a NUC - which is the whole point.
 
 ```bash
 bash starwright.sh

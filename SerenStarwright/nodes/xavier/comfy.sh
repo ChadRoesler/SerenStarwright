@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/comfy.sh — Install ComfyUI + PyTorch (Xavier)
 #
-# Sourced by seren-setup.sh. Defines install_comfy().
+# Sourced by seren-prepare-node.sh. Defines install_comfy().
 #
 # Uses a dedicated venv at ~/seren-venvs/comfy. ComfyUI custom nodes
 # pull in wildly varying dep stacks — isolating them is critical.

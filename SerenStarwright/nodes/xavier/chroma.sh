@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 # xavier/chroma.sh — Install ChromaDB vector store (Xavier)
 #
-# Sourced by seren-setup.sh. Defines install_chroma().
+# Sourced by seren-prepare-node.sh. Defines install_chroma().
 #
 # Uses a dedicated venv at ~/seren-venvs/chroma. ChromaDB pulls in
 # its own dep tree (fastapi, pydantic, opentelemetry, etc.) that we
