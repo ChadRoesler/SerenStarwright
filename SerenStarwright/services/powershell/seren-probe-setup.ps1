@@ -9,6 +9,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -Wheel .\seren_probe-0.1.0-py3-none-any.whl
+#    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -Updates   # update checking
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -19,6 +20,9 @@ param(
   [string] $Ref       = "",
   [string] $Repo      = "",
   [switch] $Service,
+  [switch] $Mcp,
+  [switch] $Corp,
+  [switch] $Updates,
   [string] $Instance  = "",
   [string] $VenvDir   = "",
   [switch] $Describe,
@@ -88,7 +92,8 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-probe"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
-Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras "" -Label ""
+$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp -Updates:$Updates
+Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label ""
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 
 # -- 4. sanity check (import + viewer/probe.html) -----------------------------

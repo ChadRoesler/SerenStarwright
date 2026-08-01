@@ -150,12 +150,21 @@ function Get-SerenDescribe {
         # Hex colour for the service's card in Seren Starwright. Taken from the
         # service's OWN viewer accent where it has one, so the card you tick is
         # the colour of the UI you land on afterwards.
-        [string] $Accent = ""
+        [string] $Accent = "",
+        # Explicit override for the derived extras list. The derivation below is a
+        # family-wide allowlist, so it cannot know that a given package declares
+        # mcp as a CORE dep rather than an extra (lodestar, workbench). Those
+        # installers pass Extras to say what they actually publish.
+        [string[]] $Extras = @()
     )
     $flags  = @(Get-SerenFlagsFromSelf -ScriptPath $ScriptPath)
-    $extras = @()
-    foreach ($f in $flags) {
-        if ($f -eq 'mcp' -or $f -eq 'corp' -or $f -eq 'vector') { $extras += $f }
+    if ($Extras.Count -gt 0) {
+        $extras = @($Extras)
+    } else {
+        $extras = @()
+        foreach ($f in $flags) {
+            if ($f -eq 'mcp' -or $f -eq 'corp' -or $f -eq 'vector' -or $f -eq 'updates') { $extras += $f }
+        }
     }
     # canonical flag -> the actual PowerShell parameter to pass
     $params = [ordered] @{}
@@ -320,11 +329,12 @@ function Create-Venv {
 
 # -- build extras suffix from switches ----------------------------------------
 function Get-Extras-Suffix {
-    param([switch] $Mcp, [switch] $Corp, [switch] $Vector)
+    param([switch] $Mcp, [switch] $Corp, [switch] $Vector, [switch] $Updates)
     $list = @()
-    if ($Mcp)    { $list += "mcp" }
-    if ($Corp)   { $list += "corp" }
-    if ($Vector) { $list += "vector" }
+    if ($Mcp)     { $list += "mcp" }
+    if ($Corp)    { $list += "corp" }
+    if ($Vector)  { $list += "vector" }
+    if ($Updates) { $list += "updates" }
     if ($list.Count -eq 0) { return "" }
     return "[$($list -join ',')]"
 }

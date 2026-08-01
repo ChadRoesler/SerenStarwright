@@ -24,6 +24,7 @@
 #    --corp           Route TLS through OS trust store
 #    --instance NAME  Instance name
 #    --venv PATH      Override venv location
+#    --updates        Install update-checking support ([updates] extra)
 #    -h, --help       This help
 # ==========================================================================
 set -euo pipefail
@@ -65,6 +66,7 @@ REF=""
 REPO=""
 INSTALL_SERVICE=false
 MCP=false
+UPDATES=false
 CORP=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/callosum"
@@ -103,11 +105,12 @@ while [[ $# -gt 0 ]]; do
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
+    --updates)   UPDATES=true; shift ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
     --describe) seren_describe; exit 0 ;;
-    -h|--help)   sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   awk 'NR>1{ if (/^#/) { sub(/^# ?/,""); print } else exit }' "$0"; exit 0 ;;
     *)           die "unknown flag: $1  (try --help)" ;;
   esac
 done
@@ -150,6 +153,7 @@ VPY="$VENV_DIR/bin/python"
 EXTRAS_LIST=()
 $MCP  && EXTRAS_LIST+=("mcp")
 $CORP && EXTRAS_LIST+=("corp")
+$UPDATES && EXTRAS_LIST+=("updates")
 EXTRAS=""
 [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
 CORP_ARGS="$(pip_corp_args)"

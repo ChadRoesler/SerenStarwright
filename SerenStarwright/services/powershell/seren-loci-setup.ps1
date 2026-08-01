@@ -10,6 +10,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -GenToken -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -Wheel .\seren_loci-0.1.0-py3-none-any.whl
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -Mcp -Vector -Corp
+#    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -Updates   # update checking
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -24,6 +25,7 @@ param(
   [switch] $Service,
   [switch] $Mcp,
   [switch] $Corp,
+  [switch] $Updates,
   [switch] $Vector,
   [string] $Instance  = "",
   [string] $VenvDir   = "",
@@ -96,7 +98,7 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-loci"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
-$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp -Vector:$Vector
+$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp -Vector:$Vector -Updates:$Updates
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " (web stack$(if ($Vector) { ' + sqlite-vec + sentence-transformers/torch' } else { '' })$(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 
