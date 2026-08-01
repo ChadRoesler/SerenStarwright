@@ -10,6 +10,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Wheel .\seren_lodestar-0.1.0-py3-none-any.whl
 #    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Mcp -Corp
+#    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Updates   # update checking
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -24,6 +25,7 @@ param(
   [switch] $Service,
   [switch] $Mcp,
   [switch] $Corp,
+  [switch] $Updates,
   [string] $Instance = "",
   [string] $VenvDir  = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
@@ -66,6 +68,7 @@ if ($Describe) {
         Accent      = '#F5D76E'
         DefaultHost = $LodeHost
         DefaultPort = $Port
+        Extras      = @('corp','updates')
     }
     Get-SerenDescribe @describeArgs
     exit 0
@@ -95,7 +98,11 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-lodestar
 
 # -- 3. venv + install ----------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
-$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp
+# NOTE: no -Mcp here - mcp is a CORE dependency of this package, not an
+# extra. Asking pip for [mcp] only earns a "does not provide the extra"
+# warning. -Mcp is still accepted so existing scripts keep working.
+if ($Mcp) { Write-Host "  ! -Mcp is unnecessary: the MCP SDK is a core dependency here" -ForegroundColor Yellow }
+$extras = Get-Extras-Suffix -Corp:$Corp -Updates:$Updates
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " ($(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 

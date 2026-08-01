@@ -10,6 +10,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-corpus-callosum-setup.ps1 -Mcp
 #    powershell -ExecutionPolicy Bypass -File .\seren-corpus-callosum-setup.ps1 -GenToken -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-corpus-callosum-setup.ps1 -Corp
+#    powershell -ExecutionPolicy Bypass -File .\seren-corpus-callosum-setup.ps1 -Updates   # update checking
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -24,6 +25,7 @@ param(
   [switch] $Service,
   [switch] $Mcp,
   [switch] $Corp,
+  [switch] $Updates,
   [string] $Instance  = "",
   [string] $VenvDir   = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
@@ -95,7 +97,7 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-corpus-c
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
-$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp
+$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp -Updates:$Updates
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " (web stack$(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 

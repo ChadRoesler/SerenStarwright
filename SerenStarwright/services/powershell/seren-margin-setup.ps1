@@ -10,6 +10,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Wheel .\seren_margin-0.1.0-py3-none-any.whl
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Pypi
+#    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Updates   # update checking
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -24,6 +25,7 @@ param(
   [string] $RepoDir    = "",
   [switch] $Pypi,
   [switch] $Mcp,
+  [switch] $Updates,
   [switch] $Service,
   [string] $Instance   = "",
   [string] $VenvDir    = ""
@@ -132,7 +134,7 @@ if ($Wheel) {
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyExe -PyArgs $pyArgs
-$extras = Get-Extras-Suffix -Mcp:$Mcp
+$extras = Get-Extras-Suffix -Mcp:$Mcp -Updates:$Updates
 Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras $extras -Label " ($(if ($Mcp) { ' + MCP SDK' } else { '' }))"
 if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue }
 

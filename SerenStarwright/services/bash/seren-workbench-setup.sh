@@ -26,6 +26,7 @@
 #    --corp           Route TLS through the OS trust store
 #    --instance NAME  Instance name
 #    --venv PATH      Override venv location
+#    --updates        Install update-checking support ([updates] extra)
 #    -h, --help       This help
 # ==========================================================================
 set -euo pipefail
@@ -67,6 +68,7 @@ REF=""
 REPO=""
 INSTALL_SERVICE=false
 MCP=false
+UPDATES=false
 CORP=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/workbench"
@@ -81,6 +83,9 @@ SVC_DISPLAY="Seren Workbench"
 SVC_DESC="The tools bench where things get done"
 SVC_GROUP="core"
 SVC_PACKAGE="seren-workbench"
+# mcp is a CORE dependency of this package, not an extra, so the lib
+# derivation (which allowlists mcp for the family) would over-report it.
+SVC_EXTRAS="corp updates"
 # Card colour in Seren Starwright - matches seren_workbench/app.py viewer accent
 SVC_ACCENT="#8e9aaf"
 
@@ -102,11 +107,12 @@ while [[ $# -gt 0 ]]; do
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
+    --updates)   UPDATES=true; shift ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
     --describe) seren_describe; exit 0 ;;
-    -h|--help)   sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   awk 'NR>1{ if (/^#/) { sub(/^# ?/,""); print } else exit }' "$0"; exit 0 ;;
     *)           die "unknown flag: $1  (try --help)" ;;
   esac
 done
@@ -134,9 +140,13 @@ create_venv "$VENV_DIR"
 VPY="$VENV_DIR/bin/python"
 
 # Build extras
-EXTRAS_LIST=(); $MCP && EXTRAS_LIST+=("mcp"); $CORP && EXTRAS_LIST+=("corp")
+EXTRAS_LIST=(); $CORP && EXTRAS_LIST+=("corp"); $UPDATES && EXTRAS_LIST+=("updates")
+# NOTE: no "mcp" here - mcp is a CORE dependency of this package, not an
+# extra. Asking pip for [mcp] just earns a "does not provide the extra"
+# warning. --mcp is still accepted so existing scripts do not break.
+$MCP && warn "--mcp is unnecessary: the MCP SDK is a core dependency here"
 EXTRAS=""; [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
-EXTRAS_DESC=""; $MCP && EXTRAS_DESC+=" + MCP SDK"; $CORP && EXTRAS_DESC+=" + truststore"
+EXTRAS_DESC=""; $CORP && EXTRAS_DESC+=" + truststore"; $UPDATES && EXTRAS_DESC+=" + update checking"
 CORP_ARGS="$(pip_corp_args)"
 
 pip_install "$VPY" "$WHEEL_SRC" "$EXTRAS" "$CORP_ARGS" "$EXTRAS_DESC"

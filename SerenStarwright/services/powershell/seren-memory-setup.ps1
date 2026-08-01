@@ -10,6 +10,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -GenToken -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -Wheel .\seren_memory-0.1.0-py3-none-any.whl
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -Mcp -Corp
+#    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -Updates   # update checking
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -24,6 +25,7 @@ param(
   [switch] $Service,
   [switch] $Mcp,
   [switch] $Corp,
+  [switch] $Updates,
   [string] $Instance   = "",
   [string] $VenvDir    = "",
   [string] $LoggingDir = "",
@@ -96,7 +98,7 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-memory"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
-$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp
+$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp -Updates:$Updates
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " (chromadb$(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 
