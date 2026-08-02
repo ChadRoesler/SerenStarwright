@@ -63,6 +63,7 @@ UPDATES_OFF=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/probe"
 APP_DIR="$HOME/seren-probe"
+MCP=false
 
 # -- Starwright contract: identity + machine-readable metadata ----------------
 SVC_NAME="seren-probe"
