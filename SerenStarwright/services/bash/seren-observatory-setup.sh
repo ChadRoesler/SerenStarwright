@@ -22,7 +22,8 @@
 #    --service        Autostart via setup-observatory-service.sh
 #    --instance NAME  Instance name
 #    --venv PATH      Override venv location
-#    --updates        Install update-checking support ([updates] extra)
+#    --no-updates     Turn update checking OFF in the generated config
+#                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
 set -euo pipefail
@@ -63,7 +64,7 @@ WHEEL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
-UPDATES=false
+UPDATES_OFF=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/observatory"
 APP_DIR="$HOME/seren-observatory"
@@ -96,7 +97,8 @@ while [[ $# -gt 0 ]]; do
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
-    --updates)   UPDATES=true; shift ;;
+    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
+    --no-updates) UPDATES_OFF=true; shift ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
@@ -130,7 +132,7 @@ VPY="$VENV_DIR/bin/python"
 CORP=false; MCP=false; VECTOR=false  # observatory: only [updates] applies
 CORP_ARGS=""
 # Build extras
-EXTRAS_LIST=(); $UPDATES && EXTRAS_LIST+=("updates")
+EXTRAS_LIST=()
 EXTRAS=""; [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
 pip_install "$VPY" "$WHEEL_SRC" "$EXTRAS" "$CORP_ARGS" ""
 
@@ -151,6 +153,18 @@ cat > "$CFG_PATH" <<YAML
 server:
   host: ${HOST}
   port: ${PORT}
+YAML
+
+$UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
+
+# ── Update checking ───────────────────────────────────────────────────
+# Turned OFF at install time by --no-updates. Update checking is on by
+# default across the Seren family: it asks the package index whether a newer
+# release exists and reports it on the service's info route. It NEVER
+# upgrades anything. Flip this to true to turn it back on, or set
+# SEREN_<SERVICE>_UPDATES_ENABLED=true in the unit file.
+updates:
+  enabled: false
 YAML
 [[ -n "$TOKEN" ]] && chmod 600 "$CFG_PATH"
 ok "Config written"

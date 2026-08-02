@@ -26,7 +26,8 @@
 #    --corp           Route TLS through the OS trust store
 #    --instance NAME  Instance name
 #    --venv PATH      Override venv location
-#    --updates        Install update-checking support ([updates] extra)
+#    --no-updates     Turn update checking OFF in the generated config
+#                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
 set -euo pipefail
@@ -68,7 +69,7 @@ REF=""
 REPO=""
 INSTALL_SERVICE=false
 MCP=false
-UPDATES=false
+UPDATES_OFF=false
 CORP=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/workbench"
@@ -85,7 +86,7 @@ SVC_GROUP="core"
 SVC_PACKAGE="seren-workbench"
 # mcp is a CORE dependency of this package, not an extra, so the lib
 # derivation (which allowlists mcp for the family) would over-report it.
-SVC_EXTRAS="corp updates"
+SVC_EXTRAS="corp"
 # Card colour in Seren Starwright - matches seren_workbench/app.py viewer accent
 SVC_ACCENT="#8e9aaf"
 
@@ -107,7 +108,8 @@ while [[ $# -gt 0 ]]; do
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
-    --updates)   UPDATES=true; shift ;;
+    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
+    --no-updates) UPDATES_OFF=true; shift ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
@@ -140,13 +142,13 @@ create_venv "$VENV_DIR"
 VPY="$VENV_DIR/bin/python"
 
 # Build extras
-EXTRAS_LIST=(); $CORP && EXTRAS_LIST+=("corp"); $UPDATES && EXTRAS_LIST+=("updates")
+EXTRAS_LIST=(); $CORP && EXTRAS_LIST+=("corp")
 # NOTE: no "mcp" here - mcp is a CORE dependency of this package, not an
 # extra. Asking pip for [mcp] just earns a "does not provide the extra"
 # warning. --mcp is still accepted so existing scripts do not break.
 $MCP && warn "--mcp is unnecessary: the MCP SDK is a core dependency here"
 EXTRAS=""; [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
-EXTRAS_DESC=""; $CORP && EXTRAS_DESC+=" + truststore"; $UPDATES && EXTRAS_DESC+=" + update checking"
+EXTRAS_DESC=""; $CORP && EXTRAS_DESC+=" + truststore"
 CORP_ARGS="$(pip_corp_args)"
 
 pip_install "$VPY" "$WHEEL_SRC" "$EXTRAS" "$CORP_ARGS" "$EXTRAS_DESC"
@@ -172,6 +174,18 @@ server:
 dashboard:
   tools_dir: ~/seren-workbench/tools
 $( $CORP && printf 'tls:\n  trust_system_store: true\n' )
+YAML
+
+$UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
+
+# ── Update checking ───────────────────────────────────────────────────
+# Turned OFF at install time by --no-updates. Update checking is on by
+# default across the Seren family: it asks the package index whether a newer
+# release exists and reports it on the service's info route. It NEVER
+# upgrades anything. Flip this to true to turn it back on, or set
+# SEREN_<SERVICE>_UPDATES_ENABLED=true in the unit file.
+updates:
+  enabled: false
 YAML
 [[ -n "$TOKEN" ]] && chmod 600 "$CFG_PATH"
 ok "Config written"

@@ -9,7 +9,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-observatory-setup.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-observatory-setup.ps1 -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-observatory-setup.ps1 -Wheel .\seren_observatory-0.1.0-py3-none-any.whl
-#    powershell -ExecutionPolicy Bypass -File .\seren-observatory-setup.ps1 -Updates   # update checking
+#    powershell -ExecutionPolicy Bypass -File .\seren-observatory-setup.ps1 -NoUpdates  # turn update checking off
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -21,6 +21,7 @@ param(
   [string] $Repo      = "ChadRoesler/SerenObservatory",
   [switch] $Service,
   [switch] $Updates,
+  [switch] $NoUpdates,
   [string] $Instance  = "",
   [string] $VenvDir   = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
@@ -91,7 +92,8 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-observat
 # -- 3. venv + install (no extras) ---------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
 $Mcp = $false; $Corp = $false  # observatory has no extras
-$extras = Get-Extras-Suffix -Updates:$Updates
+if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
+$extras = Get-Extras-Suffix
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label ""
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 
@@ -114,6 +116,21 @@ server:
   port: $Port
 "@ | Set-Content -Path $CfgPath -Encoding UTF8
 Ok "Config written"
+
+if ($NoUpdates) {
+    # Update checking is ON by default across the Seren family: it asks the
+    # package index whether a newer release exists and reports it on the info
+    # route. It NEVER upgrades anything. -NoUpdates writes the off switch.
+    @"
+
+# ── Update checking ───────────────────────────────────────────────────
+# Turned OFF at install time by -NoUpdates. Flip to true to re-enable, or set
+# SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
+updates:
+  enabled: false
+"@ | Add-Content -Path $CfgPath -Encoding UTF8
+    Ok "Update checking disabled in config"
+}
 
 # -- 5b. launcher ---------------------------------------------------------------
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-observatory" -Vpy $vpy -Module "seren_observatory" -CfgPath $CfgPath

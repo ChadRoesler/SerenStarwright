@@ -10,7 +10,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Wheel .\seren_lodestar-0.1.0-py3-none-any.whl
 #    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Mcp -Corp
-#    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -Updates   # update checking
+#    powershell -ExecutionPolicy Bypass -File .\seren-lodestar-setup.ps1 -NoUpdates  # turn update checking off
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -26,6 +26,7 @@ param(
   [switch] $Mcp,
   [switch] $Corp,
   [switch] $Updates,
+  [switch] $NoUpdates,
   [string] $Instance = "",
   [string] $VenvDir  = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
@@ -68,7 +69,7 @@ if ($Describe) {
         Accent      = '#F5D76E'
         DefaultHost = $LodeHost
         DefaultPort = $Port
-        Extras      = @('corp','updates')
+        Extras      = @('corp')
     }
     Get-SerenDescribe @describeArgs
     exit 0
@@ -102,7 +103,8 @@ $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
 # extra. Asking pip for [mcp] only earns a "does not provide the extra"
 # warning. -Mcp is still accepted so existing scripts keep working.
 if ($Mcp) { Write-Host "  ! -Mcp is unnecessary: the MCP SDK is a core dependency here" -ForegroundColor Yellow }
-$extras = Get-Extras-Suffix -Corp:$Corp -Updates:$Updates
+if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
+$extras = Get-Extras-Suffix -Corp:$Corp
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " ($(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 
@@ -131,6 +133,21 @@ runtime:
 "@ | Set-Content -Path $CfgPath -Encoding UTF8
 if ($Token) { & $vpy -c "import os,stat; os.chmod('$CfgPath', 0o600)" 2>$null }
 Ok "Config written"
+
+if ($NoUpdates) {
+    # Update checking is ON by default across the Seren family: it asks the
+    # package index whether a newer release exists and reports it on the info
+    # route. It NEVER upgrades anything. -NoUpdates writes the off switch.
+    @"
+
+# ── Update checking ───────────────────────────────────────────────────
+# Turned OFF at install time by -NoUpdates. Flip to true to re-enable, or set
+# SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
+updates:
+  enabled: false
+"@ | Add-Content -Path $CfgPath -Encoding UTF8
+    Ok "Update checking disabled in config"
+}
 
 # -- 5b. launcher ---------------------------------------------------------------
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-lodestar" -Vpy $vpy -Module "seren_lodestar" -CfgPath $CfgPath
