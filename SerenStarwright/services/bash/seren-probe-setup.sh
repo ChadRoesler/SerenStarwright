@@ -19,7 +19,8 @@
 #    --service        Autostart via systemd/launchd
 #    --instance NAME  Instance name
 #    --venv PATH      Override venv location
-#    --updates        Install update-checking support ([updates] extra)
+#    --no-updates     Turn update checking OFF in the generated config
+#                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
 set -euo pipefail
@@ -58,7 +59,7 @@ WHEEL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
-UPDATES=false
+UPDATES_OFF=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/probe"
 APP_DIR="$HOME/seren-probe"
@@ -85,7 +86,8 @@ while [[ $# -gt 0 ]]; do
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
-    --updates)   UPDATES=true; shift ;;
+    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
+    --no-updates) UPDATES_OFF=true; shift ;;
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
@@ -123,7 +125,7 @@ VPY="$VENV_DIR/bin/python"
 
 # no extras — local only
 # Build extras
-EXTRAS_LIST=(); $MCP && EXTRAS_LIST+=("mcp"); $CORP && EXTRAS_LIST+=("corp"); $UPDATES && EXTRAS_LIST+=("updates")
+EXTRAS_LIST=(); $MCP && EXTRAS_LIST+=("mcp"); $CORP && EXTRAS_LIST+=("corp")
 EXTRAS=""; [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
 pip_install "$VPY" "$WHEEL_SRC" "$EXTRAS" "$CORP_ARGS" ""
 
@@ -158,6 +160,18 @@ server:
 
 storage:
   db_path: ~/.seren-probe${INSTANCE}/probe.db
+YAML
+
+$UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
+
+# ── Update checking ───────────────────────────────────────────────────
+# Turned OFF at install time by --no-updates. Update checking is on by
+# default across the Seren family: it asks the package index whether a newer
+# release exists and reports it on the service's info route. It NEVER
+# upgrades anything. Flip this to true to turn it back on, or set
+# SEREN_<SERVICE>_UPDATES_ENABLED=true in the unit file.
+updates:
+  enabled: false
 YAML
 ok "Config written"
 

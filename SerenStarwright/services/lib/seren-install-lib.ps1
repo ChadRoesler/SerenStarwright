@@ -163,7 +163,7 @@ function Get-SerenDescribe {
     } else {
         $extras = @()
         foreach ($f in $flags) {
-            if ($f -eq 'mcp' -or $f -eq 'corp' -or $f -eq 'vector' -or $f -eq 'updates') { $extras += $f }
+            if ($f -eq 'mcp' -or $f -eq 'corp' -or $f -eq 'vector') { $extras += $f }
         }
     }
     # canonical flag -> the actual PowerShell parameter to pass
@@ -329,12 +329,11 @@ function Create-Venv {
 
 # -- build extras suffix from switches ----------------------------------------
 function Get-Extras-Suffix {
-    param([switch] $Mcp, [switch] $Corp, [switch] $Vector, [switch] $Updates)
+    param([switch] $Mcp, [switch] $Corp, [switch] $Vector)
     $list = @()
     if ($Mcp)     { $list += "mcp" }
     if ($Corp)    { $list += "corp" }
     if ($Vector)  { $list += "vector" }
-    if ($Updates) { $list += "updates" }
     if ($list.Count -eq 0) { return "" }
     return "[$($list -join ',')]"
 }

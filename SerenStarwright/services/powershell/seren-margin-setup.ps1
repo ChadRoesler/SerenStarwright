@@ -10,7 +10,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Wheel .\seren_margin-0.1.0-py3-none-any.whl
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Pypi
-#    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Updates   # update checking
+#    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -NoUpdates  # turn update checking off
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -26,6 +26,7 @@ param(
   [switch] $Pypi,
   [switch] $Mcp,
   [switch] $Updates,
+  [switch] $NoUpdates,
   [switch] $Service,
   [string] $Instance   = "",
   [string] $VenvDir    = ""
@@ -134,7 +135,8 @@ if ($Wheel) {
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyExe -PyArgs $pyArgs
-$extras = Get-Extras-Suffix -Mcp:$Mcp -Updates:$Updates
+if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
+$extras = Get-Extras-Suffix -Mcp:$Mcp
 Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras $extras -Label " ($(if ($Mcp) { ' + MCP SDK' } else { '' }))"
 if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue }
 
@@ -160,6 +162,21 @@ server:
   db_path: ~/.seren-margin$dbInstance/notes.db
 "@ | Set-Content -Path $CfgPath -Encoding UTF8
 Ok "Config written"
+
+if ($NoUpdates) {
+    # Update checking is ON by default across the Seren family: it asks the
+    # package index whether a newer release exists and reports it on the info
+    # route. It NEVER upgrades anything. -NoUpdates writes the off switch.
+    @"
+
+# ── Update checking ───────────────────────────────────────────────────
+# Turned OFF at install time by -NoUpdates. Flip to true to re-enable, or set
+# SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
+updates:
+  enabled: false
+"@ | Add-Content -Path $CfgPath -Encoding UTF8
+    Ok "Update checking disabled in config"
+}
 
 # -- 5b. launcher -----------------------------------------------------------
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-margin" -Vpy $vpy -Module "seren_margin" -CfgPath $CfgPath

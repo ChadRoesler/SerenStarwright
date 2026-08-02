@@ -25,7 +25,8 @@
 #    --corp           Route TLS through OS trust store
 #    --instance NAME  Instance name
 #    --venv PATH      Override venv location
-#    --updates        Install update-checking support ([updates] extra)
+#    --no-updates     Turn update checking OFF in the generated config
+#                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
 set -euo pipefail
@@ -67,7 +68,7 @@ REF=""
 REPO=""
 INSTALL_SERVICE=false
 MCP=false
-UPDATES=false
+UPDATES_OFF=false
 CORP=false
 VECTOR=false
 INSTANCE=""
@@ -105,7 +106,8 @@ while [[ $# -gt 0 ]]; do
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
     --vector)    VECTOR=true; shift ;;
-    --updates)   UPDATES=true; shift ;;
+    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
+    --no-updates) UPDATES_OFF=true; shift ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
@@ -144,7 +146,6 @@ EXTRAS_LIST=()
 $MCP    && EXTRAS_LIST+=("mcp")
 $CORP   && EXTRAS_LIST+=("corp")
 $VECTOR && EXTRAS_LIST+=("vector")
-$UPDATES && EXTRAS_LIST+=("updates")
 EXTRAS=""
 [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
 CORP_ARGS="$(pip_corp_args)"
@@ -185,6 +186,18 @@ storage:
   db_path: ~/.seren-loci${INSTANCE}/loci.db
 $( $VECTOR && printf '  # Vector finder ON (--vector). Comment these out for embedding-free floor.\n  embedding_model: sentence-transformers/all-MiniLM-L6-v2\n  embedding_device: cpu\n' )
 $( $CORP && printf '\ntls:\n  trust_system_store: true\n' )
+YAML
+
+$UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
+
+# ── Update checking ───────────────────────────────────────────────────
+# Turned OFF at install time by --no-updates. Update checking is on by
+# default across the Seren family: it asks the package index whether a newer
+# release exists and reports it on the service's info route. It NEVER
+# upgrades anything. Flip this to true to turn it back on, or set
+# SEREN_<SERVICE>_UPDATES_ENABLED=true in the unit file.
+updates:
+  enabled: false
 YAML
 [[ -n "$TOKEN" ]] && chmod 600 "$CFG_PATH"
 ok "Config written"

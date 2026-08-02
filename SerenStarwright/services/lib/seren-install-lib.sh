@@ -144,11 +144,16 @@ seren_describe() {
     # The known package-extra flags. Anything else (--port, --service, --pypi)
     # is an installer option, not a pip extra.
     #
+    # NOTE: 'updates' is deliberately NOT here. Update checking is a CORE
+    # dependency of seren-meninges now, not an extra - the [updates] extra
+    # survives only as an empty back-compat alias, so reporting it as an
+    # installable extra would advertise a choice that no longer exists.
+    #
     # This is a family-wide allowlist, so it cannot know that a given package
     # declares mcp as a CORE dep rather than an extra (lodestar, workbench).
     # Those installers set SVC_EXTRAS explicitly to override this derivation.
     for f in $flags; do
-      case "$f" in mcp|corp|vector|updates) extras+="${extras:+ }$f" ;; esac
+      case "$f" in mcp|corp|vector) extras+="${extras:+ }$f" ;; esac
     done
   fi
   for f in $extras; do extras_json+="${extras_json:+,}\"$(_json_esc "$f")\""; done
