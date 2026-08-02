@@ -124,7 +124,7 @@ resolve_wheel
 # -- 3. venv + install ---------------------------------------------------------
 create_venv "$VENV_DIR"
 VPY="$VENV_DIR/bin/python"
-
+CORP_ARGS=""
 # no extras — local only
 # Build extras
 EXTRAS_LIST=(); $MCP && EXTRAS_LIST+=("mcp"); $CORP && EXTRAS_LIST+=("corp")
