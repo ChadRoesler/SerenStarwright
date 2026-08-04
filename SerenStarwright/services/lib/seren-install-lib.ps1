@@ -54,10 +54,14 @@
 # ══════════════════════════════════════════════════════════════════════════
 
 $script:SerenJson = $false
+$script:SerenJsonWriter = $null
 
 # -- Enable-SerenJson - flip on the event stream (called by -Json) -------------
 function Enable-SerenJson {
     $script:SerenJson = $true
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $script:SerenJsonWriter = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput(), $utf8NoBom)
+    $script:SerenJsonWriter.AutoFlush = $true
     # Shadow the Write-Host cmdlet so every existing human-facing call in every
     # installer lands on stderr. stdout is reserved for events from here on.
     function global:Write-Host {
@@ -85,20 +89,14 @@ function Send-SerenEvent {
     if ($Data) {
         foreach ($k in $Data.Keys) { $obj[$k] = $Data[$k] }
     }
-    # Write-Output, NOT [Console]::Out.WriteLine.
-    #
-    # [Console]::Out writes straight to the process's console handle, which
-    # bypasses PowerShell's success stream. That sounds like a feature here
-    # (nothing else can pollute the JSON) and it works fine on screen - but it
-    # does not reliably reach a REDIRECTED stdout when powershell.exe is
-    # launched as a child process with -File, which is precisely how Starwright
-    # and every other consumer runs these. The result was a contract that
-    # printed perfectly for a human and produced nothing at all for a program.
-    #
-    # The success stream is safe to use because Enable-SerenJson has already
-    # shadowed Write-Host to stderr - so in --json mode nothing else is writing
-    # here anyway.
-    Write-Output ($obj | ConvertTo-Json -Compress -Depth 5)
+    $json = ($obj | ConvertTo-Json -Compress -Depth 5)
+    if ($script:SerenJsonWriter) {
+        $script:SerenJsonWriter.WriteLine($json)
+    } else {
+        # Fallback for defensive safety when Enable-SerenJson has not initialized
+        # the dedicated stdout writer.
+        Write-Output $json
+    }
 }
 
 # -- ConvertTo-SerenFlagName - PascalCase param -> canonical flag name ----------
