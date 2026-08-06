@@ -59,6 +59,29 @@ $script:SerenJsonWriter = $null
 # -- Enable-SerenJson - flip on the event stream (called by -Json) -------------
 function Enable-SerenJson {
     $script:SerenJson = $true
+
+    # A DEDICATED stdout writer. Every clause below is load-bearing; this
+    # took two bugs to arrive at, so do not "simplify" it back.
+    #
+    #   OpenStandardOutput  - the raw handle, NOT PowerShell's success stream.
+    #     Write-Output would put events on the success stream, which is the
+    #     same stream a function's return value travels on. Every helper that
+    #     emits an event AND returns something (Find-Python, Resolve-Wheel,
+    #     Create-Venv, Write-Launcher) then handed its caller
+    #     @(json, json, value), and `& $vpy` tried to execute all three joined
+    #     into one command name. That is the CommandNotFoundException where
+    #     the "command" is two JSON objects followed by a path.
+    #
+    #   AutoFlush           - the reason a plain [Console]::Out.WriteLine was
+    #     abandoned once already. The handle was never the problem; BUFFERING
+    #     was. Unflushed output printed perfectly to a console and produced
+    #     nothing at all for a parent process reading a redirected pipe - a
+    #     contract that worked for humans and silently failed for programs.
+    #
+    #   UTF8Encoding($false) - no BOM. A BOM would prefix the first event and
+    #     make line one unparseable for a strict JSON Lines consumer. Explicit
+    #     because the StreamWriter default is not identical across Windows
+    #     PowerShell 5.1 and PowerShell 7.
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $script:SerenJsonWriter = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput(), $utf8NoBom)
     $script:SerenJsonWriter.AutoFlush = $true
@@ -93,9 +116,18 @@ function Send-SerenEvent {
     if ($script:SerenJsonWriter) {
         $script:SerenJsonWriter.WriteLine($json)
     } else {
-        # Fallback for defensive safety when Enable-SerenJson has not initialized
-        # the dedicated stdout writer.
-        Write-Output $json
+        # DEFENSIVE ONLY. Enable-SerenJson always builds the writer, so getting
+        # here means something set $script:SerenJson without it - a bug, and one
+        # worth being noisy about rather than silently papering over.
+        #
+        # Deliberately NOT Write-Output: that is the exact defect this function
+        # was rewritten to remove (success-stream pollution corrupting every
+        # value-returning helper). [Console]::Out with an explicit Flush stays
+        # off the success stream and still survives redirection, so it is the
+        # safe degraded path rather than a trapdoor back to the old bug.
+        [Console]::Error.WriteLine("seren: JSON writer uninitialised - Enable-SerenJson was skipped")
+        [Console]::Out.WriteLine($json)
+        [Console]::Out.Flush()
     }
 }
 
@@ -192,9 +224,17 @@ function Get-SerenDescribe {
         flags          = $flags
         params         = $params
     }
-    # See Send-SerenEvent for why this is Write-Output rather than
-    # [Console]::Out.WriteLine - the short version is that the latter does not
-    # survive being redirected into a pipe by a parent process.
+    # Write-Output is CORRECT here, unlike in Send-SerenEvent, and the
+    # difference is worth stating rather than cross-referencing:
+    #
+    # --describe runs BEFORE Enable-SerenJson (the installers answer it ahead
+    # of their arg loop so it has zero side effects), so the dedicated stdout
+    # writer does not exist yet. And this is a terminal one-shot write - the
+    # caller emits this object and immediately exits, so nothing captures a
+    # return value and there is nothing for the success stream to corrupt.
+    #
+    # Send-SerenEvent is the opposite case: it fires from inside helpers whose
+    # return values ARE captured, which is why it needs its own writer.
     Write-Output ($obj | ConvertTo-Json -Compress -Depth 5)
 }
 
