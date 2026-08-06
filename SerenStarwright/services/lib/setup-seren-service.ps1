@@ -153,11 +153,18 @@ Ok "logs:    $OutLog / $(Split-Path $ErrLog -Leaf)"
 # -- clean reinstall if a service by this name exists ------------------------
 $exists = (& sc.exe query $ServiceName) 2>$null | Select-String "SERVICE_NAME"
 if ($exists) {
-  Step "Existing '$ServiceName' found - stopping and removing for a clean reinstall"
-  & $nssm stop   $ServiceName 2>$null | Out-Null
-  Start-Sleep -Seconds 2
-  & $nssm remove $ServiceName confirm | Out-Null
-  Start-Sleep -Seconds 2
+  $state = (& nssm status $ServiceName)
+  if ($($state -match "SERVICE_STOPPED")) {
+    Step "Existing '$ServiceName' found (stopped) - removing for a clean reinstall"
+    & $nssm remove $ServiceName confirm | Out-Null
+    Start-Sleep -Seconds 2
+  } else {
+    Step "Existing '$ServiceName' found (running) - stopping and removing for a clean reinstall"
+    & $nssm stop   $ServiceName 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    & $nssm remove $ServiceName confirm | Out-Null
+    Start-Sleep -Seconds 2
+  }
   Ok "old service removed"
 }
 
