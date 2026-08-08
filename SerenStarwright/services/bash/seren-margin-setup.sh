@@ -65,6 +65,8 @@ USE_PYPI=false
 REF=""
 REPO=""
 INSTALL_SERVICE=false
+# Empty = the unit runs as whoever installs it. Only meaningful with --service.
+SERVICE_USER=""
 MCP=false
 UPDATES_OFF=false
 INSTANCE=""
@@ -100,8 +102,8 @@ while [[ $# -gt 0 ]]; do
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
-    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
+    --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
@@ -216,7 +218,7 @@ ok "Config written"
 write_launcher "$APP_DIR" "seren-margin" "$VPY" "seren_margin" "$CFG_PATH"
 
 # -- 6. optional autostart ----------------------------------------------------
-$INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-margin" "$APP_DIR" "" "$INSTANCE" "$VENV_DIR"
+$INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-margin" "$APP_DIR" "" "$INSTANCE" "$VENV_DIR" "$SERVICE_USER"
 
 # -- done -------------------------------------------------------------------
 echo

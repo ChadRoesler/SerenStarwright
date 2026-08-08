@@ -44,7 +44,11 @@ param(
   [string]    $HealthPath     = "/health",
   [switch]    $NoHealthCheck,
   [string]    $DotnetBin      = "dotnet",
-  [switch]    $RunAsLocalSystem
+  [switch]    $RunAsLocalSystem,
+  # Who the service logs on as. Blank means ".\<you>". The PASSWORD is
+  # deliberately not a parameter - it arrives in $env:SEREN_SERVICE_PASSWORD.
+  # Same contract as the Python core; see the identity section there for why.
+  [string]    $ServiceUser    = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -142,17 +146,52 @@ if ($EnvVars.Count -gt 0) {
 Ok "configured"
 
 # -- identity (run as you, same hard-won reason as the python core) -----------
+# Credential resolution is deliberately IDENTICAL to setup-seren-service.ps1:
+# LocalSystem, then the environment, then an interactive prompt, then a clear
+# refusal. Two cores, one contract - a divergence here would mean a service
+# installs from Starwright as a .NET job and hangs as a Python one, or vice
+# versa, which is exactly the kind of asymmetry nobody debugs twice.
 if ($RunAsLocalSystem) {
   Warn "Running as LocalSystem: '~' and caches resolve to the SYSTEM profile, not your user."
   & $nssm set $ServiceName ObjectName LocalSystem | Out-Null
+  if ($LASTEXITCODE -ne 0) { Die "nssm could not set the service identity to LocalSystem." }
+  Ok "service will run as LocalSystem"
 } else {
-  Step "Setting the service to run as you"
-  $cred  = Get-Credential -UserName ".\$env:USERNAME" `
-            -Message "Your Windows password - stored as the service logon so it runs as you."
-  $plain = $cred.GetNetworkCredential().Password
-  & $nssm set $ServiceName ObjectName "$($cred.UserName)" "$plain" | Out-Null
+  $account = $ServiceUser
+  if (-not $account) { $account = ".\$env:USERNAME" }
+  $plain = $env:SEREN_SERVICE_PASSWORD
+
+  if (-not $plain) {
+    # See the Python core for the full reasoning: IsOutputRedirected is true
+    # exactly when a parent process is reading our stdout, which is exactly
+    # when a prompt goes nowhere.
+    $canPrompt = -not ([Console]::IsOutputRedirected -or $env:SEREN_NONINTERACTIVE)
+    if ($canPrompt) {
+      Step "Setting the service to run as you"
+      Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
+      $cred = Get-Credential -UserName $account `
+                -Message "Your Windows password - stored as the service logon so it runs as you."
+      if (-not $cred) { Die "No credential supplied - the service exists but has no logon identity." }
+      $account = $cred.UserName
+      $plain   = $cred.GetNetworkCredential().Password
+    } else {
+      Die ("Cannot prompt for a password from a non-interactive run, and none was supplied.`n" +
+           "       Set SEREN_SERVICE_PASSWORD in the environment and pass -ServiceUser '$account',`n" +
+           "       or pass -RunAsLocalSystem if this service reads nothing from under ~.")
+    }
+  } else {
+    Step "Setting the service to run as $account (credential supplied by the environment)"
+  }
+
+  & $nssm set $ServiceName ObjectName "$account" "$plain" | Out-Null
+  $rc = $LASTEXITCODE
   $plain = $null
-  Ok "service will run as $($cred.UserName)"
+  if ($rc -ne 0) {
+    Die ("nssm could not set the logon identity for '$account'.`n" +
+         "       Usually a wrong password, or the account lacks 'Log on as a service'.`n" +
+         "       The service exists but will not start until this is fixed: nssm edit $ServiceName")
+  }
+  Ok "service will run as $account"
 }
 
 # -- start + health ----------------------------------------------------------

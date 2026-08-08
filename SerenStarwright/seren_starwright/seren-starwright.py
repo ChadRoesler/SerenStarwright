@@ -31,6 +31,7 @@ import asyncio
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import tempfile
@@ -285,6 +286,108 @@ UNIVERSAL_FLAGS = {"corp", "pypi", "ref", "repo", "wheel", "venv"}
 # Shown as inline checkboxes on the config row rather than buried in Advanced.
 INLINE_FLAGS = ["mcp", "vector", "service"]
 
+# Service IDENTITY - who the installed service logs on as.
+#
+# Machine-shaped like --corp (one box, one answer), but ALSO per-service
+# overridable, which is exactly why these are not in UNIVERSAL_FLAGS: that set
+# means "asked once, never per-service", and identity needs both.
+#
+# They are kept out of the generic Advanced renderer too, and that part is not
+# cosmetic. That renderer turns any unknown flag into a text Input, and
+# `local-system` is a SWITCH - build_command would emit
+# `-LocalSystem <whatever you typed>`, which PowerShell rejects outright
+# because a switch takes no positional argument. A checkbox is the only
+# correct widget for it.
+IDENTITY_FLAGS = {"service-user", "local-system"}
+
+# The password is NOT in that set and is NOT a flag at all. It reaches the
+# installers through the process environment - see Job.env and _run_one.
+SERVICE_PASSWORD_ENV = "SEREN_SERVICE_PASSWORD"
+
+
+def default_service_account() -> str:
+    """A sensible prefill for the service logon, spelled the way the OS wants.
+
+    Windows needs DOMAIN\\user or .\\user. A bare username is ambiguous, and
+    nssm will accept one happily and then leave you with a service that won't
+    start. On a non-domain box USERDOMAIN is just the machine name, where
+    '.\\' says the same thing more clearly.
+    """
+    if IS_WINDOWS:
+        user = os.environ.get("USERNAME", "")
+        if not user:
+            return ""
+        domain = os.environ.get("USERDOMAIN", "")
+        machine = os.environ.get("COMPUTERNAME", "")
+        if domain and domain.lower() != machine.lower():
+            return f"{domain}\\{user}"
+        return f".\\{user}"
+    return os.environ.get("USER", "") or ""
+
+
+# ── secrets ────────────────────────────────────────────────────────────────
+# Two separate mechanisms doing two separate jobs, and conflating them would
+# leave a real hole:
+#
+#   Job.env keeps the password OFF the command line. On Windows any process can
+#   read another process's arguments through WMI, so a --password flag is
+#   exposed no matter how clean the log is. No amount of redaction fixes that.
+#
+#   SecretRegistry keeps secrets out of the LOG PANE. Different leak, different
+#   cause - and it catches one that argv-avoidance never could: the installers
+#   print "Bearer token: <value>", and under --json every Write-Host is shadowed
+#   onto stderr, which this screen pumps straight into the log. Tokens have been
+#   landing in here all along.
+_SECRET_LINE = re.compile(r"((?:bearer\s+)?token\s*[:=]\s*)(\S+)", re.IGNORECASE)
+_MASK = "••••••••"
+
+
+class SecretRegistry:
+    """Known secret strings, plus a pattern for secrets we can't know up front."""
+
+    def __init__(self) -> None:
+        self._values: set[str] = set()
+
+    def add(self, value: Optional[str]) -> None:
+        # Very short values are skipped deliberately. A 1-3 character "secret"
+        # would match all over ordinary output and turn the log into confetti;
+        # any real password or token is comfortably longer, so nothing worth
+        # hiding is lost by the floor.
+        if value and len(value) >= 4:
+            self._values.add(value)
+
+    def redact(self, text: str) -> str:
+        # Longest first, so a secret containing another secret as a substring is
+        # masked whole instead of leaving a readable tail behind.
+        for value in sorted(self._values, key=len, reverse=True):
+            if value in text:
+                text = text.replace(value, _MASK)
+        return _SECRET_LINE.sub(lambda m: m.group(1) + _MASK, text)
+
+
+class RedactingLog:
+    """The ONLY way anything reaches the install log.
+
+    A wrapper rather than a RichLog subclass, on purpose: there is exactly one
+    write path, and no way to reach the widget's own .write() by habit and slip
+    past the redaction.
+    """
+
+    def __init__(self, log: RichLog, secrets: SecretRegistry) -> None:
+        self._log = log
+        self._secrets = secrets
+
+    def write(self, content: Any) -> None:
+        if isinstance(content, Text):
+            plain = content.plain
+            cleaned = self._secrets.redact(plain)
+            # Only rebuild when something actually changed: rebuilding discards
+            # the ANSI styling Text.from_ansi just parsed. That's a fair price
+            # on a redacted line and a pointless one on every other line.
+            self._log.write(Text(cleaned) if cleaned != plain else content)
+            return
+        self._log.write(self._secrets.redact(str(content)))
+
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Discovery
@@ -308,7 +411,8 @@ class ServiceDef:
     @property
     def advanced_flags(self) -> list[str]:
         """Everything that isn't universal, inline, or plumbing."""
-        skip = UNIVERSAL_FLAGS | set(INLINE_FLAGS) | {"describe", "json", "help"}
+        skip = (UNIVERSAL_FLAGS | set(INLINE_FLAGS) | IDENTITY_FLAGS
+                | {"describe", "json", "help"})
         return [f for f in self.flags if f not in skip]
 
 
@@ -359,6 +463,11 @@ class Job:
     label: str
     cmd: list[str]
     events_file: Optional[Path] = None
+    # Extra environment for this job's subprocess, merged over os.environ.
+    # This is how the service password travels: never as an argument, because
+    # command lines are readable by other processes on Windows and this screen
+    # echoes every command it runs into the log.
+    env: Optional[dict[str, str]] = None
 
 
 def _installer_dir() -> Path:
@@ -751,10 +860,17 @@ class AdvancedModal(ModalScreen[dict]):
 
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, svc: ServiceDef, current: dict) -> None:
+    def __init__(self, svc: ServiceDef, current: dict,
+                 identity_defaults: Optional[dict] = None,
+                 current_password: str = "") -> None:
         super().__init__()
         self.svc = svc
         self.current = dict(current)
+        # What the universal section answered. Shown as PLACEHOLDER text on the
+        # identity fields, so "leave it alone" visibly means "same as the rest"
+        # rather than looking like an empty, unanswered box.
+        self.identity_defaults = dict(identity_defaults or {})
+        self.current_password = current_password
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal"):
@@ -762,6 +878,36 @@ class AdvancedModal(ModalScreen[dict]):
             yield Static(f"{self.svc.package}  ·  default port "
                          f"{self.svc.default_port}", classes="modal-sub")
             with VerticalScroll(id="modal-body"):
+                # -- service identity ---------------------------------------
+                # A hand-built group rather than letting these fall through the
+                # generic loop below, for two reasons that both produce broken
+                # commands otherwise: `local-system` is a SWITCH and the generic
+                # loop would render it as a text box (emitting `-LocalSystem
+                # <text>`, which PowerShell refuses), and the password must be
+                # masked and must never become a flag at all.
+                svc_identity = [f for f in IDENTITY_FLAGS if f in self.svc.flags]
+                if svc_identity:
+                    yield Static("Service identity", classes="section")
+                    yield Static("blank = use the universal answer",
+                                 classes="modal-sub")
+                    if "local-system" in svc_identity:
+                        yield Checkbox("run as LocalSystem (no password)",
+                                       value=bool(self.current.get("local-system")),
+                                       id="adv-local-system")
+                    if "service-user" in svc_identity:
+                        yield Label("service account")
+                        yield Input(
+                            value=str(self.current.get("service-user", "")),
+                            placeholder=str(self.identity_defaults.get(
+                                "service-user", "")) or "(universal)",
+                            id="adv-service-user")
+                        if IS_WINDOWS:
+                            yield Label("password")
+                            yield Input(value=self.current_password,
+                                        password=True,
+                                        placeholder="(universal)",
+                                        id="adv-service-password")
+                    yield Rule()
                 for flag in self.svc.advanced_flags:
                     if flag in ("gen-token",):
                         yield Checkbox("generate a bearer token",
@@ -818,6 +964,30 @@ class AdvancedModal(ModalScreen[dict]):
                     out[flag] = True
             elif isinstance(w, Input) and w.value.strip():
                 out[flag] = w.value.strip()
+
+        # Identity, read explicitly - the widgets aren't uniform, so the loop
+        # above can't collect them. Each lookup is guarded because a given
+        # installer may not declare the flag at all, in which case the widget
+        # was never composed.
+        try:
+            if self.query_one("#adv-local-system", Checkbox).value:
+                out["local-system"] = True
+        except Exception:                            # noqa: BLE001
+            pass
+        try:
+            w = self.query_one("#adv-service-user", Input)
+            if w.value.strip():
+                out["service-user"] = w.value.strip()
+        except Exception:                            # noqa: BLE001
+            pass
+        try:
+            # Reserved key. The caller POPS this before anything is merged into
+            # per_service - that dict is handed straight to build_command, so a
+            # password left in it would become a command-line argument, which is
+            # the exact thing this whole design avoids.
+            out["_password"] = self.query_one("#adv-service-password", Input).value
+        except Exception:                            # noqa: BLE001
+            pass
         self.dismiss(out)
 
 
@@ -836,6 +1006,30 @@ class ConfigScreen(Screen):
             yield Checkbox("install from PyPI (--pypi)", value=True, id="u-pypi")
             yield Label("or pin a GitHub release tag (--ref, blank = PyPI)")
             yield Input(placeholder="v1.5.0", id="u-ref")
+
+            # -- service identity -------------------------------------------
+            # Asked once here and inherited by every service; override one
+            # service under its Configure button. Only has any effect on
+            # services you tick 'service' on.
+            #
+            # Windows-only for the password and the LocalSystem box: a systemd
+            # unit's User= is just a name, there is no credential to collect,
+            # and LocalSystem has no counterpart (running as root is simply
+            # --service-user root).
+            yield Static("Service account", classes="section")
+            yield Static(
+                "Used by any service installed with 'service' ticked. A service "
+                "running as the wrong account resolves ~ to a different profile - "
+                "it comes up healthy and its data store looks empty.",
+                classes="modal-sub")
+            if IS_WINDOWS:
+                yield Checkbox("run services as LocalSystem (no password)",
+                               id="u-local-system")
+            yield Label("service account")
+            yield Input(value=default_service_account(), id="u-service-user")
+            if IS_WINDOWS:
+                yield Label("password (never logged, never on a command line)")
+                yield Input(password=True, id="u-service-password")
             yield Rule()
             # Name on its own line, controls beneath. A single horizontal row
             # needed 107 columns for Loci (it has the extra 'vector' extra) and
@@ -873,9 +1067,15 @@ class ConfigScreen(Screen):
         elif bid.startswith("adv-"):
             name = bid[4:]
             svc = self.app.svc_map[name]                 # type: ignore[attr-defined]
+            # Refresh the universal answers BEFORE opening the dialog, so its
+            # identity placeholders show what's currently typed on this screen
+            # rather than whatever was there the last time Install was pressed.
+            self._collect()
             cur = self.app.per_service.get(name, {})     # type: ignore[attr-defined]
-            self.app.push_screen(AdvancedModal(svc, cur),
-                                 lambda res, n=name: self._save_adv(n, res))
+            self.app.push_screen(
+                AdvancedModal(svc, cur, self.app.universal,          # type: ignore[attr-defined]
+                              self.app.service_passwords.get(name, "")),  # type: ignore[attr-defined]
+                lambda res, n=name: self._save_adv(n, res))
         elif bid == "go":
             self._collect()
             warn = port_conflicts(self.app.selected, self.app.svc_map,       # type: ignore[attr-defined]
@@ -888,14 +1088,58 @@ class ConfigScreen(Screen):
                 Job(label=self.app.svc_map[n].display,         # type: ignore[attr-defined]
                     cmd=build_command(self.app.svc_map[n],     # type: ignore[attr-defined]
                                       self.app.per_service.get(n, {}),  # type: ignore[attr-defined]
-                                      self.app.universal))     # type: ignore[attr-defined]
+                                      self.app.universal),     # type: ignore[attr-defined]
+                    env=self._job_env(n))
                 for n in self.app.selected                     # type: ignore[attr-defined]
             ]
             self.app.push_screen(InstallScreen())
 
+    # -- identity plumbing -----------------------------------------------
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """LocalSystem and a user/password pair are mutually exclusive.
+
+        Disabling rather than hiding, deliberately: the fields stay visible so
+        it's obvious WHY they no longer apply, instead of the form silently
+        losing two rows and looking like it forgot something.
+        """
+        if (event.checkbox.id or "") != "u-local-system":
+            return
+        for wid in ("#u-service-user", "#u-service-password"):
+            try:
+                self.query_one(wid, Input).disabled = event.value
+            except Exception:                            # noqa: BLE001
+                pass
+
+    def _job_env(self, name: str) -> dict[str, str]:
+        """The extra environment one installer subprocess gets.
+
+        SEREN_NONINTERACTIVE is set unconditionally. Starwright always runs
+        installers with their stdout on a pipe, so a credential prompt would
+        hang forever behind a TUI that owns the terminal. Stating it outright
+        beats making the scripts infer it: they refuse with instructions
+        instead of stalling with no output at all.
+
+        A per-service password beats the universal one; either is passed by
+        ENVIRONMENT, never as an argument.
+        """
+        env = {"SEREN_NONINTERACTIVE": "1"}
+        pw = (self.app.service_passwords.get(name)       # type: ignore[attr-defined]
+              or self.app.service_password)              # type: ignore[attr-defined]
+        if pw:
+            env[SERVICE_PASSWORD_ENV] = pw
+        return env
+
     def _save_adv(self, name: str, result: Optional[dict]) -> None:
-        if result:
-            self.app.per_service.setdefault(name, {}).update(result)  # type: ignore[attr-defined]
+        if not result:
+            return
+        # Pop the password out BEFORE anything reaches per_service. That dict is
+        # handed straight to build_command, so a key left in it here becomes a
+        # command-line argument - the one outcome this design exists to prevent.
+        pw = result.pop("_password", None)
+        if pw is not None:
+            self.app.service_passwords[name] = pw        # type: ignore[attr-defined]
+            self.app.secrets.add(pw)                     # type: ignore[attr-defined]
+        self.app.per_service.setdefault(name, {}).update(result)  # type: ignore[attr-defined]
 
     def _collect(self) -> None:
         u: dict[str, Any] = {}
@@ -908,7 +1152,37 @@ class ConfigScreen(Screen):
             u["ref"] = ref                       # a tag beats PyPI
         elif self.query_one("#u-pypi", Checkbox).value:
             u["pypi"] = True
+
+        # -- identity. Note what goes where: the ACCOUNT is a flag and lands in
+        # `universal` (build_command will render it as an argument, which is
+        # correct and harmless). The PASSWORD goes onto the app object instead,
+        # because everything in `universal` becomes argv.
+        local_system = False
+        try:
+            local_system = self.query_one("#u-local-system", Checkbox).value
+        except Exception:                            # noqa: BLE001
+            pass                                     # not rendered off-Windows
+        if local_system:
+            u["local-system"] = True
+        else:
+            try:
+                acct = self.query_one("#u-service-user", Input).value.strip()
+                if acct:
+                    u["service-user"] = acct
+            except Exception:                        # noqa: BLE001
+                pass
         self.app.universal = u                   # type: ignore[attr-defined]
+
+        pw = ""
+        try:
+            pw = self.query_one("#u-service-password", Input).value
+        except Exception:                            # noqa: BLE001
+            pass
+        # LocalSystem needs no credential, so drop any password that was typed
+        # before the box was ticked rather than shipping it to a run that will
+        # ignore it.
+        self.app.service_password = "" if local_system else pw   # type: ignore[attr-defined]
+        self.app.secrets.add(self.app.service_password)          # type: ignore[attr-defined]
 
         for name in self.app.selected:           # type: ignore[attr-defined]
             svc = self.app.svc_map[name]         # type: ignore[attr-defined]
@@ -1154,7 +1428,8 @@ class InstallScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        log = self.query_one("#log", RichLog)
+        log = RedactingLog(self.query_one("#log", RichLog),
+                           self.app.secrets)             # type: ignore[attr-defined]
         for p in self.app.problems:                      # type: ignore[attr-defined]
             log.write(f"[yellow]discovery: {p}[/]")
         jobs = self.app.jobs                             # type: ignore[attr-defined]
@@ -1171,7 +1446,10 @@ class InstallScreen(Screen):
         asyncio.create_task(self._run_all())
 
     async def _run_all(self) -> None:
-        log = self.query_one("#log", RichLog)
+        # Wrapped once, here, and passed down. Every write below - the echoed
+        # command line, the JSON events, the raw stderr - goes through it.
+        log = RedactingLog(self.query_one("#log", RichLog),
+                           self.app.secrets)             # type: ignore[attr-defined]
         bar = self.query_one("#bar", ProgressBar)
         cur = self.query_one("#current", Static)
         jobs: list[Job] = list(self.app.jobs)            # type: ignore[attr-defined]
@@ -1194,7 +1472,7 @@ class InstallScreen(Screen):
                   else "[red]Fix the above and run again.[/]")
         self.query_one("#run", Button).disabled = False
 
-    def _render_event(self, label: str, ev: dict, log: RichLog) -> None:
+    def _render_event(self, label: str, ev: dict, log: "RedactingLog") -> None:
         """One vocabulary for both halves of the stack."""
         kind = ev.get("event")
         if kind == "done":
@@ -1220,12 +1498,17 @@ class InstallScreen(Screen):
         elif kind == "phase_done":
             log.write(f"  ✓ {ev.get('label','')}")
 
-    async def _run_one(self, job: Job, log: RichLog) -> int:
+    async def _run_one(self, job: Job, log: "RedactingLog") -> int:
         label = job.label
         try:
+            # env=None inherits, which is what every job without a secret wants.
+            # When there IS one we merge OVER os.environ rather than replacing
+            # it: a bare dict would strip PATH, SystemRoot and friends, and the
+            # installer would fail somewhere far away from the actual cause.
+            job_env = {**os.environ, **job.env} if job.env else None
             proc = await asyncio.create_subprocess_exec(
                 *job.cmd, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE)
+                stderr=asyncio.subprocess.PIPE, env=job_env)
         except FileNotFoundError as e:
             log.write(f"[red]cannot run {job.cmd[0]}: {e}[/]")
             return 127
@@ -1397,6 +1680,13 @@ class StarwrightApp(App):
         self.jobs: list[Job] = []
         self.node: Optional[NodeDef] = None
         self.node_problem: Optional[str] = None
+        # Passwords live HERE and deliberately NOT in `universal` or
+        # `per_service`. Those two dicts are precisely what build_command turns
+        # into a command line, so anything put in them becomes an argument -
+        # which is the one place a password must never be.
+        self.service_password: str = ""
+        self.service_passwords: dict[str, str] = {}
+        self.secrets = SecretRegistry()
 
     def on_mount(self) -> None:
         # Ask the machine what it is before drawing the splash, so the Prepare
