@@ -25,8 +25,13 @@ param(
   [string] $RepoDir    = "",
   [switch] $Pypi,
   [switch] $Mcp,
-  [switch] $Updates,
   [switch] $NoUpdates,
+  # -- service identity (only meaningful alongside -Service) -------------------
+  # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
+  # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
+  # readable by any other process.
+  [string] $ServiceUser = "",
+  [switch] $LocalSystem,
   [switch] $Service,
   [string] $Instance   = "",
   [string] $VenvDir    = ""
@@ -135,7 +140,6 @@ if ($Wheel) {
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyExe -PyArgs $pyArgs
-if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
 $extras = Get-Extras-Suffix -Mcp:$Mcp
 Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras $extras -Label " ($(if ($Mcp) { ' + MCP SDK' } else { '' }))"
 if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue }
@@ -160,7 +164,7 @@ server:
   host: $MarginHost
   port: $Port
   db_path: ~/.seren-margin$dbInstance/notes.db
-"@ | Set-Content -Path $CfgPath -Encoding UTF8
+"@ | Write-SerenTextFile -Path $CfgPath
 Ok "Config written"
 
 if ($NoUpdates) {
@@ -174,7 +178,7 @@ if ($NoUpdates) {
 # SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
 updates:
   enabled: false
-"@ | Add-Content -Path $CfgPath -Encoding UTF8
+"@ | Add-SerenTextFile -Path $CfgPath
     Ok "Update checking disabled in config"
 }
 
@@ -182,7 +186,7 @@ updates:
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-margin" -Vpy $vpy -Module "seren_margin" -CfgPath $CfgPath
 
 # -- 6. optional autostart ----------------------------------------------------
-if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-margin" -AppDir $AppDir -Token $Token -VenvDir $VenvDir }
+if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-margin" -AppDir $AppDir -Token $Token -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem }
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($MarginHost -eq "0.0.0.0") { "127.0.0.1" } else { $MarginHost }

@@ -64,6 +64,11 @@ param(
 
   # -- identity (the run-as) ----------------------------------------------------
   [switch] $RunAsLocalSystem,   # NOT recommended - see the warning it prints
+  # Who the service logs on as. Blank means ".\<you>". Supplying it explicitly
+  # is what lets a non-interactive caller (Starwright) install a service with
+  # no credential prompt. The PASSWORD is deliberately NOT a parameter - see
+  # the identity section near the bottom for why.
+  [string] $ServiceUser = "",
 
   # -- inline env vars ----------------------------------------------------------
   # Injected into the NSSM service via AppEnvironmentExtra. The wrapper supplies
@@ -125,7 +130,13 @@ if (-not $NoHealthCheck -and $HealthPort -eq 0 -and (Test-Path $ConfigPath)) {
 import sys
 try:
     import yaml
-    cfg = yaml.safe_load(open(sys.argv[1], encoding='utf-8')) or {}
+    # utf-8-SIG, not utf-8: it strips a BOM when one is present and is
+    # identical otherwise. Configs written by an older installer under Windows
+    # PowerShell 5.1 carry one, and plain 'utf-8' leaves it in the string,
+    # where PyYAML rejects it as "unacceptable character #xfeff" - which read
+    # here as READ_FAILED and silently skipped the health check. Write strict,
+    # read lenient.
+    cfg = yaml.safe_load(open(sys.argv[1], encoding='utf-8-sig')) or {}
     node = cfg
     for part in sys.argv[2].split('.'):
         node = node[part]
@@ -189,19 +200,79 @@ if ($ExtraEnv.Count -gt 0) {
 Ok "configured"
 
 # -- identity (hard-won fix #2) -----------------------------------------------
+#
+#  HOW THE CREDENTIAL ARRIVES, and why the password is not a parameter.
+#
+#  This used to call Get-Credential unconditionally. That works when a human
+#  runs the script in an elevated console and breaks completely when anything
+#  else does: Starwright launches installers with stdout and stderr on pipes
+#  and owns the terminal itself, so a credential prompt there is either an
+#  invisible hang or a flat error. Same failure the bash half already guards
+#  against with sudo_ready() before node prep - never prompt from inside a run
+#  some other program is driving.
+#
+#  Identity now resolves in this order:
+#    1. -RunAsLocalSystem            -> LocalSystem, with the warning it earns
+#    2. $env:SEREN_SERVICE_PASSWORD  -> use it with -ServiceUser, no prompt
+#    3. genuinely interactive        -> Get-Credential, exactly as before
+#    4. otherwise                    -> Die, and say precisely what to supply
+#
+#  The password rides in the ENVIRONMENT rather than as a -Password parameter
+#  because on Windows a command line is not private: any process can read
+#  another process's arguments through WMI, and Starwright echoes each command
+#  it runs into its log pane. An environment variable is visible to this
+#  process and its children and nothing else. Redacting the log alone would
+#  have hidden the symptom and left the exposure.
 if ($RunAsLocalSystem) {
   Warn "Running as LocalSystem: '~' and caches resolve to the SYSTEM profile, NOT your user."
   Warn "Only safe if your config uses ABSOLUTE paths AND nothing caches under ~."
   Warn "Otherwise your data store will look empty."
   & $nssm set $ServiceName ObjectName LocalSystem | Out-Null
+  if ($LASTEXITCODE -ne 0) { Die "nssm could not set the service identity to LocalSystem." }
+  Ok "service will run as LocalSystem"
 } else {
-  Step "Setting the service to run as you (so ~, data dirs, and caches resolve to your profile)"
-  $cred  = Get-Credential -UserName ".\$env:USERNAME" `
-            -Message "Your Windows password - stored as the service logon so it runs as you."
-  $plain = $cred.GetNetworkCredential().Password
-  & $nssm set $ServiceName ObjectName "$($cred.UserName)" "$plain" | Out-Null
+  $account = $ServiceUser
+  if (-not $account) { $account = ".\$env:USERNAME" }
+  $plain = $env:SEREN_SERVICE_PASSWORD
+
+  if (-not $plain) {
+    # IsOutputRedirected is the honest test for "will anyone SEE a prompt":
+    # false in a real console, true the moment a parent process is reading our
+    # stdout - which is exactly when prompting fails. UserInteractive reports
+    # the window station and stays true even for a piped child, so it would
+    # have lied here.
+    $canPrompt = -not ([Console]::IsOutputRedirected -or $env:SEREN_NONINTERACTIVE)
+    if ($canPrompt) {
+      Step "Setting the service to run as you (so ~, data dirs, and caches resolve to your profile)"
+      # By NAME if at all, never by absolute path: the old
+      # C:\Windows\System32\WindowsPowerShell\v1.0\... path does not exist
+      # under PowerShell 7, so loading it threw before Get-Credential was ever
+      # reached. Get-Credential autoloads anyway - this is belt and braces,
+      # and silent when unnecessary.
+      Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
+      $cred = Get-Credential -UserName $account `
+                -Message "Your Windows password - stored as the service logon so it runs as you."
+      if (-not $cred) { Die "No credential supplied - the service exists but has no logon identity." }
+      $account = $cred.UserName
+      $plain   = $cred.GetNetworkCredential().Password
+    } else {
+      Die ("Cannot prompt for a password from a non-interactive run, and none was supplied.`n" +
+           "       Set SEREN_SERVICE_PASSWORD in the environment and pass -ServiceUser '$account',`n" +
+           "       or pass -RunAsLocalSystem if this service's config uses absolute paths only.")
+    }
+  } else {
+    Step "Setting the service to run as $account (credential supplied by the environment)"
+  }
+
+  & $nssm set $ServiceName ObjectName "$account" "$plain" | Out-Null
+  $rc = $LASTEXITCODE
   $plain = $null   # don't leave it lying around
-  Ok "service will run as $($cred.UserName)"
+  if ($rc -ne 0) {
+    Die ("nssm could not set the logon identity for '$account'.`n" +
+         "       Usually a wrong password, or the account lacks 'Log on as a service'.`n" +
+         "       The service exists but will not start until this is fixed: nssm edit $ServiceName")
+  }
+  Ok "service will run as $account"
 }
 
 # -- start + health check + show the error if it sulks ------------------------

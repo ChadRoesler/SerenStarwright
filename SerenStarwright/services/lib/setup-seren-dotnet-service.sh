@@ -93,6 +93,9 @@ NO_HEALTH_CHECK=false
 MEMORY_MAX="none"
 LAUNCHD_PREFIX="com.chadroesler"
 DOTNET_BIN="dotnet"
+# Empty = run as the invoking user. Same contract as the Python core; see the
+# warning at the User= line for why any other value deserves a second look.
+SERVICE_USER=""
 declare -a ENV_LINES=()
 
 # macOS publishes osx-* RIDs, not linux-*; flip the default if unset later.
@@ -121,6 +124,7 @@ while [[ $# -gt 0 ]]; do
     --memory-max)      MEMORY_MAX="$2"; shift 2 ;;
     --launchd-prefix)  LAUNCHD_PREFIX="$2"; shift 2 ;;
     --dotnet)          DOTNET_BIN="$2"; shift 2 ;;
+    --service-user)    SERVICE_USER="$2"; shift 2 ;;
     -h|--help)         sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)                 die "unknown flag: $1  (try --help)" ;;
   esac
@@ -130,6 +134,25 @@ done
 [[ -n "$EXEC_NAME"    ]] || die "--exec-name is required"
 [[ -n "$DEPLOY_DIR"   ]] || die "--deploy-dir is required"
 [[ -n "$DESCRIPTION"  ]] || DESCRIPTION="$SERVICE_NAME - seren constellation service"
+
+# -- who the unit runs as -----------------------------------------------------
+# Identical contract to setup-seren-service.sh, and identical warning, because
+# it is the identical trap: a unit running as a different user resolves ~ to
+# that user's home, so a config pointing at ~/.seren-<thing> silently becomes a
+# brand new empty store while the real data sits untouched on disk. The service
+# comes up healthy and answers every query with nothing.
+RUN_AS="${SERVICE_USER:-$(id -un)}"
+if [[ -n "$SERVICE_USER" && "$SERVICE_USER" != "$(id -un)" ]]; then
+  warn "This unit will run as '$SERVICE_USER', not '$(id -un)'."
+  warn "Any '~' in its config now resolves to ${SERVICE_USER}'s home, NOT yours."
+  warn "Use absolute paths in the config, or drop --service-user."
+  if $IS_MAC; then
+    warn "macOS: a launchd USER AGENT always runs as the logged-in user -"
+    warn "--service-user cannot be honoured here and is being ignored."
+    RUN_AS="$(id -un)"
+  fi
+fi
+ok "run as:  $RUN_AS"
 
 # Expand a leading ~ ourselves: we build absolute paths for the unit, and the
 # unit never goes through a shell that would expand it.
@@ -273,7 +296,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=$(id -un)
+User=$RUN_AS
 WorkingDirectory=$DEPLOY_DIR
 ExecStart=$EXEC_START
 $( [[ -n "$ENV_DIRECTIVES" ]] && printf '%s' "$ENV_DIRECTIVES" )

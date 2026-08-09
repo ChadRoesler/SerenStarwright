@@ -25,8 +25,13 @@ param(
   [switch] $Service,
   [switch] $Mcp,
   [switch] $Corp,
-  [switch] $Updates,
   [switch] $NoUpdates,
+  # -- service identity (only meaningful alongside -Service) -------------------
+  # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
+  # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
+  # readable by any other process.
+  [string] $ServiceUser = "",
+  [switch] $LocalSystem,
   [switch] $Vector,
   [string] $Instance  = "",
   [string] $VenvDir   = "",
@@ -55,7 +60,7 @@ function Find-Upward {
 $lib = Find-Upward "services\lib\seren-install-lib.ps1"
 if (-not $lib) { Write-Host "ERROR: seren-install-lib.ps1 not found. Keep services/lib/ with shared scripts." -ForegroundColor Red; exit 1 }
 . $lib
-
+
 
 # -- Starwright contracts -----------------------------------------------------
 # -Describe answers with ZERO side effects, so it runs before anything else.
@@ -99,7 +104,6 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-loci"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
-if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
 $extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp -Vector:$Vector
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " (web stack$(if ($Vector) { ' + sqlite-vec + sentence-transformers/torch' } else { '' })$(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
@@ -133,7 +137,7 @@ server:
 
 storage:
   db_path: ~/.seren-loci$dbInstance/loci.db$vectorBlock$tlsBlock
-"@ | Set-Content -Path $CfgPath -Encoding UTF8
+"@ | Write-SerenTextFile -Path $CfgPath
 Ok "Config written"
 
 if ($NoUpdates) {
@@ -147,7 +151,7 @@ if ($NoUpdates) {
 # SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
 updates:
   enabled: false
-"@ | Add-Content -Path $CfgPath -Encoding UTF8
+"@ | Add-SerenTextFile -Path $CfgPath
     Ok "Update checking disabled in config"
 }
 
@@ -155,7 +159,7 @@ updates:
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-loci" -Vpy $vpy -Module "seren_loci" -CfgPath $CfgPath
 
 # -- 6. optional autostart ----------------------------------------------------
-if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-loci" -AppDir $AppDir -Token $Token -VenvDir $VenvDir }
+if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-loci" -AppDir $AppDir -Token $Token -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem }
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($LociHost -eq "0.0.0.0") { "127.0.0.1" } else { $LociHost }

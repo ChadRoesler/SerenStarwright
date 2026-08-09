@@ -18,7 +18,7 @@
 #
 #  USAGE
 #    bash setup-seren-python-service.sh \
-#      --service seren-memory \
+#      --service-name seren-memory \
 #      --module  seren_memory \
 #      --package seren-memory \
 #      --default-port 7420 \
@@ -29,7 +29,10 @@
 #      --viewer halls.html
 #
 #  FLAGS
-#    --service NAME        Service name (seren-memory, seren-loci, etc.)
+#    --service-name NAME   Service name (seren-memory, seren-loci, etc.)
+#                          NOT --service: that is the user-facing autostart
+#                          switch below, and the two used to collide. See the
+#                          note on the case block.
 #    --module NAME         Python module name (seren_memory, seren_loci, etc.)
 #    --package NAME        PyPI package name (seren-memory, seren-loci, etc.)
 #    --default-port N      Default port for this service
@@ -79,12 +82,27 @@ VENV_DIR=""; APP_DIR=""; CONFIG_FILE=""; REPO=""; VIEWER=""; EXTRAS=""
 # -- user-facing flags (passed through from pointed wrapper) -------------------
 PORT=""; HOST=""; TOKEN=""; GEN_TOKEN=false; WHEEL=""; REF=""
 INSTALL_SERVICE=false; MCP=false; CORP=false; VECTOR=false
-INSTANCE=""; VENV_OVERRIDE=""
+INSTANCE=""; VENV_OVERRIDE=""; SERVICE_USER=""
 
+# COLLISION THAT WAS HERE, and why the identity flag is now --service-name:
+#
+#   --service)  SERVICE="$2"; shift 2 ;;        # identity
+#   ...
+#   --service)  INSTALL_SERVICE=true; shift ;;  # user-facing autostart switch
+#
+# A bash `case` takes the FIRST matching pattern, so the second branch was
+# unreachable. --service never enabled autostart; it silently overwrote the
+# service NAME with whatever came next and ate that argument too. Passing
+# `--service --mcp` left SERVICE='--mcp', INSTALL_SERVICE=false and MCP=false -
+# three wrong answers from one duplicated pattern, none of them an error.
+#
+# Nothing on the live path calls this file (the real installers use
+# setup_autostart from seren-install-lib.sh), so this was a landmine waiting
+# for the next service written from the template rather than a live outage.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     # identity
-    --service)      SERVICE="$2"; shift 2 ;;
+    --service-name) SERVICE="$2"; shift 2 ;;
     --module)       MODULE="$2"; shift 2 ;;
     --package)      PACKAGE="$2"; shift 2 ;;
     --default-port) DEFAULT_PORT="$2"; shift 2 ;;
@@ -108,7 +126,10 @@ while [[ $# -gt 0 ]]; do
     --vector)       VECTOR=true; shift ;;
     --instance)     INSTANCE="$2"; shift 2 ;;
     --venv)         VENV_OVERRIDE="$2"; shift 2 ;;
-    -h|--help)      sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --service-user) SERVICE_USER="$2"; shift 2 ;;
+    # Header printed by SHAPE, not by a hardcoded line range - a magic number
+    # here silently truncates --help every time the header grows.
+    -h|--help)      awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *)              die "unknown flag: $1  (try --help)" ;;
   esac
 done
@@ -304,9 +325,23 @@ if $INSTALL_SERVICE; then
       printf '%s=%s\n' "$env_var" "$TOKEN" > "$APP_DIR/${SERVICE}.env"
       chmod 600 "$APP_DIR/${SERVICE}.env"
     fi
-    local venv_flag=""
+    # NOT `local`. This block is at script top level, not inside a function,
+    # and bash rejects `local` outside a function at RUNTIME with exit 1 -
+    # which under `set -euo pipefail` killed the install right here, after five
+    # phases of real work, with the memorable message
+    # "local: can only be used in a function".
+    #
+    # `bash -n` does NOT catch this. It parses perfectly and only fails when
+    # the line is actually reached, which is why it survived: the --service
+    # collision above meant INSTALL_SERVICE was never true, so this branch was
+    # unreachable and the bug never got a chance to fire. Two defects, the
+    # first one hiding the second.
+    venv_flag=""
     [[ -n "$VENV_DIR" ]] && venv_flag="--venv $VENV_DIR"
-    bash "$WRAPPER" $venv_flag --instance "${INSTANCE}" || die "service install failed"
+    user_flag=""
+    [[ -n "$SERVICE_USER" ]] && user_flag="--service-user $SERVICE_USER"
+    # Unquoted on purpose: flag+value pairs that must word-split, empty if unset.
+    bash "$WRAPPER" $venv_flag $user_flag --instance "${INSTANCE}" || die "service install failed"
   else
     warn "setup-${SERVICE#seren-}-service.sh not found. Run it manually:"
     warn "  bash setup-${SERVICE#seren-}-service.sh --instance '${INSTANCE}'"

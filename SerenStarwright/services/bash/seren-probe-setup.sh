@@ -59,6 +59,8 @@ WHEEL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
+# Empty = the unit runs as whoever installs it. Only meaningful with --service.
+SERVICE_USER=""
 UPDATES_OFF=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/probe"
@@ -88,8 +90,8 @@ while [[ $# -gt 0 ]]; do
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
-    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
+    --service-user) SERVICE_USER="$2"; shift 2 ;;
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
@@ -181,7 +183,7 @@ ok "Config written"
 write_launcher "$APP_DIR" "seren-probe" "$VPY" "seren_probe" "$CFG_PATH"
 
 # -- 6. optional autostart ----------------------------------------------------
-$INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-probe" "$APP_DIR" "" "$INSTANCE" "$VENV_DIR"
+$INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-probe" "$APP_DIR" "" "$INSTANCE" "$VENV_DIR" "$SERVICE_USER"
 
 # -- done -------------------------------------------------------------------
 echo

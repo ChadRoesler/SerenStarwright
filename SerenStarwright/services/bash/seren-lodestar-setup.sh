@@ -68,6 +68,8 @@ WHEEL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
+# Empty = the unit runs as whoever installs it. Only meaningful with --service.
+SERVICE_USER=""
 MCP=false
 UPDATES_OFF=false
 CORP=false
@@ -108,8 +110,8 @@ while [[ $# -gt 0 ]]; do
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
-    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
+    --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
@@ -224,7 +226,7 @@ write_launcher "$APP_DIR" "seren-lodestar" "$VPY" "seren_lodestar" "$CFG_PATH"
 
 # -- 6. optional autostart ------------------------------------------------------
 if $INSTALL_SERVICE; then
-  setup_autostart "$SCRIPT_DIR" "seren-lodestar" "$APP_DIR" "$TOKEN" "$INSTANCE" "$VENV_DIR"
+  setup_autostart "$SCRIPT_DIR" "seren-lodestar" "$APP_DIR" "$TOKEN" "$INSTANCE" "$VENV_DIR" "$SERVICE_USER"
 fi
 
 # -- done -----------------------------------------------------------------------
