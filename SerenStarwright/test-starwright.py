@@ -149,6 +149,13 @@ async def test_modal() -> None:
     print("\n== Advanced modal")
     services, problems = sw.discover()
     app = sw.StarwrightApp(services, problems)
+
+    def active_modal() -> sw.AdvancedModal | None:
+        for scr in reversed(app.screen_stack):
+            if isinstance(scr, sw.AdvancedModal):
+                return scr
+        return None
+
     async with app.run_test(size=(110, 44)) as pilot:
         await pilot.click("#install")
         await pilot.pause()
@@ -159,8 +166,10 @@ async def test_modal() -> None:
         await pilot.pause()
         await pilot.click(f"#adv-{target}")
         await pilot.pause()
-        m = app.screen
-        check(isinstance(m, sw.AdvancedModal), "modal opened")
+        m = active_modal()
+        check(m is not None, "modal opened")
+        if m is None:
+            return
         d = m.query_one("#modal")
         centred = abs(d.region.x - (110 - d.region.width) // 2) <= 1
         check(centred, f"centred horizontally (x={d.region.x}, w={d.region.width})")
@@ -176,7 +185,11 @@ async def test_modal() -> None:
         # a real edit round-trips
         await pilot.click(f"#adv-{target}")
         await pilot.pause()
-        app.screen.query_one("#adv-port", Input).value = "9999"
+        m = active_modal()
+        check(m is not None, "modal reopened for edit")
+        if m is None:
+            return
+        m.query_one("#adv-port", Input).value = "9999"
         await pilot.click("#ok")
         await pilot.pause()
         check(app.per_service.get(target, {}).get("port") == "9999", "edited port saved")
@@ -184,7 +197,11 @@ async def test_modal() -> None:
         # escape discards
         await pilot.click(f"#adv-{target}")
         await pilot.pause()
-        app.screen.query_one("#adv-port", Input).value = "1234"
+        m = active_modal()
+        check(m is not None, "modal reopened for cancel")
+        if m is None:
+            return
+        m.query_one("#adv-port", Input).value = "1234"
         await pilot.press("escape")
         await pilot.pause()
         check(app.per_service.get(target, {}).get("port") == "9999",
