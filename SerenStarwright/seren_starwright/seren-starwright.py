@@ -938,7 +938,7 @@ class AdvancedModal(ModalScreen[dict]):
         # --describe, so no stylesheet could know it.
         if not self.svc.accent:
             return
-        self.query_one("modal").styles.border = ("thick", self.svc.accent)
+        self.query_one("#modal").styles.border = ("thick", self.svc.accent)
         self.query_one(".modal-title", Static).styles.color = self.svc.accent
         ok = self.query_one("#ok", Button)
         ok.styles.background = self.svc.accent
