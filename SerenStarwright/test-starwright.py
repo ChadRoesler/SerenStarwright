@@ -150,27 +150,25 @@ async def test_modal() -> None:
     services, problems = sw.discover()
     app = sw.StarwrightApp(services, problems)
 
-    def active_modal() -> sw.AdvancedModal | None:
-        for scr in reversed(app.screen_stack):
-            print(scr)
-            if isinstance(scr, sw.AdvancedModal):
-                return scr
+    async def open_modal(name: str) -> sw.AdvancedModal | None:
+        app.screen.query_one(f"#adv-{name}", Button).press()
+        for _ in range(20):
+            await pilot.pause()
+            for scr in reversed(app.screen_stack):
+                if isinstance(scr, sw.AdvancedModal):
+                    return scr
         return None
 
     async with app.run_test(size=(110, 44)) as pilot:
-        print("\n=== Click install")
         await pilot.click("#install")
         await pilot.pause()
         target = "seren-loci" if "seren-loci" in app.svc_map else services[0].name
         app.screen.query_one(f"#svc-{target}", Checkbox).value = True
         await pilot.pause()
-        print("\n=== Click next")
         await pilot.click("#next")
         await pilot.pause()
-        print("\n=== Click advanced")
-        await pilot.click(f"#adv-{target}")
-        await pilot.pause()
-        m = active_modal()
+
+        m = await open_modal(target)
         check(m is not None, "modal opened")
         if m is None:
             return
@@ -182,26 +180,22 @@ async def test_modal() -> None:
             check(str(d.styles.border.top[1]).lower() != "none", "border tinted with accent")
 
         # no-op visit must not invent flags
-        await pilot.click("#ok")
+        m.query_one("#ok", Button).press()
         await pilot.pause()
         check(not app.per_service.get(target), "opening + Okay saves nothing unchanged")
 
         # a real edit round-trips
-        await pilot.click(f"#adv-{target}")
-        await pilot.pause()
-        m = active_modal()
+        m = await open_modal(target)
         check(m is not None, "modal reopened for edit")
         if m is None:
             return
         m.query_one("#adv-port", Input).value = "9999"
-        await pilot.click("#ok")
+        m.query_one("#ok", Button).press()
         await pilot.pause()
         check(app.per_service.get(target, {}).get("port") == "9999", "edited port saved")
 
         # escape discards
-        await pilot.click(f"#adv-{target}")
-        await pilot.pause()
-        m = active_modal()
+        m = await open_modal(target)
         check(m is not None, "modal reopened for cancel")
         if m is None:
             return
