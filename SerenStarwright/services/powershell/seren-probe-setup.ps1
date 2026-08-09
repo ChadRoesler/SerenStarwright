@@ -22,13 +22,8 @@ param(
   [switch] $Service,
   [switch] $Mcp,
   [switch] $Corp,
+  [switch] $Updates,
   [switch] $NoUpdates,
-  # -- service identity (only meaningful alongside -Service) -------------------
-  # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
-  # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
-  # readable by any other process.
-  [string] $ServiceUser = "",
-  [switch] $LocalSystem,
   [string] $Instance  = "",
   [string] $VenvDir   = "",
   [switch] $Describe,
@@ -98,6 +93,7 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-probe"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
+if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
 $extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label ""
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
@@ -122,7 +118,7 @@ server:
 
 storage:
   db_path: ~/.seren-probe$Instance/probe.db
-"@ | Write-SerenTextFile -Path $CfgPath
+"@ | Set-Content -Path $CfgPath -Encoding UTF8
 Ok "Config written"
 
 if ($NoUpdates) {
@@ -136,7 +132,7 @@ if ($NoUpdates) {
 # SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
 updates:
   enabled: false
-"@ | Add-SerenTextFile -Path $CfgPath
+"@ | Add-Content -Path $CfgPath -Encoding UTF8
     Ok "Update checking disabled in config"
 }
 
@@ -144,7 +140,7 @@ updates:
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-probe" -Vpy $vpy -Module "seren_probe" -CfgPath $CfgPath
 
 # -- 6. optional autostart ----------------------------------------------------
-if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-probe" -AppDir $AppDir -Token "" -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem }
+if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-probe" -AppDir $AppDir -Token "" -VenvDir $VenvDir }
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($ProbeHost -eq "0.0.0.0") { "127.0.0.1" } else { $ProbeHost }

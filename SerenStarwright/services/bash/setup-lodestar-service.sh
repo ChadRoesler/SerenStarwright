@@ -21,9 +21,6 @@ VENV_DIR=""
 APP_DIR=""
 CFG_PATH=""
 HEALTH_PORT=0
-# Empty = run as the invoking user, which is the only default that keeps ~ in
-# the config resolving to the home the installer just wrote into.
-SERVICE_USER=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,7 +29,6 @@ while [[ $# -gt 0 ]]; do
     --app-dir)     APP_DIR="$2"; shift 2 ;;
     --config)      CFG_PATH="$2"; shift 2 ;;
     --health-port) HEALTH_PORT="$2"; shift 2 ;;
-    --service-user) SERVICE_USER="$2"; shift 2 ;;
     -h|--help)     sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)             echo "unknown flag: $1  (try --help)" >&2; exit 1 ;;
   esac
@@ -68,6 +64,5 @@ exec bash "$CORE" \
   --app-dir      "$APP_DIR" \
   --config       "$CFG_PATH" \
   --health-port  "$HEALTH_PORT" \
-  --service-user "$SERVICE_USER" \
   --health-path  /api/v1/system/ping \
   --description  "SerenLodestar$INSTANCE - cluster head / orchestrator"
