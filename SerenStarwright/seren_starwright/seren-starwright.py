@@ -1654,13 +1654,12 @@ class StarwrightApp(App):
        but does not position anything. */
     AdvancedModal { align: center middle; background: #11111b 65%; }
     #modal { background: #181825; border: thick #cba6f7; padding: 1 2;
-             width: 62; height: auto; max-height: 85%; }
+             width: 62; height: 85%; max-height: 85%; }
     .modal-title { text-style: bold; }
     .modal-sub { color: #6c7086; padding: 0 0 1 0; }
-    /* height:auto on the dialog + 1fr here means the frame hugs its contents
-       for a short form and only scrolls once there are too many fields -
-       instead of always being 80% tall with dead space underneath. */
-    #modal-body { height: auto; max-height: 100%; }
+    /* Keep actions visible: body takes remaining space and scrolls, rather
+       than growing until it shoves Cancel/Okay out of frame. */
+    #modal-body { height: 1fr; overflow-y: auto; }
     #modal-actions { height: auto; align: right middle; padding: 1 0 0 0; }
     #modal-actions Button { min-width: 0; width: auto; margin: 0 0 0 2; }
     #log { height: 1fr; border: round #313244; }
