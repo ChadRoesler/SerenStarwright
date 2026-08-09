@@ -161,7 +161,7 @@ async def test_modal() -> None:
         await pilot.pause()
         m = app.screen
         check(isinstance(m, sw.AdvancedModal), "modal opened")
-        d = m.query_one("modal")
+        d = m.query_one("#modal")
         centred = abs(d.region.x - (110 - d.region.width) // 2) <= 1
         check(centred, f"centred horizontally (x={d.region.x}, w={d.region.width})")
         check(d.region.height < 44, f"hugs content (h={d.region.height} < 44)")
