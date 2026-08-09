@@ -126,16 +126,17 @@ if (-not $NoHealthCheck -and $HealthPort -eq 0 -and (Test-Path $ConfigPath)) {
   # Here-string into a variable FIRST - a closing "@ followed by more args on
   # the same line is a parser footgun. And pipe through Out-String/Trim since
   # & python hands back an array of lines, not a scalar.
+  
+  # utf-8-SIG, not utf-8: it strips a BOM when one is present and is
+  # identical otherwise. Configs written by an older installer under Windows
+  # PowerShell 5.1 carry one, and plain 'utf-8' leaves it in the string,
+  # where PyYAML rejects it as "unacceptable character #xfeff" - which read
+  # here as READ_FAILED and silently skipped the health check. Write strict,
+  # read lenient.
   $portScript = @"
 import sys
 try:
     import yaml
-    # utf-8-SIG, not utf-8: it strips a BOM when one is present and is
-    # identical otherwise. Configs written by an older installer under Windows
-    # PowerShell 5.1 carry one, and plain 'utf-8' leaves it in the string,
-    # where PyYAML rejects it as "unacceptable character #xfeff" - which read
-    # here as READ_FAILED and silently skipped the health check. Write strict,
-    # read lenient.
     cfg = yaml.safe_load(open(sys.argv[1], encoding='utf-8-sig')) or {}
     node = cfg
     for part in sys.argv[2].split('.'):
