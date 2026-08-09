@@ -152,18 +152,22 @@ async def test_modal() -> None:
 
     def active_modal() -> sw.AdvancedModal | None:
         for scr in reversed(app.screen_stack):
+            print(scr)
             if isinstance(scr, sw.AdvancedModal):
                 return scr
         return None
 
     async with app.run_test(size=(110, 44)) as pilot:
+        print("\n=== Click install")
         await pilot.click("#install")
         await pilot.pause()
         target = "seren-loci" if "seren-loci" in app.svc_map else services[0].name
         app.screen.query_one(f"#svc-{target}", Checkbox).value = True
         await pilot.pause()
+        print("\n=== Click next")
         await pilot.click("#next")
         await pilot.pause()
+        print("\n=== Click advanced")
         await pilot.click(f"#adv-{target}")
         await pilot.pause()
         m = active_modal()
