@@ -873,7 +873,7 @@ class AdvancedModal(ModalScreen[dict]):
         self.current_password = current_password
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="#modal"):
+        with Vertical(id="modal"):
             yield Static(f"Advanced · {self.svc.display}", classes="modal-title")
             yield Static(f"{self.svc.package}  ·  default port "
                          f"{self.svc.default_port}", classes="modal-sub")
