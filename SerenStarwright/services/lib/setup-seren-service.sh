@@ -58,9 +58,6 @@
 #    --no-health-check     skip the wait-for-health loop
 #    --memory-max VAL      systemd MemoryMax             (default 2G; 'none' to omit)
 #    --launchd-prefix P    launchd label prefix  (default com.chadroesler)
-#    --service-user USER   systemd User= (default: the invoking user). This is
-#                          the systemd twin of Windows' LocalSystem trap - read
-#                          the warning printed at install time before using it.
 #    -h, --help            this help
 # ==========================================================================
 set -euo pipefail
@@ -92,9 +89,6 @@ HEALTH_PATH="/health"
 NO_HEALTH_CHECK=false
 MEMORY_MAX="2G"
 LAUNCHD_PREFIX="com.chadroesler"
-# Empty means "the user running this script", which is the right default and
-# the only one that keeps ~ pointing where the installer just wrote things.
-SERVICE_USER=""
 
 # -- flag parsing (while/case) ----------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -113,14 +107,7 @@ while [[ $# -gt 0 ]]; do
     --no-health-check) NO_HEALTH_CHECK=true; shift ;;
     --memory-max)      MEMORY_MAX="$2"; shift 2 ;;
     --launchd-prefix)  LAUNCHD_PREFIX="$2"; shift 2 ;;
-    --service-user)    SERVICE_USER="$2"; shift 2 ;;
-    # --help prints the header block by SHAPE, not by line number. It used to be
-    # `sed -n '2,63p'`, which is a magic number that has to be hand-updated every
-    # time the header grows - and when it isn't, --help just quietly stops
-    # printing its newest flag. Nothing warns you; the help is simply wrong.
-    # This walks from line 2 and stops at the first non-comment line, so the
-    # header can grow or shrink freely and --help stays correct by construction.
-    -h|--help)         awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
+    -h|--help)         sed -n '2,63p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)                 die "unknown flag: $1  (try --help)" ;;
   esac
 done
@@ -144,27 +131,6 @@ ok "appdir:  $APP_DIR"
 ok "config:  $CFG_PATH"
 [[ ${#EXTRA_ENV[@]} -gt 0 ]] && ok "env:     ${EXTRA_ENV[*]}"
 
-# -- who the unit runs as -----------------------------------------------------
-# This is the systemd twin of the Windows LocalSystem trap, and it bites the
-# same way for the same reason: a service running as a DIFFERENT user resolves
-# ~ to that user's home. A config saying `persist_dir: ~/.seren-memory/chroma`
-# then points at a brand new EMPTY store, the service comes up healthy, every
-# query returns nothing, and the real data sits untouched on disk looking like
-# it was deleted. Say so loudly rather than let someone rediscover it.
-RUN_AS="${SERVICE_USER:-$(id -un)}"
-if [[ -n "$SERVICE_USER" && "$SERVICE_USER" != "$(id -un)" ]]; then
-  warn "This unit will run as '$SERVICE_USER', not '$(id -un)'."
-  warn "Any '~' in $CFG_PATH now resolves to ${SERVICE_USER}'s home, NOT yours."
-  warn "If the config uses ~ for its data dir, the service will come up healthy"
-  warn "and completely empty. Use absolute paths, or drop --service-user."
-  if $IS_MAC; then
-    warn "macOS: a launchd USER AGENT always runs as the logged-in user -"
-    warn "--service-user cannot be honoured here and is being ignored."
-    RUN_AS="$(id -un)"
-  fi
-fi
-ok "run as:  $RUN_AS"
-
 # -- resolve the health-check port -------------------------------------------
 if ! $NO_HEALTH_CHECK && [[ "$HEALTH_PORT" -eq 0 && -f "$CFG_PATH" ]]; then
   step "Reading health-check port from config ($CONFIG_PORT_KEY)"
@@ -172,10 +138,7 @@ if ! $NO_HEALTH_CHECK && [[ "$HEALTH_PORT" -eq 0 && -f "$CFG_PATH" ]]; then
 import sys
 try:
     import yaml
-    # utf-8-sig, not utf-8: strips a BOM if present, identical otherwise.
-    # Configs written by an older Windows installer carry one and PyYAML
-    # rejects it outright. Write strict, read lenient.
-    cfg = yaml.safe_load(open(sys.argv[1], encoding='utf-8-sig')) or {}
+    cfg = yaml.safe_load(open(sys.argv[1], encoding='utf-8')) or {}
     node = cfg
     for part in sys.argv[2].split('.'):
         node = node[part]
@@ -267,7 +230,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=$RUN_AS
+User=$(id -un)
 WorkingDirectory=$APP_DIR
 ExecStart=$VPY -m $MODULE --config $CFG_PATH
 $( $WIRE_ENV && echo "EnvironmentFile=$ENV_FILE" )

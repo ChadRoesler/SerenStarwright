@@ -64,8 +64,6 @@ WHEEL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
-# Empty = the unit runs as whoever installs it. Only meaningful with --service.
-SERVICE_USER=""
 UPDATES_OFF=false
 INSTANCE=""
 VENV_DIR="$HOME/seren-venvs/observatory"
@@ -99,8 +97,8 @@ while [[ $# -gt 0 ]]; do
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
+    --updates)   warn "--updates is unnecessary: update checking ships on by default"; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
-    --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
@@ -176,7 +174,7 @@ write_launcher "$APP_DIR" "seren-observatory" "$VPY" "seren_observatory" "$CFG_P
 
 # -- 6. optional autostart ------------------------------------------------------
 if $INSTALL_SERVICE; then
-  setup_autostart "$SCRIPT_DIR" "seren-observatory" "$APP_DIR" "$TOKEN" "$INSTANCE" "$VENV_DIR" "$SERVICE_USER"
+  setup_autostart "$SCRIPT_DIR" "seren-observatory" "$APP_DIR" "$TOKEN" "$INSTANCE" "$VENV_DIR"
 fi
 
 # -- done -----------------------------------------------------------------------

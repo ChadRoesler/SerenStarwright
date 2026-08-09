@@ -26,10 +26,7 @@ param(
   [string] $ConfigPath  = "",
   [string] $LogDir      = "$env:USERPROFILE\seren-logs",
   [int]    $HealthPort  = 0,
-  [switch] $RunAsLocalSystem,
-  # Pass-through only. The core owns the credential logic; this wrapper just
-  # refuses to be the reason a non-interactive install can't name its account.
-  [string] $ServiceUser = ""
+  [switch] $RunAsLocalSystem
 )
 
 
@@ -73,6 +70,4 @@ if (-not $core -or -not (Test-Path $core)) {
   -LogDir      $LogDir `
   -HealthPort  $HealthPort `
   -DisplayName $ServiceName `
-  -Description "SerenProbe$Instance memory (RAG) Evaluation" `
-  -ServiceUser $ServiceUser `
-  -RunAsLocalSystem:$RunAsLocalSystem
+  -Description "SerenProbe$Instance memory (RAG) Evaluation"

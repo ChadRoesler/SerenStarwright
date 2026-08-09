@@ -25,13 +25,8 @@ param(
   [switch] $Service,
   [switch] $Mcp,
   [switch] $Corp,
+  [switch] $Updates,
   [switch] $NoUpdates,
-  # -- service identity (only meaningful alongside -Service) -------------------
-  # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
-  # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
-  # readable by any other process.
-  [string] $ServiceUser = "",
-  [switch] $LocalSystem,
   [string] $Instance = "",
   [string] $VenvDir  = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
@@ -59,7 +54,7 @@ function Find-Upward {
 $lib = Find-Upward "services\lib\seren-install-lib.ps1"
 if (-not $lib) { Write-Host "ERROR: seren-install-lib.ps1 not found. Keep services/lib/ with shared scripts." -ForegroundColor Red; exit 1 }
 . $lib
-
+
 
 # -- Starwright contracts -----------------------------------------------------
 # -Describe answers with ZERO side effects, so it runs before anything else.
@@ -108,6 +103,7 @@ $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
 # extra. Asking pip for [mcp] only earns a "does not provide the extra"
 # warning. -Mcp is still accepted so existing scripts keep working.
 if ($Mcp) { Write-Host "  ! -Mcp is unnecessary: the MCP SDK is a core dependency here" -ForegroundColor Yellow }
+if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
 $extras = Get-Extras-Suffix -Corp:$Corp
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " ($(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
@@ -134,7 +130,7 @@ server:
 
 dashboard:
   tools_dir: ~/seren-workbench$Instance/tools$tlsBlock
-"@ | Write-SerenTextFile -Path $CfgPath
+"@ | Set-Content -Path $CfgPath -Encoding UTF8
 if ($Token) { & $vpy -c "import os,stat; os.chmod('$CfgPath', 0o600)" 2>$null }
 Ok "Config written"
 
@@ -149,7 +145,7 @@ if ($NoUpdates) {
 # SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
 updates:
   enabled: false
-"@ | Add-SerenTextFile -Path $CfgPath
+"@ | Add-Content -Path $CfgPath -Encoding UTF8
     Ok "Update checking disabled in config"
 }
 
@@ -158,11 +154,8 @@ $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-workbench" -Vpy $
 
 # -- 6. optional autostart ------------------------------------------------------
 if ($Service) {
-  # NOT Out-File -Encoding UTF8: on Windows PowerShell 5.1 that writes a BOM,
-  # and a BOM in front of a bearer token is three bytes of garbage prepended
-  # to a secret nothing will ever match on.
-  if ($Token) { "$Token" | Write-SerenTextFile -Path "$AppDir\seren-workbench.env" }
-  Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-workbench" -AppDir $AppDir -Token $Token -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem
+  if ($Token) { "$Token" | Out-File -FilePath "$AppDir\seren-workbench.env" -Encoding UTF8 }
+  Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-workbench" -AppDir $AppDir -Token $Token -VenvDir $VenvDir
 }
 
 # -- done -----------------------------------------------------------------------

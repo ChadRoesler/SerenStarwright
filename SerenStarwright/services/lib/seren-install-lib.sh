@@ -321,14 +321,9 @@ LAUNCHEOF
 }
 
 # -- setup_autostart - delegate to pointed service wrapper ---------------------
-# Arg 7 (service_user) is optional and defaults to empty, which means "run as
-# whoever is installing" - the only default that keeps ~ in the config pointing
-# at the same home the installer just wrote into. See the warning the core
-# prints when it is set to something else.
 setup_autostart() {
   local script_dir="$1" service="$2" app_dir="$3" token="$4" instance="$5"
   local venv_override="${6:-}"
-  local service_user="${7:-}"
   step "Installing the autostart service"
   local wrapper
   wrapper="$script_dir/setup-${service#seren-}-service.sh"
@@ -343,11 +338,7 @@ setup_autostart() {
     fi
     local venv_flag=""
     [[ -n "$venv_override" ]] && venv_flag="--venv $venv_override"
-    local user_flag=""
-    [[ -n "$service_user" ]] && user_flag="--service-user $service_user"
-    # Both flag vars are intentionally UNQUOTED: each is a flag+value pair that
-    # has to word-split into two arguments, and each is empty when unused.
-    bash "$wrapper" $venv_flag $user_flag --instance "$instance" || die "service install failed"
+    bash "$wrapper" $venv_flag --instance "$instance" || die "service install failed"
   else
     warn "setup-${service#seren-}-service.sh not found. Run it manually:"
     warn "  bash setup-${service#seren-}-service.sh --instance '${instance}'"
