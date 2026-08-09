@@ -20,8 +20,13 @@ param(
   [string] $Ref       = "",
   [string] $Repo      = "ChadRoesler/SerenObservatory",
   [switch] $Service,
-  [switch] $Updates,
   [switch] $NoUpdates,
+  # -- service identity (only meaningful alongside -Service) -------------------
+  # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
+  # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
+  # readable by any other process.
+  [string] $ServiceUser = "",
+  [switch] $LocalSystem,
   [string] $Instance  = "",
   [string] $VenvDir   = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
@@ -49,7 +54,7 @@ function Find-Upward {
 $lib = Find-Upward "services\lib\seren-install-lib.ps1"
 if (-not $lib) { Write-Host "ERROR: seren-install-lib.ps1 not found. Keep services/lib/ with shared scripts." -ForegroundColor Red; exit 1 }
 . $lib
-
+
 
 # -- Starwright contracts -----------------------------------------------------
 # -Describe answers with ZERO side effects, so it runs before anything else.
@@ -92,7 +97,6 @@ $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-observat
 # -- 3. venv + install (no extras) ---------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
 $Mcp = $false; $Corp = $false  # observatory has no extras
-if ($Updates) { Write-Host "  ! -Updates is unnecessary: update checking ships on by default" -ForegroundColor Yellow }
 $extras = Get-Extras-Suffix
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label ""
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
@@ -114,7 +118,7 @@ if (Test-Path $CfgPath) {
 server:
   host: $ObsHost
   port: $Port
-"@ | Set-Content -Path $CfgPath -Encoding UTF8
+"@ | Write-SerenTextFile -Path $CfgPath
 Ok "Config written"
 
 if ($NoUpdates) {
@@ -128,7 +132,7 @@ if ($NoUpdates) {
 # SEREN_<SERVICE>_UPDATES_ENABLED=true in the service environment.
 updates:
   enabled: false
-"@ | Add-Content -Path $CfgPath -Encoding UTF8
+"@ | Add-SerenTextFile -Path $CfgPath
     Ok "Update checking disabled in config"
 }
 
@@ -136,7 +140,7 @@ updates:
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-observatory" -Vpy $vpy -Module "seren_observatory" -CfgPath $CfgPath
 
 # -- 6. optional autostart ------------------------------------------------------
-if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-observatory" -AppDir $AppDir -Token "" -VenvDir $VenvDir }
+if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-observatory" -AppDir $AppDir -Token "" -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem }
 
 # -- done -----------------------------------------------------------------------
 $connectHost = if ($ObsHost -eq "0.0.0.0") { "127.0.0.1" } else { $ObsHost }

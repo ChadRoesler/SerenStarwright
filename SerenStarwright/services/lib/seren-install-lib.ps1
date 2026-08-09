@@ -429,25 +429,90 @@ print('OK' if v.exists() else 'ASSET_MISSING')
     }
 }
 
+# ══════════════════════════════════════════════════════════════════════════
+#  Text file writers - UTF-8 with NO BOM, on every PowerShell edition
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  `Set-Content -Encoding UTF8` means UTF-8 WITH BOM on Windows PowerShell 5.1
+#  and WITHOUT on PowerShell 7. Same flag, different bytes, no warning. That
+#  cost a real outage: a BOM'd seren-memory.yaml made PyYAML throw
+#  "unacceptable character #xfeff", the service's lenient config loader fell
+#  back to defaults without a word, and the memory store came up looking EMPTY
+#  while the real one sat untouched on disk. A silent fallback plus a silent
+#  encoding change is an outage nobody can see.
+#
+#  Enable-SerenJson above already got this right for the event stream, for
+#  exactly the same reason, and said so at length. The lesson just never
+#  reached the config writer. It has now: nothing in this family writes a text
+#  file any other way.
+#
+#  Both helpers ACCUMULATE and write once in `end`, rather than writing per
+#  pipeline item. Set-Content joins an array of lines with newlines; a naive
+#  process-block port would instead overwrite the file once per element and
+#  leave only the last line. Every current caller pipes a single here-string,
+#  so this costs nothing today and stops a future multi-line caller silently
+#  losing its file.
+function Write-SerenTextFile {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(ValueFromPipeline = $true)] $Content
+    )
+    begin { $lines = New-Object System.Collections.ArrayList }
+    process { if ($null -ne $Content) { [void] $lines.Add([string] $Content) } }
+    end {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($Path, ($lines -join "`r`n"), $utf8NoBom)
+    }
+}
+
+function Add-SerenTextFile {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(ValueFromPipeline = $true)] $Content
+    )
+    begin { $lines = New-Object System.Collections.ArrayList }
+    process { if ($null -ne $Content) { [void] $lines.Add([string] $Content) } }
+    end {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        # AppendAllText never emits a preamble, so an append cannot reintroduce
+        # a BOM mid-file the way Add-Content -Encoding UTF8 can when it decides
+        # it is creating rather than extending.
+        [System.IO.File]::AppendAllText($Path, ($lines -join "`r`n"), $utf8NoBom)
+    }
+}
+
 # -- write launcher script ----------------------------------------------------
 function Write-Launcher {
     param([string] $AppDir, [string] $ServiceName, [string] $Vpy, [string] $Module, [string] $CfgPath)
     $launcher = "$AppDir\run-$ServiceName.ps1"
-    "& `"$Vpy`" -m $Module --config `"$CfgPath`"" | Set-Content -Path $launcher -Encoding UTF8
+    "& `"$Vpy`" -m $Module --config `"$CfgPath`"" | Write-SerenTextFile -Path $launcher
     Ok "Launcher written: $launcher"
     return $launcher
 }
 
 # -- setup autostart via NSSM wrapper -----------------------------------------
+# ServiceUser / LocalSystem ride through to the core so a NON-INTERACTIVE
+# caller (Starwright, which spawns installers with piped stdout+stderr) can
+# state the service identity up front, instead of the core trying to prompt at
+# a console nobody is watching.
+#
+# The PASSWORD is deliberately absent from this signature. It travels in
+# $env:SEREN_SERVICE_PASSWORD, which the core reads directly. A parameter would
+# put it on a command line, and on Windows any process can read another
+# process's command line - a redacted log wouldn't help.
 function Setup-Autostart {
-    param([string] $ScriptDir, [string] $ServiceName, [string] $AppDir, [string] $Token, [string] $VenvDir = "")
+    param([string] $ScriptDir, [string] $ServiceName, [string] $AppDir, [string] $Token, [string] $VenvDir = "",
+          [string] $ServiceUser = "", [switch] $LocalSystem)
     Step "Installing the autostart service"
     $shortName = $ServiceName -replace "^seren-", ""
     $wrapper = Join-Path $ScriptDir "setup-$shortName-service.ps1"
     $core = Find-Upward "services\lib\setup-seren-service.ps1"
     if ((Test-Path $wrapper) -and $core -and (Test-Path $core)) {
         $venvArg = if ($VenvDir) { @{VenvDir = $VenvDir} } else { @{} }
-        & $wrapper -Instance $Instance @venvArg
+        $idArg = @{}
+        if ($ServiceUser) { $idArg["ServiceUser"] = $ServiceUser }
+        if ($LocalSystem) { $idArg["RunAsLocalSystem"] = $true }
+        & $wrapper -Instance $Instance @venvArg @idArg
     } else {
         Warn "setup-$shortName-service.ps1 + setup-seren-service.ps1 not found."
         Warn "Keep the shared setup scripts together and run (elevated):"
