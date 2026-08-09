@@ -180,9 +180,11 @@ async def test_modal() -> None:
             check(str(d.styles.border.top[1]).lower() != "none", "border tinted with accent")
 
         # no-op visit must not invent flags
+        before = dict(app.per_service.get(target, {}))
         m.query_one("#ok", Button).press()
         await pilot.pause()
-        check(not app.per_service.get(target), "opening + Okay saves nothing unchanged")
+        check(app.per_service.get(target, {}) == before,
+              "opening + Okay saves no new config")
 
         # a real edit round-trips
         m = await open_modal(target)
