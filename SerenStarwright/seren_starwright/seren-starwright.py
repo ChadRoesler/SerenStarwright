@@ -284,7 +284,19 @@ def _ordered_groups(services: list["ServiceDef"]) -> list[tuple[str, str]]:
 UNIVERSAL_FLAGS = {"corp", "pypi", "ref", "repo", "wheel", "venv"}
 
 # Shown as inline checkboxes on the config row rather than buried in Advanced.
-INLINE_FLAGS = ["mcp", "vector", "service"]
+#
+# The test for membership here is "would someone decide this while looking at
+# the grid?" - not "is it an extra". `service` is not an extra at all and has
+# always been inline, because autostart-or-not is a decision you make about the
+# box in front of you. `stagehand` is the same shape: it decides whether this
+# node can START builds or only watch them, which is a per-node role, not a
+# packaging detail. Burying a role behind Configure makes it look optional in
+# the sense of "obscure" rather than "opt-in".
+#
+# Width: rendering is `for flag in INLINE_FLAGS: if flag in svc.flags`, so a
+# service only widens by the flags it actually declares. Loci stays the widest
+# card at three (mcp + vector + service); Theatre draws two. No new worst case.
+INLINE_FLAGS = ["mcp", "vector", "stagehand", "service"]
 
 # Service IDENTITY - who the installed service logs on as.
 #

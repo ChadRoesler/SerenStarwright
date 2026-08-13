@@ -92,6 +92,7 @@
     <Content Include="services\bash\seren-memory-setup.sh" />
     <Content Include="services\bash\seren-observatory-setup.sh" />
     <Content Include="services\bash\seren-probe-setup.sh" />
+    <Content Include="services\bash\seren-theatre-setup.sh" />
     <Content Include="services\bash\seren-workbench-setup.sh" />
     <Content Include="services\bash\setup-corpus-callosum-service.sh" />
     <Content Include="services\bash\setup-loci-service.sh" />
@@ -100,6 +101,7 @@
     <Content Include="services\bash\setup-memory-service.sh" />
     <Content Include="services\bash\setup-observatory-service.sh" />
     <Content Include="services\bash\setup-probe-service.sh" />
+    <Content Include="services\bash\setup-theatre-service.sh" />
     <Content Include="services\bash\setup-workbench-service.sh" />
     <Content Include="services\lib\seren-install-lib.ps1" />
     <Content Include="services\lib\seren-install-lib.sh" />
@@ -116,6 +118,7 @@
     <Content Include="services\powershell\seren-memory-setup.ps1" />
     <Content Include="services\powershell\seren-observatory-setup.ps1" />
     <Content Include="services\powershell\seren-probe-setup.ps1" />
+    <Content Include="services\powershell\seren-theatre-setup.ps1" />
     <Content Include="services\powershell\seren-workbench-setup.ps1" />
     <Content Include="services\powershell\setup-corpus-callosum-service.ps1" />
     <Content Include="services\powershell\setup-loci-service.ps1" />
@@ -124,6 +127,7 @@
     <Content Include="services\powershell\setup-memory-service.ps1" />
     <Content Include="services\powershell\setup-observatory-service.ps1" />
     <Content Include="services\powershell\setup-probe-service.ps1" />
+    <Content Include="services\powershell\setup-theatre-service.ps1" />
     <Content Include="services\powershell\setup-workbench-service.ps1" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
