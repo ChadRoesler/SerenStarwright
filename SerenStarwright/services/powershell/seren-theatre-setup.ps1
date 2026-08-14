@@ -100,7 +100,7 @@ if ($Describe) {
         Package     = 'seren-theatre'
         # Every other service in the constellation gets a colour. The theatre
         # gets the house lights down.
-        Accent      = '#000000'
+        Accent      = '#171717'
         DefaultHost = $TheatreHost
         DefaultPort = $Port
         Extras      = @('stagehand')

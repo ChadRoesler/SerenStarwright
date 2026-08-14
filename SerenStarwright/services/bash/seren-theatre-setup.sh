@@ -106,7 +106,7 @@ SVC_GROUP="auxiliary"
 SVC_PACKAGE="seren-theatre"
 # Every other service in the constellation gets a colour. The theatre gets the
 # house lights down.
-SVC_ACCENT="#000000"
+SVC_ACCENT="#171717"
 # Requires NOTHING, deliberately. A stage is a directory, so Theatre can be the
 # first thing installed on a box and still be useful.
 SVC_REQUIRES=""
