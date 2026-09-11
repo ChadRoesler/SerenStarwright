@@ -107,6 +107,7 @@ seren_describe_node() {
         "kokoro:Kokoro:Text to speech"
         "comfyui:ComfyUI:Image generation"
         "chromadb:ChromaDB:Vector store"
+        "msmoe:Ms.MoE Maker:MoE build pipeline"
         "coral:Coral TPU:M.2 Edge TPU support"
     )
     # module filename differs from the flag name for these two

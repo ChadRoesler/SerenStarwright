@@ -85,8 +85,11 @@ run_prebuilts_download_services() {
         chmod +x "$PREBUILT_LLAMA_BIN"
     fi
 
-    # PyTorch + torchvision wheels — only if ComfyUI is requested
-    if $INSTALL_COMFYUI; then
+    # PyTorch + torchvision wheels — for whichever component needs torch.
+    # ComfyUI was the only one until ms-moe-maker, whose whole reason for being
+    # a node component rather than a service installer is that a Jetson needs
+    # THIS wheel and not whatever pip would resolve.
+    if $INSTALL_COMFYUI || ${INSTALL_MSMOE:-false}; then
         if [ ! -f "$PREBUILT_TORCH_WHL" ]; then
             log "Downloading prebuilt PyTorch ${PYTORCH_VERSION}..."
             sudo -u "$TARGET_USER" wget -q --show-progress \
