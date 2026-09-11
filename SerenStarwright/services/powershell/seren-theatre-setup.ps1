@@ -1,4 +1,4 @@
-<#
+﻿<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-theatre-setup.ps1  -  one-shot SerenTheatre installer (Windows)
 #
