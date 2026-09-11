@@ -168,6 +168,14 @@ if ($Wheel) {
 # -- 3. venv + install ---------------------------------------------------------
 # NOT Get-Extras-Suffix: that helper only knows mcp/corp/vector, for the same
 # family-wide-allowlist reason -Describe needed an override. Built by hand here.
+#
+# AND THE VALUES ARE CROSS-CHECKED NOW. seren_theatre/_describe.py carries the
+# same name, port, group, accent and description, and SerenTheatre's
+# tests/test_installer_parity.py runs the BASH installer's --describe and
+# compares. Hand-kept parity across two repositories had already failed
+# silently once: _describe.py did not exist at all, so the bash installer's
+# sanity check imported a missing module and called die. Change a value here,
+# change it in the bash script, and Theatre's suite tells you if you missed one.
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyExe -PyArgs $pyArgs
 $extras = if ($Stagehand) { "[stagehand]" } else { "" }
 Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras $extras -Label "$(if ($Stagehand) { ' + the ms-moe CLI' } else { '' })"
@@ -184,6 +192,30 @@ if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue 
 # reported as "Install looks broken" on a perfectly good install. Every sibling
 # passes forward slashes; pathlib resolves them fine on Windows.
 Sanity-Check -Vpy $vpy -Module "seren_theatre" -AssetRelPath "viewer/ui/body.html" -AssetLabel "viewer pack"
+
+# -- 4b. the identity card ----------------------------------------------------
+# PARITY WITH THE BASH INSTALLER, which checks this and is right to.
+# seren_theatre/_describe.py carries the same name, port, group and accent as
+# the -Describe block above, and SerenTheatre's tests/test_installer_parity.py
+# compares the two. Checking it here means a wheel that shipped without the
+# module fails at install time rather than showing gaps in Starwright's grid.
+#
+# The shared Sanity-Check helper is not extended for this: it serves nine other
+# installers that have no such module, and widening it for one would make the
+# other eight answer a question about themselves that nobody asked.
+$cardCheck = & $vpy -c @"
+try:
+    from seren_theatre._describe import DESCRIBE
+except Exception as e:
+    print('IMPORT_FAILED: %s' % e); raise SystemExit
+missing = [k for k in ('name', 'port', 'group', 'accent') if k not in DESCRIBE]
+print('DESCRIBE_INCOMPLETE: ' + ','.join(missing) if missing else 'OK')
+"@ 2>&1
+switch -Wildcard ($cardCheck) {
+    "OK"                     { Ok "Identity card answers (--describe will work)" }
+    "DESCRIBE_INCOMPLETE*"   { Warn "Installed but $cardCheck - Starwright's grid will show gaps" }
+    default                  { Die "Identity card is missing or broken: $cardCheck" }
+}
 
 # -- 5. config --------------------------------------------------------------
 Step "Writing config at $CfgPath"
@@ -215,7 +247,18 @@ if ($Stage.Count -gt 0) {
         $block += "  - name: $leaf`n"
         $block += "    path: $s`n"
         $block += "    logs: [`"*.log`"]`n"
-        $block += "    rungs: [`"dryrun_*`", `"*_agent_*`"]`n"
+        # NO `runs:` LINE, deliberately. That key used to be written here as
+        # ["dryrun_*", "*_agent_*"] and it was a hand-maintained duplicate of
+        # something the recipe already states - a recipe writing to
+        # gauntlet-nano-runs/{size} against a config listing gauntlet-runs/*
+        # produced a healthy, finished, INVISIBLE run. And the miss was not
+        # cosmetic: harvest only archives runs the scan found, so an unmatched
+        # run was never recorded either.
+        #
+        # Theatre now asks the directories what they are. An explicit list is
+        # still honoured as an override for someone who means it, but writing
+        # one at install time chooses the failure on the user's behalf before
+        # they have a single run on disk.
     }
     $block | Add-SerenTextFile -Path $CfgPath
     Ok "Config written with $($Stage.Count) stage(s)"

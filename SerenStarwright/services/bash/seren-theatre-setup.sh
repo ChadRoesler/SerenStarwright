@@ -94,11 +94,20 @@ STAGES=()
 # below at runtime (see seren_flags_from_self), so adding a flag needs no edit
 # here and this block can't drift from what the parser actually accepts.
 #
-# THIS IS THE ONLY --describe THAT ANYTHING READS. Starwright builds its grid by
-# running --describe on the installers, and the SerenTheatre package deliberately
-# does not depend on this repo or look for it - so nothing cross-checks these
-# values automatically. Port, accent and description also appear in
-# seren_theatre/_describe.py; if you change one here, change it there by hand.
+# STARWRIGHT BUILDS ITS GRID FROM THIS, because the grid has to work before
+# anything is installed. The SerenTheatre package still does not depend on this
+# repo or look for it - that independence is the point of the pair standing
+# alone - but "change it there by hand" is no longer the arrangement.
+#
+# seren_theatre/_describe.py carries the same name, port, group, accent and
+# description, and SerenTheatre's tests/test_installer_parity.py runs THIS
+# script's --describe and compares the two, skipping when Starwright is not
+# checked out nearby. Hand-kept parity across two repositories had already
+# failed silently: _describe.py did not exist at all, so this script's own
+# sanity check imported a missing module, fell through to `die`, and Theatre
+# could not be installed at all.
+#
+# So: change a value here, and SerenTheatre's suite tells you about it.
 SVC_NAME="seren-theatre"
 SVC_DISPLAY="Seren Theatre"
 SVC_DESC="Watch a model being made. Read-only viewer over training logs and artifacts."
@@ -276,7 +285,19 @@ if [[ ${#STAGES[@]} -gt 0 ]]; then
       echo "  - name: $(basename "$s")"
       echo "    path: ${s}"
       echo "    logs: [\"*.log\"]"
-      echo "    rungs: [\"dryrun_*\", \"*_agent_*\"]"
+      # NO `runs:` LINE, deliberately. That key used to be written here as
+      # ["dryrun_*", "*_agent_*"] and it was a hand-maintained duplicate of
+      # something the recipe already states - a recipe writing to
+      # gauntlet-nano-runs/{size} against a config listing gauntlet-runs/*
+      # produced a healthy, finished, INVISIBLE run. And the miss was not
+      # cosmetic: harvest only ever archives runs the scan found, so an
+      # unmatched run was never recorded either.
+      #
+      # Theatre now asks the directories what they are. An explicit list is
+      # still honoured as an override for someone who means it - a tree too
+      # large to walk, or a stage that should show one run out of forty - but
+      # writing one at install time is choosing the failure on the user's
+      # behalf, before they have a single run on disk.
     done
   } >> "$CFG_PATH"
   ok "Config written with ${#STAGES[@]} stage(s)"
