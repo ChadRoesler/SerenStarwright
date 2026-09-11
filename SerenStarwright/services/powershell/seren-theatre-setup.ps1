@@ -1,4 +1,4 @@
-﻿<#
+<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-theatre-setup.ps1  -  one-shot SerenTheatre installer (Windows)
 #
@@ -100,7 +100,7 @@ if ($Describe) {
         Package     = 'seren-theatre'
         # Every other service in the constellation gets a colour. The theatre
         # gets the house lights down.
-        Accent      = '#171717'
+        Accent      = '#6d2823'
         DefaultHost = $TheatreHost
         DefaultPort = $Port
         Extras      = @('stagehand')

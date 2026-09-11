@@ -199,25 +199,15 @@ foreach ($name in ($psServices.Keys | Sort-Object)) {
         Bad "$name : no params map - Starwright cannot build a command line"
         continue
     }
-    # A PORTLESS INSTALLER HAS NOTHING TO BIND, so it has no host parameter and
-    # demanding one would be demanding a flag that does nothing.
+    # EVERY INSTALLER IN services/ IS A SERVICE, so every one of them binds
+    # something and must say which parameter carries the host.
     #
-    # Every installer here was a service until ms-moe-maker, which is a CLI: you
-    # run it, it builds a mixture of experts, it exits. default_port 0 is how it
-    # says so - Get-SerenDescribe has always defaulted the port to 0 and nothing
-    # had used it yet.
-    #
-    # The check is not skipped, it is INVERTED: a portless installer must NOT
-    # declare a host, because one that does is either a service that forgot its
-    # port or a tool that grew a flag nobody can use.
-    if ($o.default_port -eq 0) {
-        if ($o.params.host) {
-            Bad "$name : declares a host param but no port - a tool with nothing to bind should not offer -*Host"
-        } else {
-            Good ("{0,-24} portless tool (no host param, correctly)" -f $name)
-        }
-        continue
-    }
+    # A portless rule briefly lived here for ms-moe-maker, which is a CLI rather
+    # than a service. It belongs in nodes/ instead - a node component is where a
+    # per-platform CUDA torch gets staged, which is the thing it actually needs -
+    # so the exemption was removed rather than left standing for a case that can
+    # no longer occur. If a genuine portless SERVICE ever appears, this is where
+    # the argument goes back in.
     $hostParam = $o.params.host
     if (-not $hostParam) {
         Bad "$name : params has no 'host' entry"

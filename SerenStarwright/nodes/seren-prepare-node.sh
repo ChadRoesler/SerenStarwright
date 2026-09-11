@@ -93,6 +93,10 @@ INSTALL_KOKORO=false
 INSTALL_COMFYUI=false
 INSTALL_CHROMADB=false
 INSTALL_CORAL=false
+# Ms.MoE Maker: the MoE build pipeline. Its own component because the thing it
+# needs is a CUDA torch staged per platform, which is what this side of
+# Starwright already does - see <platform>/msmoe.sh for why it is not a service.
+INSTALL_MSMOE=false
 
 usage() {
     cat <<EOF
@@ -121,6 +125,7 @@ Examples:
   Primary node:        $0 -l -k -d
   Specialist node:     $0 -c
   Edge node + TPU:     $0 --all --coral
+  Build box:           $0 -m
   Pinned release:      $0 -l -k -d --tag 2026.04.29-xavier
   Fanless / battery:   $0 -l -k --no-max-power
 EOF
@@ -133,6 +138,12 @@ while [[ $# -gt 0 ]]; do
         -c|--comfyui)  INSTALL_COMFYUI=true; shift ;;
         -d|--chromadb) INSTALL_CHROMADB=true; shift ;;
         --coral)       INSTALL_CORAL=true; shift ;;
+        -m|--msmoe)    INSTALL_MSMOE=true; shift ;;
+        # --all is the INFERENCE set. msmoe is left out on purpose, the same
+        # way coral is - though for a different reason: coral is gated on
+        # hardware, this is gated on weight. [train] pulls a multi-gigabyte
+        # stack for a job most nodes never do, and --all on an 8GB Nano
+        # should not quietly become that. Ask for it by name.
         --all)         INSTALL_LLAMA=true; INSTALL_KOKORO=true
                        INSTALL_COMFYUI=true; INSTALL_CHROMADB=true; shift ;;
         -u|--user)     TARGET_USER="$2"; shift 2 ;;
@@ -165,7 +176,7 @@ fi
 
 # At least one service must be requested
 if ! $INSTALL_LLAMA && ! $INSTALL_KOKORO && ! $INSTALL_COMFYUI \
-   && ! $INSTALL_CHROMADB && ! $INSTALL_CORAL; then
+   && ! $INSTALL_CHROMADB && ! $INSTALL_CORAL && ! $INSTALL_MSMOE; then
     echo "ERROR: No service flag given. Pick at least one of -l/-k/-c/-d/--coral or --all." >&2
     usage
     exit 1
@@ -203,6 +214,7 @@ if [ -z "$TARGET_HOSTNAME" ]; then
     $INSTALL_COMFYUI  && parts+=("comfy")
     $INSTALL_CHROMADB && parts+=("chroma")
     $INSTALL_CORAL    && parts+=("coral")
+    $INSTALL_MSMOE    && parts+=("msmoe")
     TARGET_HOSTNAME="${PLATFORM}-$(IFS=-; echo "${parts[*]}")"
 fi
 
@@ -229,7 +241,7 @@ log "Target user:     $TARGET_USER"
 log "Target hostname: $TARGET_HOSTNAME"
 log "Build mode:      $($USE_BUILD_FLAG && echo 'BUILD FROM SOURCE' || echo 'prebuilt download')"
 log "Max power:       $($SKIP_MAX_POWER && echo 'SKIPPED (--no-max-power)' || echo 'ON (MAXN + jetson_clocks)')"
-log "Services:        llama=$INSTALL_LLAMA kokoro=$INSTALL_KOKORO comfy=$INSTALL_COMFYUI chroma=$INSTALL_CHROMADB coral=$INSTALL_CORAL"
+log "Services:        llama=$INSTALL_LLAMA kokoro=$INSTALL_KOKORO comfy=$INSTALL_COMFYUI chroma=$INSTALL_CHROMADB coral=$INSTALL_CORAL msmoe=$INSTALL_MSMOE"
 
 # Initialize state file
 ensure_jq
@@ -347,6 +359,11 @@ NEEDS_PREBUILTS=false
 $INSTALL_LLAMA   && NEEDS_PREBUILTS=true
 $INSTALL_COMFYUI && NEEDS_PREBUILTS=true
 $INSTALL_CORAL   && NEEDS_PREBUILTS=true
+# msmoe needs the staged torch wheel, so it needs the prebuilts phase. Without
+# this line msmoe.sh finds STAGED_TORCH_WHL unset, falls through to the redist
+# branch, and the carefully built Jetson wheel is simply never used - a silent
+# downgrade rather than an error.
+$INSTALL_MSMOE   && NEEDS_PREBUILTS=true
 
 if $NEEDS_PREBUILTS; then
     # NOT every platform ships every module. Xavier and Nano have the full set
@@ -415,6 +432,12 @@ if $INSTALL_CORAL; then
     # shellcheck disable=SC1091
     source "$PLATFORM_DIR/coral.sh"
     run_service "Service — Coral TPU" install_coral
+fi
+
+if $INSTALL_MSMOE; then
+    # shellcheck disable=SC1091
+    source "$PLATFORM_DIR/msmoe.sh"
+    run_service "Service — Ms.MoE Maker" install_msmoe
 fi
 
 # ─────────────────────────────────────────────────────────────
