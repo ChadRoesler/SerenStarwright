@@ -71,12 +71,14 @@
     <Content Include="nodes\nano\foundation.sh" />
     <Content Include="nodes\nano\kokoro.sh" />
     <Content Include="nodes\nano\llama.sh" />
+    <Content Include="nodes\nano\msmoe.sh" />
     <Content Include="nodes\nano\prebuilts.sh" />
     <Content Include="nodes\spark\chroma.sh" />
     <Content Include="nodes\spark\comfy.sh" />
     <Content Include="nodes\spark\foundation.sh" />
     <Content Include="nodes\spark\kokoro.sh" />
     <Content Include="nodes\spark\llama.sh" />
+    <Content Include="nodes\spark\msmoe.sh" />
     <Content Include="nodes\xavier\build.sh" />
     <Content Include="nodes\xavier\chroma.sh" />
     <Content Include="nodes\xavier\comfy.sh" />
@@ -84,6 +86,7 @@
     <Content Include="nodes\xavier\foundation.sh" />
     <Content Include="nodes\xavier\kokoro.sh" />
     <Content Include="nodes\xavier\llama.sh" />
+    <Content Include="nodes\xavier\msmoe.sh" />
     <Content Include="nodes\xavier\prebuilts.sh" />
     <Content Include="services\bash\seren-corpus-callosum-setup.sh" />
     <Content Include="services\bash\seren-loci-setup.sh" />
