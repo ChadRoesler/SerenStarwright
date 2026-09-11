@@ -199,6 +199,25 @@ foreach ($name in ($psServices.Keys | Sort-Object)) {
         Bad "$name : no params map - Starwright cannot build a command line"
         continue
     }
+    # A PORTLESS INSTALLER HAS NOTHING TO BIND, so it has no host parameter and
+    # demanding one would be demanding a flag that does nothing.
+    #
+    # Every installer here was a service until ms-moe-maker, which is a CLI: you
+    # run it, it builds a mixture of experts, it exits. default_port 0 is how it
+    # says so - Get-SerenDescribe has always defaulted the port to 0 and nothing
+    # had used it yet.
+    #
+    # The check is not skipped, it is INVERTED: a portless installer must NOT
+    # declare a host, because one that does is either a service that forgot its
+    # port or a tool that grew a flag nobody can use.
+    if ($o.default_port -eq 0) {
+        if ($o.params.host) {
+            Bad "$name : declares a host param but no port - a tool with nothing to bind should not offer -*Host"
+        } else {
+            Good ("{0,-24} portless tool (no host param, correctly)" -f $name)
+        }
+        continue
+    }
     $hostParam = $o.params.host
     if (-not $hostParam) {
         Bad "$name : params has no 'host' entry"
@@ -216,6 +235,9 @@ if (-not $bash) {
     $bashDir = Join-Path $ScriptDir "services\bash"
     foreach ($name in ($psServices.Keys | Sort-Object)) {
         $short = $name -replace "^seren-", ""
+        # DERIVED FROM THE NAME IN --describe, not from the .ps1 filename, so
+        # the two files have to agree with the name. ms-moe-maker is spelled
+        # `seren-ms-moe-maker-setup.*` for exactly this reason.
         $sh = Join-Path $bashDir "seren-$short-setup.sh"
         if (-not (Test-Path $sh)) { Bad "$name : no bash counterpart"; continue }
         $j = & bash $sh --describe 2>$null
