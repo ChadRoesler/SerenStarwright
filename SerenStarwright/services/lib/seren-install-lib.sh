@@ -98,6 +98,76 @@ emit() {
   printf '%s}\n' "$out" >&3
 }
 
+# ══════════════════════════════════════════════════════════════════════════
+#  seren_abort_loudly - AN INSTALLER MAY NOT FAIL IN SILENCE
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Every installer runs `set -euo pipefail`, so any unguarded command that
+# returns non-zero ends the script THERE - no message on stderr, no `error`
+# event on fd 3, exit code 1. Starwright then renders the only thing it was
+# given: "Seren Theatre failed (exit 1) - stopping", above a log whose last
+# line is whatever step happened to be in progress.
+#
+# That is not a hypothetical. It was reproduced from this very library:
+# setup_autostart did
+#
+#     local core
+#     core="$(find_upward "services/lib/setup-seren-service.sh")"
+#
+# and an assignment whose command substitution fails IS a failing command
+# under `set -e`. So a missing core script killed the run one line ABOVE the
+# `if [[ -f "$wrapper" && -f "$core" ]]` guard written for exactly that case -
+# the guard was unreachable in the only situation it existed for, and the
+# `warn` it would have printed was never seen by anyone.
+#
+# The information was never missing. Bash knows the line and the command; it
+# just had nowhere to say it. So it gets somewhere to say it.
+#
+# `set -o errtrace` is REQUIRED and not decoration: without it an ERR trap is
+# not inherited by shell functions, and almost every interesting failure in
+# this library happens inside one. The trap fires on the failing command, says
+# where, emits the event Starwright reads, and exits with the original code.
+#
+# WHAT IT DOES NOT CATCH, deliberately: anything already handled. A command in
+# an `if`, a `||`, a `&&` list, or a `!` negation does not trigger ERR, which
+# is exactly right - those failures were expected by whoever wrote them. And
+# `die` uses `exit`, which is not an error, so a deliberate failure still
+# reports its own careful message instead of a line number.
+_seren_abort() {
+  local rc="$1" src="$2" line="$3"; shift 3
+  local cmd="$*"
+  # ONE REPORT PER FAILURE, and this is not a nicety - the first draft printed
+  # two, and the first of the two was a lie. `x="$(f)"` where f returns 1 trips
+  # ERR twice: once inside the command substitution's SUBSHELL, where the
+  # failing command is f's own `return 1`, and once in the parent for the
+  # assignment. The subshell report therefore blamed a deliberate "not found"
+  # return, one line away from the real problem - which is precisely the kind
+  # of misdirection this trap exists to end.
+  #
+  # BASHPID is the current shell's real pid and $$ stays the parent's, so they
+  # differ in exactly a subshell. A subshell failure the parent HANDLES needs no
+  # report at all; one it does not handle surfaces as the parent's own abort,
+  # which names the assignment - the line somebody can actually fix.
+  [[ "${BASHPID:-$$}" == "$$" ]] || exit "$rc"
+  # Re-entry guard: whatever happens below must not be able to re-trip ERR and
+  # recurse. A diagnostic that can loop is worse than no diagnostic.
+  [[ -n "${_SEREN_ABORTING:-}" ]] && exit "$rc"
+  _SEREN_ABORTING=1
+  trap - ERR
+  # Both streams, because the two readers are different: a human watching the
+  # terminal, and Starwright reading fd 3. Neither should have to infer this.
+  echo -e "${R:-}ABORTED${NC:-} ${src##*/}:${line} exited ${rc} with nothing said." >&2
+  echo -e "${R:-}       ${NC:-}command: ${cmd}" >&2
+  echo -e "${R:-}       ${NC:-}This is a bug in the installer, not in your box:"  >&2
+  echo -e "${R:-}       ${NC:-}a failure here should have been handled or named." >&2
+  emit error msg "aborted at ${src##*/}:${line} (exit ${rc}): ${cmd}"
+  exit "$rc"
+}
+
+# Armed on source, for every installer, with no call site to forget.
+set -o errtrace
+trap '_seren_abort "$?" "${BASH_SOURCE[0]}" "$LINENO" "$BASH_COMMAND"' ERR
+
 # -- seren_flags_from_self - read the caller's OWN accepted flags --------------
 # Greps the case branches out of the running installer ($0 is still the parent
 # script inside a sourced library) and returns them space-separated.
@@ -270,7 +340,18 @@ pip_install() {
   local vpy="$1" src="$2" extras="$3"
   local corp_flag="$4" desc="$5"
   step "Installing ${src}${extras}${desc}"
-  "$vpy" -m pip install -q --upgrade pip
+  # `|| die` ON THE SELF-UPGRADE TOO, which it did not have. The package install
+  # one line below was guarded and this one was not, so a pip that could not
+  # reach the index - a proxy, an offline box, a venv whose files belong to root
+  # after somebody ran the installer under sudo once - killed the script HERE,
+  # silently: no message, no `error` event, exit 1. The guarded line below would
+  # have said "pip install failed"; this one said nothing at all, one line
+  # earlier, and every downstream reader saw only the exit code.
+  #
+  # Upgrading pip is also not load-bearing enough to be fatal on its own, so it
+  # warns and carries on. The install that matters is the next line.
+  "$vpy" -m pip install -q --upgrade pip \
+    || warn "could not upgrade pip in the venv - continuing with the pip that is there"
   # shellcheck disable=SC2086
   "$vpy" -m pip install -q --upgrade $corp_flag "${src}${extras}" || die "pip install failed"
   ok "Installed"
@@ -332,8 +413,14 @@ setup_autostart() {
   step "Installing the autostart service"
   local wrapper
   wrapper="$script_dir/setup-${service#seren-}-service.sh"
+  # `|| true` IS LOAD-BEARING. find_upward returns 1 when it finds nothing, and
+  # an assignment whose substitution fails is a failing command under `set -e` -
+  # so without this the script died on this line, one above the guard written
+  # for precisely this case. The ERR trap now makes that visible instead of
+  # silent, but visible-and-fatal is still the wrong answer: a missing service
+  # wrapper is a reason to print instructions, not to discard a good install.
   local core
-  core="$(find_upward "services/lib/setup-seren-service.sh")"
+  core="$(find_upward "services/lib/setup-seren-service.sh" || true)"
   if [[ -f "$wrapper" && -f "$core" ]]; then
     if [[ -n "$token" ]]; then
       local env_var="${service^^}_BEARER_TOKEN"
@@ -349,7 +436,12 @@ setup_autostart() {
     # has to word-split into two arguments, and each is empty when unused.
     bash "$wrapper" $venv_flag $user_flag --instance "$instance" || die "service install failed"
   else
-    warn "setup-${service#seren-}-service.sh not found. Run it manually:"
+    # NAMING THE ABSENT FILE, because "not found" sent people looking at the
+    # wrapper when the missing half was usually the shared core - two files,
+    # two different fixes, and the old message only ever mentioned one of them.
+    [[ -f "$wrapper" ]] || warn "missing: $wrapper"
+    [[ -f "$core" ]]    || warn "missing: services/lib/setup-seren-service.sh"
+    warn "Autostart not installed - everything else is fine. To do it later:"
     warn "  bash setup-${service#seren-}-service.sh --instance '${instance}'"
   fi
 }
