@@ -193,28 +193,52 @@ if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue 
 # passes forward slashes; pathlib resolves them fine on Windows.
 Sanity-Check -Vpy $vpy -Module "seren_theatre" -AssetRelPath "viewer/ui/body.html" -AssetLabel "viewer pack"
 
-# -- 4b. the identity card ----------------------------------------------------
+# -- 4b. the identity card (reported, never fatal) -----------------------------
 # PARITY WITH THE BASH INSTALLER, which checks this and is right to.
 # seren_theatre/_describe.py carries the same name, port, group and accent as
 # the -Describe block above, and SerenTheatre's tests/test_installer_parity.py
-# compares the two. Checking it here means a wheel that shipped without the
-# module fails at install time rather than showing gaps in Starwright's grid.
+# compares the two.
+#
+# IT USED TO `Die` HERE, AND THAT WAS WRONG. The card is new - every
+# seren-theatre published up to 0.4.2 shipped without it - so a perfectly good
+# `-Pypi` install was refused over a module that did not exist yet. What is
+# lost when the card is absent is a CROSS-CHECK, nothing more: Starwright
+# builds its grid from this script's own -Describe either way. Refusing to
+# install over a missing second opinion is refusing to install over nothing.
+# Tier one (the package and the viewer pack) is Sanity-Check above, and that
+# one still stops the run.
 #
 # The shared Sanity-Check helper is not extended for this: it serves nine other
 # installers that have no such module, and widening it for one would make the
 # other eight answer a question about themselves that nobody asked.
+#
+# FOUR ANSWERS, each meaning something different. Collapsing them is how a
+# missing module came to be reported as a broken install.
 $cardCheck = & $vpy -c @"
 try:
     from seren_theatre._describe import DESCRIBE
+except ModuleNotFoundError as e:
+    # THE MODULE ITSELF, not something it imports. A card that fails because
+    # its own dependency is missing is a different bug and must not be filed
+    # under 'old build' - the card is stdlib-only precisely so this cannot
+    # happen, and Theatre has a test asserting it.
+    print('NO_CARD' if e.name == 'seren_theatre._describe'
+          else 'CARD_BROKE: %s' % e); raise SystemExit
 except Exception as e:
-    print('IMPORT_FAILED: %s' % e); raise SystemExit
+    print('CARD_BROKE: %s' % e); raise SystemExit
 missing = [k for k in ('name', 'port', 'group', 'accent') if k not in DESCRIBE]
 print('DESCRIBE_INCOMPLETE: ' + ','.join(missing) if missing else 'OK')
 "@ 2>&1
 switch -Wildcard ($cardCheck) {
-    "OK"                     { Ok "Identity card answers (--describe will work)" }
+    "OK"                     { Ok "Identity card answers - the values below are cross-checked" }
+    "NO_CARD"                { Warn "This build ships no seren_theatre/_describe.py, so nothing"
+                               Warn "cross-checks the port and accent below against the package."
+                               Warn "Released before the identity card existed; upgrade to a newer"
+                               Warn "seren-theatre when convenient. The install itself is fine." }
     "DESCRIBE_INCOMPLETE*"   { Warn "Installed but $cardCheck - Starwright's grid will show gaps" }
-    default                  { Die "Identity card is missing or broken: $cardCheck" }
+    default                  { Warn "Identity card is present but broken: $cardCheck"
+                               Warn "That is a bug in seren-theatre, not in this install - worth"
+                               Warn "reporting. Nothing below is cross-checked as a result." }
 }
 
 # -- 5. config --------------------------------------------------------------
