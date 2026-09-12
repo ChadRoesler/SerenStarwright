@@ -55,24 +55,49 @@ phase_nano_os_trim() {
         deja-dup speech-dispatcher system-config-printer cups* \
         2>/dev/null || true
 
-    sudo apt update
-    sudo apt upgrade -y
-    sudo apt install -y \
-        build-essential git curl wget net-tools i2c-tools espeak-ng \
-        libcurl4-openssl-dev libssl-dev libffi-dev libjpeg-dev zlib1g-dev \
-        libopenblas-dev libopenblas-base libopenmpi-dev libomp-dev \
+    # GUARDED. These were bare `sudo apt ...` under `set -euo pipefail`, so a
+    # failure ended the phase with apt's exit 100 and no word about which
+    # package apt was objecting to. Same fix as spark/foundation.sh, same
+    # reason - see the long note there.
+    sudo apt update || { fail "apt update failed - check the network and sources.list"; return 1; }
+    sudo apt upgrade -y || warn "apt upgrade did not complete cleanly - continuing"
+
+    # python3.10 IS right here and stays pinned: JetPack 6 is Ubuntu 22.04 and
+    # ships it, and the whole Orin toolchain is built against it. Unlike the
+    # Spark, this is a claim about a known image rather than a guess. It goes
+    # through the helper anyway so that if it ever stops being true, the message
+    # names the package instead of being exit 100.
+    seren_apt_install_required \
+        build-essential git curl wget \
         python3-pip python3-dev python3-setuptools python3-wheel \
         python3.10 python3.10-dev python3.10-venv \
-        netcat software-properties-common jq
+        || return 1
 
-    # Verify python3.10 is actually there (it should be, but warn loud if not)
+    # BEST-EFFORT, because apt installs NONE of a list that contains one stale
+    # name. `libopenblas-base` was real on 20.04 and is gone from 22.04, and it
+    # was quietly taking build-essential down with it. `netcat` is a VIRTUAL
+    # package - which is why `which netcat` answers on a box where
+    # `apt install netcat` cannot work.
+    local nc; nc="$(seren_apt_first netcat-openbsd netcat-traditional netcat || true)"
+    seren_apt_install \
+        net-tools i2c-tools espeak-ng \
+        libcurl4-openssl-dev libssl-dev libffi-dev libjpeg-dev zlib1g-dev \
+        libopenblas-dev libopenmpi-dev libomp-dev \
+        software-properties-common jq ${nc:+$nc} \
+        || warn "some optional packages did not install - see above"
+
     if ! command -v python3.10 &>/dev/null; then
         fail "python3.10 not found after apt install — JetPack 6 should ship this"
         return 1
     fi
+    # STATED, so ensure_venv does not have to guess - it probes as a fallback,
+    # but a platform that knows its own interpreter should say so.
+    PYTHON_BIN="python3.10"; export PYTHON_BIN
     log "python3.10: $(python3.10 --version)"
 
-    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean
+    sudo apt autoremove -y || warn "apt autoremove did not complete"
+    sudo apt autoclean || true
+    sudo apt clean || true
 }
 
 # ─────────────────────────────────────────────────────────────

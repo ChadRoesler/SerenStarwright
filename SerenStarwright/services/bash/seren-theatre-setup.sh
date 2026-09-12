@@ -170,8 +170,32 @@ CONNECT_HOST="$HOST"
 # only one we have any business knowing about. A live answer here means either
 # an existing Theatre (fine, we're upgrading) or something else already bound
 # (not fine, and much easier to hear about now than after the unit fails).
-if (exec 3<>"/dev/tcp/${CONNECT_HOST}/${PORT}") 2>/dev/null; then
-  exec 3<&- 2>/dev/null || true
+#
+# FD 9, NOT FD 3, AND NO CLEANUP LINE. Both halves of that were a bug, and
+# together they made this installer go silently mute.
+#
+# The socket is opened INSIDE a subshell, so it is closed by the subshell
+# exiting. There was never a descriptor in this shell to clean up - and the
+# line that tried to clean one up was
+#
+#     exec 3<&- 2>/dev/null || true
+#
+# which does two things nobody wanted. fd 3 is the JSON EVENT STREAM in --json
+# mode (seren_json_on does `exec 3>&1`), so this closed it and every later
+# `emit` wrote to a bad descriptor. Worse, a redirection on a COMMAND-LESS
+# `exec` is PERMANENT: `2>/dev/null` did not silence that one line, it pointed
+# this shell's stderr at /dev/null for the rest of the run. And in --json mode
+# `exec 1>&2` has already happened, so that silenced stdout too.
+#
+# The result: with anything already listening on this port, the installer went
+# completely mute HERE - no banner, no step, no warning, and no message from
+# `die` when it finally failed - and Starwright could only report "failed
+# (exit 1)" with an empty log above it. The `|| true` did not help; it never
+# had anything to do with the damage.
+#
+# A high fd number keeps the subshell from even transiently standing on the
+# event stream, and the absent cleanup line is the fix.
+if (exec 9<>"/dev/tcp/${CONNECT_HOST}/${PORT}") 2>/dev/null; then
   warn "Something is already answering on ${CONNECT_HOST}:${PORT}."
   warn "If that's an older SerenTheatre, carry on - this will upgrade it."
   warn "If it isn't, stop and pick another port with --port; 7426 is Symposium's."
