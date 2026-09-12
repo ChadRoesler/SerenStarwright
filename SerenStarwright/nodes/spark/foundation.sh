@@ -63,29 +63,72 @@ phase_spark_os_trim() {
         deja-dup speech-dispatcher system-config-printer cups* \
         2>/dev/null || true
 
-    sudo apt update
-    sudo apt upgrade -y
-    sudo apt install -y \
-        build-essential git curl wget net-tools i2c-tools espeak-ng \
-        libcurl4-openssl-dev libssl-dev libffi-dev libjpeg-dev zlib1g-dev \
-        libopenblas-dev libopenblas-base libopenmpi-dev libomp-dev \
-        python3-pip python3-dev python3-setuptools python3-wheel \
-        python3.11 python3.11-dev python3.11-venv \
-        netcat software-properties-common jq
+    # GUARDED, all three. These were bare `sudo apt ...` under `set -euo
+    # pipefail`, so a failure ended the phase with apt's exit 100 and not one
+    # word about which package apt was complaining about. The detail was in the
+    # log the whole time; nothing carried it up to the person watching.
+    sudo apt update || { fail "apt update failed - check the network and sources.list"; return 1; }
+    sudo apt upgrade -y || warn "apt upgrade did not complete cleanly - continuing"
 
-    # Verify python3.11 (JP7 default) or python3.12 (newer JP7 builds)
-    if command -v python3.11 &>/dev/null; then
-        log "python3.11: $(python3.11 --version)"
-    elif command -v python3.12 &>/dev/null; then
-        log "python3.12: $(python3.12 --version)"
-        # Symlink python3.11 → python3.12 for venv convention
-        sudo ln -sf /usr/bin/python3.12 /usr/local/bin/python3.11 2>/dev/null || true
-    else
-        fail "No suitable Python found — JP7 should ship 3.11+"
+    # THE SET WITHOUT WHICH THIS NODE IS NOT PREPARED. Deliberately small, and
+    # deliberately NOT version-pinned: python3-dev and python3-venv track
+    # whatever this release's python3 is, which is the point. The list used to
+    # name python3.11 outright and the Spark answered
+    #   E: Unable to locate package python3.11
+    # on a box that has 3.12 - because whether a specific minor version is
+    # packaged depends on the release AND on which repo components the image
+    # enables, neither of which this file can know.
+    seren_apt_install_required \
+        build-essential git curl wget \
+        python3-pip python3-dev python3-venv python3-setuptools python3-wheel \
+        || return 1
+
+    # EVERYTHING ELSE IS BEST-EFFORT, and that is the other half of the fix.
+    # apt's answer to three stale names in a list of twenty-five is to install
+    # NONE of them, so `libopenblas-base` (real on 20.04, gone since) took
+    # build-essential down with it. Now a name that has aged out is reported
+    # and skipped.
+    #
+    # netcat is a VIRTUAL package - netcat-openbsd or netcat-traditional
+    # depending on the release - which is why `which netcat` answers on a box
+    # where `apt install netcat` cannot work. Resolved by asking, not guessing.
+    local nc; nc="$(seren_apt_first netcat-openbsd netcat-traditional netcat || true)"
+    seren_apt_install \
+        net-tools i2c-tools espeak-ng \
+        libcurl4-openssl-dev libssl-dev libffi-dev libjpeg-dev zlib1g-dev \
+        libopenblas-dev libopenmpi-dev libomp-dev \
+        software-properties-common jq ${nc:+$nc} \
+        || warn "some optional packages did not install - see above"
+
+    # WHICH INTERPRETER THE REST OF THIS RUN USES, discovered and then STATED.
+    #
+    # There used to be a `ln -sf /usr/bin/python3.12 /usr/local/bin/python3.11`
+    # here, to satisfy a "venv convention" that wanted a 3.11. It made
+    # `which python3.11` answer on a box with no python3.11 package, which is
+    # exactly the confusion that sent us hunting - and it did not even work,
+    # because ensure_venv was hardcoded to python3.10, a third number. A
+    # symlink that lies about what is installed is worse than the gap it fills.
+    #
+    # So: find a real one, export it, and let ensure_venv use it. ensure_venv
+    # probes on its own too, for anyone running a service phase alone.
+    local cand ver
+    PYTHON_BIN=""
+    for cand in python3.12 python3.11 python3.10 python3; do
+        command -v "$cand" &>/dev/null || continue
+        ver="$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")"
+        case "$ver" in 3.10|3.11|3.12) PYTHON_BIN="$cand"; break ;; esac
+    done
+    if [ -z "$PYTHON_BIN" ]; then
+        fail "No Python 3.10-3.12 after apt install - JP7 should ship 3.11+."
+        fail "  python3 reports: $(python3 --version 2>&1 || echo 'not present')"
         return 1
     fi
+    export PYTHON_BIN
+    log "Python for venvs: $PYTHON_BIN ($("$PYTHON_BIN" --version 2>&1))"
 
-    sudo apt autoremove -y && sudo apt autoclean && sudo apt clean
+    sudo apt autoremove -y || warn "apt autoremove did not complete"
+    sudo apt autoclean || true
+    sudo apt clean || true
 }
 
 # ─────────────────────────────────────────────────────────────

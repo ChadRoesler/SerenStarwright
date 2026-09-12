@@ -28,10 +28,16 @@ NC='\033[0m'
 
 # These print to FD 3 if open (so they show on console even when stdout is
 # redirected to a log file), and also to stdout (so they end up in the log).
-log()  { echo -e "${GREEN}[SEREN]${NC} $1" >&3 2>/dev/null || true; echo -e "${GREEN}[SEREN]${NC} $1"; seren_event ok    msg "$1"; }
-warn() { echo -e "${YELLOW}[SEREN]${NC} $1" >&3 2>/dev/null || true; echo -e "${YELLOW}[SEREN]${NC} $1"; seren_event warn  msg "$1"; }
-fail() { echo -e "${RED}[SEREN]${NC} $1" >&3 2>/dev/null || true; echo -e "${RED}[SEREN]${NC} $1"; seren_event error msg "$1"; }
-info() { echo -e "${BLUE}[SEREN]${NC} $1" >&3 2>/dev/null || true; echo -e "${BLUE}[SEREN]${NC} $1"; seren_event info  msg "$1"; }
+#
+# `2>/dev/null >&3`, IN THAT ORDER, and the order is the whole point. Bash
+# applies redirections left to right, so `>&3 2>/dev/null` fails on fd 3 and
+# reports "Bad file descriptor" to a stderr that 2>/dev/null has not claimed
+# yet - printing the exact noise it was written to suppress, on every single
+# log line, any time fd 3 is not set up. Claim stderr first, then try fd 3.
+log()  { echo -e "${GREEN}[SEREN]${NC} $1" 2>/dev/null >&3 || true; echo -e "${GREEN}[SEREN]${NC} $1"; seren_event ok    msg "$1"; }
+warn() { echo -e "${YELLOW}[SEREN]${NC} $1" 2>/dev/null >&3 || true; echo -e "${YELLOW}[SEREN]${NC} $1"; seren_event warn  msg "$1"; }
+fail() { echo -e "${RED}[SEREN]${NC} $1" 2>/dev/null >&3 || true; echo -e "${RED}[SEREN]${NC} $1"; seren_event error msg "$1"; }
+info() { echo -e "${BLUE}[SEREN]${NC} $1" 2>/dev/null >&3 || true; echo -e "${BLUE}[SEREN]${NC} $1"; seren_event info  msg "$1"; }
 
 # ─────────────────────────────────────────────────────────────
 # Structured events — the Starwright contract, node-prep flavour
@@ -508,6 +514,99 @@ source_service() {
 }
 
 # ─────────────────────────────────────────────────────────────
+# apt helpers — ask the release what it HAS, do not declare it
+# ─────────────────────────────────────────────────────────────
+#
+# WHY THIS EXISTS, from a real failure on the Spark:
+#
+#   E: Unable to locate package libopenblas-base
+#   E: Unable to locate package python3.11
+#   E: Package 'netcat' has no installation candidate
+#
+# One `apt install -y` carried about twenty-five names. Three of them no longer
+# resolve on that release, and apt's answer to three bad names in a list of
+# twenty-five is to install NONE of them and exit 100. So build-essential, git,
+# jq and everything else the node actually needs were never installed - and the
+# phase died with a number, because the call was unguarded.
+#
+# The names were not even wrong when they were written. `libopenblas-base` was
+# real on 20.04 and is gone now; `netcat` is a VIRTUAL package (it is
+# netcat-openbsd or netcat-traditional, and `which netcat` still answers, which
+# is why this looks insane from the shell); `python3.11` depends on which repo
+# components a given image enables. A hardcoded package list is a claim about
+# somebody else's distro that goes stale without anybody touching this file.
+#
+# So: ask. apt already knows which names resolve on THIS box, and a candidate of
+# "(none)" is how it says "virtual" while an empty candidate is how it says
+# "never heard of it". Both mean unusable, both are worth reporting by name, and
+# neither is worth killing a node prep over.
+
+# seren_apt_has — is this package installable on THIS release?
+# Not "does the binary exist": `which netcat` answers on a box where
+# `apt install netcat` cannot work. The candidate version is the real question.
+seren_apt_has() {
+    local cand
+    cand="$(apt-cache policy "$1" 2>/dev/null | awk -F': ' '/Candidate:/{print $2; exit}')"
+    [ -n "$cand" ] && [ "$cand" != "(none)" ]
+}
+
+# seren_apt_first — the first name in a list that this release can install.
+# For packages that got renamed across releases: netcat-openbsd on one, the
+# traditional one elsewhere. Prints nothing and returns 1 if none resolve.
+seren_apt_first() {
+    local p
+    for p in "$@"; do
+        if seren_apt_has "$p"; then echo "$p"; return 0; fi
+    done
+    return 1
+}
+
+# seren_apt_install — install what resolves, name what does not.
+#
+# REQUIRED vs OPTIONAL is the caller's call, made by which function they use.
+# This one is the optional flavour: a name that has aged out warns and the rest
+# still land, because losing jq should not cost you build-essential.
+seren_apt_install() {
+    local present=() missing=() p
+    for p in "$@"; do
+        if seren_apt_has "$p"; then present+=("$p"); else missing+=("$p"); fi
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        warn "not available on this release, skipping: ${missing[*]}"
+        warn "  (a virtual or renamed package - the list in this platform's"
+        warn "   foundation.sh has aged out, which is worth a look, but it is"
+        warn "   not a reason to abandon the install)"
+    fi
+    [ ${#present[@]} -eq 0 ] && { warn "nothing left to install"; return 0; }
+    if ! sudo apt install -y "${present[@]}"; then
+        fail "apt install failed for: ${present[*]}"
+        return 1
+    fi
+    return 0
+}
+
+# seren_apt_install_required — the same, except a missing name is fatal AND SAID.
+# Used for the handful without which the node is not prepared at all.
+seren_apt_install_required() {
+    local missing=() p
+    for p in "$@"; do
+        seren_apt_has "$p" || missing+=("$p")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        fail "required packages are not installable on this release: ${missing[*]}"
+        fail "  This node cannot be prepared until that is resolved - check that"
+        fail "  the universe component is enabled, or that the name has not been"
+        fail "  renamed in this Ubuntu release."
+        return 1
+    fi
+    if ! sudo apt install -y "$@"; then
+        fail "apt install failed for the required set: $*"
+        return 1
+    fi
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────
 # Venv helpers — one venv per Python service
 # ─────────────────────────────────────────────────────────────
 # Convention: real venv lives at /mnt/nvme/seren-venvs/{service}/ when NVMe
@@ -564,11 +663,43 @@ ensure_venv() {
 
     # Create venv at the real path (where python -m venv can actually write)
     if [ ! -x "$real_venv/bin/python" ] && [ ! -x "$venv_path/bin/python" ]; then
-        # Pick the python interpreter. Default python3.10 (Jetson convention),
-        # override via PYTHON_BIN env var (NUC + future cross-platform installs).
-        local python_bin="${PYTHON_BIN:-python3.10}"
-        if ! command -v "$python_bin" &>/dev/null; then
-            fail "ensure_venv: $python_bin not found on PATH (set PYTHON_BIN to override)"
+        # PICK THE INTERPRETER BY LOOKING, not by hardcoding a minor version.
+        #
+        # This was `${PYTHON_BIN:-python3.10}` and nothing on the Spark path ever
+        # set PYTHON_BIN - so every venv on a JP7 box would have failed with
+        # "python3.10 not found", on a machine carrying a perfectly good 3.12.
+        # The Jetson convention was true for JetPack 6 and became a false claim
+        # about every other platform the moment one was added.
+        #
+        # Explicit still wins: PYTHON_BIN set by a platform module or by hand is
+        # used as given and is not second-guessed. Otherwise probe, newest-first,
+        # over the range the rest of Seren supports - the same 3.10-3.12 window
+        # the service installers' find_python accepts, so a box that can run a
+        # service can also build a node venv. Plain python3 is the last resort
+        # and is accepted only if it lands inside that window; a distro that has
+        # moved to 3.13 should say so here rather than fail later inside pip.
+        local python_bin="${PYTHON_BIN:-}"
+        if [ -z "$python_bin" ]; then
+            local cand ver
+            for cand in python3.12 python3.11 python3.10 python3; do
+                command -v "$cand" &>/dev/null || continue
+                ver="$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")"
+                case "$ver" in 3.10|3.11|3.12) python_bin="$cand"; break ;; esac
+            done
+        fi
+        if [ -z "$python_bin" ] || ! command -v "$python_bin" &>/dev/null; then
+            # SAY WHAT IS ACTUALLY THERE. "python3.10 not found" on a box
+            # carrying 3.12 reads as a broken machine; the list makes it read
+            # as the version mismatch it is.
+            local seen="" c v
+            for c in python3.13 python3.12 python3.11 python3.10 python3; do
+                command -v "$c" &>/dev/null || continue
+                v="$("$c" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "?")"
+                seen="${seen:+$seen, }$c ($v)"
+            done
+            fail "ensure_venv: no Python 3.10-3.12 on PATH (set PYTHON_BIN to override)."
+            fail "  On PATH: ${seen:-nothing called python3 at all}"
+            fail "  Run this node's foundation phase first - it installs one."
             return 1
         fi
         log "Creating venv at $real_venv (using $python_bin)"
