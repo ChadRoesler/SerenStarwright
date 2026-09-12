@@ -1373,10 +1373,27 @@ class PrepareNodeScreen(Screen):
             return
 
         cmd = ["bash", str(node.script)]
-        FLAG = {"llama": "--llama", "kokoro": "--kokoro", "comfyui": "--comfyui",
-                "chromadb": "--chromadb", "coral": "--coral"}
+        # DERIVED, NOT MAPPED. This was a dict of five entries, every one of
+        # them the identity - "llama" -> "--llama" and so on - which made it a
+        # hand-maintained copy of something the describe already states. Adding
+        # a component to seren-prepare-node.sh put a checkbox on this screen and
+        # then raised KeyError the moment somebody ticked it: the UI offered a
+        # thing the button could not run.
+        #
+        # NodeDef's own docstring promises the opposite - "a flag added to the
+        # script surfaces with no UI edit" - and it was true for rendering and
+        # false for launching. Both ends read the same derived list now.
+        unknown = [c.name for c in chosen if not node.supports(c.name)]
+        if unknown:
+            # A SENTENCE, NOT A TRACEBACK. A component the dispatcher does not
+            # take is a real mismatch worth seeing, and the person who needs to
+            # see it is looking at this screen, not at a crash dump.
+            warn.update(
+                f"the prep script does not accept: {', '.join(unknown)} - "
+                f"its --describe lists {', '.join(node.flags) or '(nothing)'}")
+            return
         for c in chosen:
-            cmd.append(FLAG[c.name])
+            cmd.append(f"--{c.name}")
 
         forced = getattr(self, "_forced_platform", "")
         if forced:

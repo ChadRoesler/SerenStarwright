@@ -237,25 +237,65 @@ $CLEANUP_WHEEL && rm -f "$WHEEL_SRC"
 # perfectly good install, and a warning that fires on working software teaches
 # people to ignore warnings.
 #
-# What IS invariant: the package imports, the app factory is reachable, and
-# --describe answers. Those three are true by construction of a good install
-# and false for every broken one.
+# What IS invariant: the package imports and the app factory is reachable.
+# Those two are true by construction of a good install and false for every
+# broken one, so they still kill the run.
+#
+# THE IDENTITY CARD IS NOT IN THAT TIER, and putting it there was a real bug.
+# All three imports used to sit in one try with `die` underneath, on the stated
+# grounds that all three were invariant. seren_theatre/_describe.py is new -
+# every seren-theatre published up to 0.4.2 shipped without it - so `--pypi`
+# refused to finish on a package that was otherwise perfectly good.
+#
+# And the thing lost when the card is absent is only a CROSS-CHECK. Starwright
+# builds its grid from this script's own --describe either way; the card is the
+# second opinion that catches the two drifting apart (7425 vs 7444, the reason
+# any of this exists). Refusing to install over a missing second opinion is
+# refusing to install over nothing.
 step "Sanity-checking the install"
 CHECK="$("$VPY" - <<'PY'
 try:
-    import seren_theatre
-    from seren_theatre.app import create_app          # noqa: F401
-    from seren_theatre._describe import DESCRIBE
+    import seren_theatre                               # noqa: F401
+    from seren_theatre.app import create_app           # noqa: F401
 except Exception as e:
     print(f"IMPORT_FAILED: {e}"); raise SystemExit
-missing = [k for k in ("name", "port", "group", "accent") if k not in DESCRIBE]
-print("DESCRIBE_INCOMPLETE: " + ",".join(missing) if missing else "OK")
+print("OK")
 PY
 )" || CHECK="FAILED"
 case "$CHECK" in
-  OK) ok "Package imports, the app factory is reachable and --describe answers" ;;
-  DESCRIBE_INCOMPLETE*) warn "Installed but $CHECK — Starwright's grid will show gaps" ;;
+  OK) ok "Package imports and the app factory is reachable" ;;
   *) die "Install looks broken: $CHECK" ;;
+esac
+
+# -- 4b. the identity card (reported, never fatal) ---------------------------
+# Four answers, each meaning something different, because collapsing them is
+# how the old check managed to report a missing module as a broken install.
+CARD="$("$VPY" - <<'PY'
+try:
+    from seren_theatre._describe import DESCRIBE
+except ModuleNotFoundError as e:
+    # THE MODULE ITSELF, not something it imports. A card that fails because
+    # its own dependency is missing is a different bug and must not be filed
+    # under "old build" - the card is stdlib-only precisely so this cannot
+    # happen, and Theatre has a test asserting it.
+    print("NO_CARD" if e.name == "seren_theatre._describe"
+          else f"CARD_BROKE: {e}"); raise SystemExit
+except Exception as e:
+    print(f"CARD_BROKE: {e}"); raise SystemExit
+missing = [k for k in ("name", "port", "group", "accent") if k not in DESCRIBE]
+print("DESCRIBE_INCOMPLETE: " + ",".join(missing) if missing else "OK")
+PY
+)" || CARD="CARD_BROKE: the check itself did not run"
+case "$CARD" in
+  OK) ok "Identity card answers - the values below are cross-checked" ;;
+  NO_CARD) warn "This build ships no seren_theatre/_describe.py, so nothing"
+           warn "cross-checks the port and accent below against the package."
+           warn "Released before the identity card existed; upgrade to a newer"
+           warn "seren-theatre when convenient. The install itself is fine." ;;
+  DESCRIBE_INCOMPLETE*) warn "Installed but $CARD — Starwright's grid will show gaps" ;;
+  *) warn "Identity card is present but broken: $CARD"
+     warn "That is a bug in seren-theatre, not in this install - worth"
+     warn "reporting. Nothing below is cross-checked as a result." ;;
 esac
 
 # -- 5. config --------------------------------------------------------------
