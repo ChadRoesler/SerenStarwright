@@ -1,25 +1,34 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# xavier/foundation.sh — Xavier (jp5/R35) OS prereq phases
+# xavier/foundation.sh - Xavier (jp5/R35) OS prereq phases
 #
 # Sourced by seren-prepare-node.sh. Defines run_foundation() which executes
 # all OS-level prereqs needed before any service can be installed.
 #
 # Phases (jq-tracked, resumable):
-#   01_os_trim       — Disable bloat, install build tools
-#   02_sqlite        — SQLite 3.45 from source (Ubuntu 20.04 ships 3.31)
-#   03_python310     — Python 3.10 altinstall from source
-#   04_cmake         — pip cmake<4 (system 3.16 too old; 4.x breaks protobuf)
-#   05_cuda          — CUDA 12.2 toolkit + cuda-compat-12-2 driver shim
-#   06_nvme          — Mount NVMe, swap, relocate pip cache + .local
+#   01_os_trim       - Disable bloat, install build tools
+#   02_sqlite        - SQLite 3.45 from source (Ubuntu 20.04 ships 3.31)
+#   03_python310     - Python 3.10 altinstall from source
+#   04_cmake         - pip cmake<4 (system 3.16 too old; 4.x breaks protobuf)
+#   05_cuda          - CUDA 12.2 toolkit + cuda-compat-12-2 driver shim
+#   06_nvme          - Mount NVMe, swap, relocate pip cache + .local
 #
 # Do not run directly.
 # ══════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────
-# Phase 1 — OS trim
+# Phase 1 - OS trim
 # ─────────────────────────────────────────────────────────────
 phase_xavier_os_trim() {
+    # CONSENT. This phase removes the desktop, docker and snap and sets the
+    # default target to multi-user: correct for a dedicated node, unforgivable
+    # as a side effect. It runs only with --trim-os; otherwise it skips and
+    # says so on the console, where the prompt would have been.
+    if [ "${TRIM_OS:-false}" != "true" ]; then
+        warn "OS trim SKIPPED: pass --trim-os to remove the desktop, docker and snap (headless node)"
+        echo -e "${YELLOW}[SEREN]${NC} OS trim skipped - pass --trim-os to make this a headless node" >&3 2>/dev/null || true
+        return 0
+    fi
     sudo systemctl set-default multi-user.target
     sudo systemctl disable gdm3.service lightdm.service 2>/dev/null || true
 
@@ -75,7 +84,7 @@ phase_xavier_os_trim() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 2 — SQLite 3.45 from source (ChromaDB needs >= 3.35)
+# Phase 2 - SQLite 3.45 from source (ChromaDB needs >= 3.35)
 # ─────────────────────────────────────────────────────────────
 phase_xavier_sqlite() {
     local SQLITE_VERSION; SQLITE_VERSION=$(sqlite3 --version 2>/dev/null | awk '{print $1}' || echo "0")
@@ -97,7 +106,7 @@ phase_xavier_sqlite() {
         return 0
     fi
 
-    log "SQLite $SQLITE_VERSION too old — building 3.45 from source (~10 min)"
+    log "SQLite $SQLITE_VERSION too old - building 3.45 from source (~10 min)"
     cd /tmp
     sudo rm -rf sqlite-autoconf-3450000 sqlite-autoconf-3450000.tar.gz 2>/dev/null || true
     wget -q --show-progress https://www.sqlite.org/2024/sqlite-autoconf-3450000.tar.gz
@@ -111,7 +120,7 @@ phase_xavier_sqlite() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 3 — Python 3.10 altinstall from source
+# Phase 3 - Python 3.10 altinstall from source
 # ─────────────────────────────────────────────────────────────
 phase_xavier_python310() {
     if command -v python3.10 &>/dev/null; then
@@ -132,26 +141,26 @@ phase_xavier_python310() {
         # Verify
         if command -v python3.10 &>/dev/null; then
             log "Python 3.10 now reports: $(python3.10 --version)"
-            # Tarball doesn't include pip — bootstrap it via ensurepip.
+            # Tarball doesn't include pip - bootstrap it via ensurepip.
             # (build-prebuilts.sh tarballs the result of `make install` which
             # doesn't run ensurepip. We could fix that in the builder, but
             # bootstrapping here makes us robust to old/missing tarballs.)
             if ! python3.10 -m pip --version &>/dev/null; then
                 log "Bootstrapping pip into Python 3.10..."
                 sudo python3.10 -m ensurepip --upgrade || \
-                    warn "ensurepip failed — falling back to source build"
-                # ensurepip installs into /usr/local — make sure user pip works after
+                    warn "ensurepip failed - falling back to source build"
+                # ensurepip installs into /usr/local - make sure user pip works after
                 sudo python3.10 -m pip install --upgrade pip 2>/dev/null || true
             fi
-            # Final sanity check — pip must be importable for downstream phases
+            # Final sanity check - pip must be importable for downstream phases
             if python3.10 -m pip --version &>/dev/null; then
                 log "pip ready: $(python3.10 -m pip --version)"
                 return 0
             else
-                warn "pip bootstrap failed — falling back to source build"
+                warn "pip bootstrap failed - falling back to source build"
             fi
         else
-            warn "Prebuilt tarball install didn't yield a working python3.10 — falling back to source"
+            warn "Prebuilt tarball install didn't yield a working python3.10 - falling back to source"
         fi
     fi
 
@@ -170,7 +179,7 @@ phase_xavier_python310() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 4 — CMake (pip-installed, pinned <4 to avoid protobuf breakage)
+# Phase 4 - CMake (pip-installed, pinned <4 to avoid protobuf breakage)
 # ─────────────────────────────────────────────────────────────
 phase_xavier_cmake() {
     export PATH=$HOME/.local/bin:/usr/local/bin:$PATH
@@ -187,7 +196,7 @@ phase_xavier_cmake() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 5 — CUDA 12.2 toolkit + driver compat shim
+# Phase 5 - CUDA 12.2 toolkit + driver compat shim
 # ─────────────────────────────────────────────────────────────
 phase_xavier_cuda() {
     local NVCC_VER
@@ -218,13 +227,13 @@ EOF
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 6 — NVMe + swap + pip relocation
+# Phase 6 - NVMe + swap + pip relocation
 # ─────────────────────────────────────────────────────────────
 # Xavier eMMC is only 32GB. Without this phase, pip caches and pytorch
 # wheels will fill it. Symlinks ~/.local/{bin,lib} and ~/.cache/pip to NVMe.
 phase_xavier_nvme() {
     if ! lsblk | grep -q nvme0n1; then
-        warn "No NVMe detected — skipping NVMe phase. eMMC is 32GB, you WILL fill it."
+        warn "No NVMe detected - skipping NVMe phase. eMMC is 32GB, you WILL fill it."
         mkdir -p ~/models
         return 0
     fi
@@ -236,15 +245,28 @@ phase_xavier_nvme() {
         # we'd rather wipe + reformat than have downstream phases blow up.
         local NEED_FORMAT=false
         if ! lsblk | grep -q nvme0n1p1; then
-            log "No nvme0n1p1 partition — creating fresh"
+            log "No nvme0n1p1 partition - creating fresh"
             NEED_FORMAT=true
         elif ! sudo blkid /dev/nvme0n1p1 | grep -q 'TYPE="ext4"'; then
             local CURRENT_FS
             CURRENT_FS=$(sudo blkid /dev/nvme0n1p1 -o value -s TYPE 2>/dev/null || echo "unknown")
-            warn "nvme0n1p1 has filesystem '$CURRENT_FS' (expected ext4) — reformatting"
+            warn "nvme0n1p1 has filesystem '$CURRENT_FS' (expected ext4) - reformatting"
             NEED_FORMAT=true
         fi
 
+        if $NEED_FORMAT && [ "${WIPE_NVME:-false}" != "true" ]; then
+            # STOP, do not format. The disk is not ext4 (or not partitioned),
+            # and nobody said it could be wiped. Say exactly what would happen
+            # and how to allow it, on the console as well as in the log.
+            local dev_state
+            dev_state="$(lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT /dev/nvme0n1 2>/dev/null | sed 's/^/      /')"
+            echo -e "${RED}[SEREN]${NC} NVMe /dev/nvme0n1 is not an ext4 data disk and --wipe-nvme was not given." >&3 2>/dev/null || true
+            echo -e "${RED}[SEREN]${NC} Prep will NOT format it. Current state:" >&3 2>/dev/null || true
+            echo "$dev_state" >&3 2>/dev/null || true
+            echo -e "${RED}[SEREN]${NC} If this disk is yours to erase, re-run with --wipe-nvme (everything on it is lost)." >&3 2>/dev/null || true
+            fail "NVMe needs formatting and --wipe-nvme was not given. Refusing to wipe /dev/nvme0n1."
+            return 1
+        fi
         if $NEED_FORMAT; then
             # Wipe ALL signatures from disk + partition before recreating, otherwise
             # leftover NTFS/MBR fragments confuse blkid + the kernel.
@@ -261,7 +283,7 @@ phase_xavier_nvme() {
         sudo mount /dev/nvme0n1p1 /mnt/nvme
         sudo chown "$TARGET_USER":"$TARGET_USER" /mnt/nvme
 
-        # Update fstab — replace any existing nvme line (might be wrong fstype)
+        # Update fstab - replace any existing nvme line (might be wrong fstype)
         if grep -q '/dev/nvme0n1p1' /etc/fstab; then
             sudo sed -i '\|/dev/nvme0n1p1|d' /etc/fstab
         fi
@@ -295,7 +317,7 @@ phase_xavier_nvme() {
         sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local"
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-packages/lib "$USER_HOME/.local/lib"
     else
-        log "~/.local/lib already symlinked — skipping"
+        log "~/.local/lib already symlinked - skipping"
     fi
 
     if [ -d "$USER_HOME/.local/bin" ] && [ ! -L "$USER_HOME/.local/bin" ]; then
@@ -307,7 +329,7 @@ phase_xavier_nvme() {
         sudo -u "$TARGET_USER" mkdir -p /mnt/nvme/pip-packages/bin
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-packages/bin "$USER_HOME/.local/bin"
     else
-        log "~/.local/bin already symlinked — skipping"
+        log "~/.local/bin already symlinked - skipping"
     fi
 
     if [ -d "$USER_HOME/.cache/pip" ] && [ ! -L "$USER_HOME/.cache/pip" ]; then
@@ -319,33 +341,33 @@ phase_xavier_nvme() {
         sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.cache"
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-cache "$USER_HOME/.cache/pip"
     else
-        log "~/.cache/pip already symlinked — skipping"
+        log "~/.cache/pip already symlinked - skipping"
     fi
 }
 
 # ─────────────────────────────────────────────────────────────
-# Foundation entry point — called by seren-prepare-node.sh
+# Foundation entry point - called by seren-prepare-node.sh
 # ─────────────────────────────────────────────────────────────
 run_foundation() {
     # Phase 0 runs first so the rest of the install (especially the source
     # builds) gets the benefit of max clocks. Skipped if --no-max-power.
-    run_phase "00_max_power"         "Phase 0 — Max power mode"     phase_max_power
-    run_phase "01_xavier_os_trim"   "Phase 1 — OS trim"           phase_xavier_os_trim
+    run_phase "00_max_power"         "Phase 0 - Max power mode"     phase_max_power
+    run_phase "01_xavier_os_trim"   "Phase 1 - OS trim"           phase_xavier_os_trim
     # SQLite is ALWAYS installed on Xavier. New Python tarballs (built with
     # --sqlite first, post 2026.04.29-xavier) bake in an rpath pointing at
     # /usr/local/lib for libsqlite3, so the shared object must be present
     # at runtime regardless of whether ChromaDB was flagged. Older Python
-    # tarballs link against system libsqlite3 and don't need this — but
+    # tarballs link against system libsqlite3 and don't need this - but
     # installing 3.45 anyway is harmless (~5MB on disk).
-    run_phase "02_xavier_sqlite"    "Phase 2 — SQLite 3.45"        phase_xavier_sqlite
-    run_phase "03_xavier_python310" "Phase 3 — Python 3.10"        phase_xavier_python310
+    run_phase "02_xavier_sqlite"    "Phase 2 - SQLite 3.45"        phase_xavier_sqlite
+    run_phase "03_xavier_python310" "Phase 3 - Python 3.10"        phase_xavier_python310
     # NVMe must run BEFORE CMake. Phase 4 (CMake) does `pip install --user`
     # which writes to ~/.local/lib/python3.10. Phase 6 (NVMe) creates that
     # path as a symlink to /mnt/nvme/pip-packages/lib. Newer pip is strict
     # about target dirs existing, so without phase 6 first, pip errors out.
     # The phase IDs stay numbered as-is to preserve compat with state files
-    # from existing installs — only execution order changes.
-    run_phase "06_xavier_nvme"      "Phase 6 — NVMe + swap + pip"  phase_xavier_nvme
-    run_phase "04_xavier_cmake"     "Phase 4 — CMake"              phase_xavier_cmake
-    run_phase "05_xavier_cuda"      "Phase 5 — CUDA 12.2 + compat" phase_xavier_cuda
+    # from existing installs - only execution order changes.
+    run_phase "06_xavier_nvme"      "Phase 6 - NVMe + swap + pip"  phase_xavier_nvme
+    run_phase "04_xavier_cmake"     "Phase 4 - CMake"              phase_xavier_cmake
+    run_phase "05_xavier_cuda"      "Phase 5 - CUDA 12.2 + compat" phase_xavier_cuda
 }

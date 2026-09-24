@@ -9,6 +9,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Wheel .\seren_margin-0.1.0-py3-none-any.whl
+#    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Local D:\serenDaemon\SerenCore\.dev-wheelhouse   # dev builds from seren-dev-publish.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -Pypi
 #    powershell -ExecutionPolicy Bypass -File .\seren-margin-setup.ps1 -NoUpdates  # turn update checking off
 # ══════════════════════════════════════════════════════════════════════════
@@ -20,6 +21,7 @@ param(
   [string] $Token      = "",
   [switch] $GenToken,
   [string] $Wheel      = "",
+  [string] $Local      = "",
   [string] $Ref        = "",
   [string] $Repo       = "",
   [string] $RepoDir    = "",
@@ -88,7 +90,7 @@ $AppDir  = "$env:USERPROFILE\seren-margin$Instance"
 $CfgPath = "$AppDir\seren-margin.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7421) {
-  Warn "Instance '$Instance' uses default port 7421 — may collide."
+  Warn "Instance '$Instance' uses default port 7421 - may collide."
 }
 
 Write-Host "==========================================" -ForegroundColor Green
@@ -111,8 +113,8 @@ if ($Wheel) {
   if (-not (Test-Path $Wheel)) { Die "wheel not found: $Wheel" }
   $wheelSrc = (Resolve-Path $Wheel).Path
   Ok "Installing from local wheel: $(Split-Path $wheelSrc -Leaf)"
-} elseif ($Repo) {
-  $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-margin"
+} elseif ($Local -or $Repo) {
+  $wr = Resolve-Wheel -Wheel $Wheel -Local $Local -Ref $Ref -Repo $Repo -Package "seren-margin"
   $wheelSrc = $wr.Src
   $cleanupWheel = $wr.Cleanup
 } elseif ($Pypi) {

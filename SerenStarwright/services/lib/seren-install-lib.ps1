@@ -7,18 +7,20 @@
 #    (or use Find-Upward to locate it from any subfolder)
 #
 #  Provides:
-#    Step / Ok / Warn / Die         — colored output helpers
-#    Find-Upward                    — reorg-robust file locator
-#    Find-Python                    — locate Python 3.10-3.12 (default)
-#    Find-Python-NoUpper            — locate Python 3.10+ (SCC)
-#    Resolve-Wheel                  — resolve --wheel / --repo / PyPI
-#    Create-Venv                    — create or reuse a venv
-#    Get-Extras-Suffix              — build "[mcp,corp]" from switches
-#    Get-Corp-Args                  — --use-feature=truststore if pip≥24.2
-#    Install-Package                — pip install with extras + corp
-#    Sanity-Check                   — generic import + asset check
-#    Write-Launcher                 — drop a run-*.ps1 launcher
-#    Setup-Autostart                — NSSM service via wrapper
+#    Step / Ok / Warn / Die         - colored output helpers
+#    Find-Upward                    - reorg-robust file locator
+#    Find-Python                    - locate Python 3.10-3.12 (default)
+#    Find-Python-NoUpper            - locate Python 3.10+ (SCC)
+#    Resolve-Wheel                  - resolve -Wheel / -Local / -Repo / PyPI
+#    Resolve-LocalWheel             - the dev wheelhouse (seren-dev-publish)
+#    Get-SerenSha256                - file digest without Get-FileHash
+#    Create-Venv                    - create or reuse a venv
+#    Get-Extras-Suffix              - build "[mcp,corp]" from switches
+#    Get-Corp-Args                  - --use-feature=truststore if pip≥24.2
+#    Install-Package                - pip install with extras + corp
+#    Sanity-Check                   - generic import + asset check
+#    Write-Launcher                 - drop a run-*.ps1 launcher
+#    Setup-Autostart                - NSSM service via wrapper
 # ════════════════════════════════════════════════════════════════════════
 #>
 
@@ -185,7 +187,20 @@ function Get-SerenDescribe {
         # family-wide allowlist, so it cannot know that a given package declares
         # mcp as a CORE dep rather than an extra (lodestar, workbench). Those
         # installers pass Extras to say what they actually publish.
-        [string[]] $Extras = @()
+        [string[]] $Extras = @(),
+        # Service names this one needs ALREADY INSTALLED.
+        #
+        # DECLARED, never derived - the only honest source is the config the
+        # installer writes, and no amount of parsing $ScriptPath can see that.
+        #
+        # This parameter did not exist, and its absence was not cosmetic: the
+        # emitted object simply had no `requires` key, so on Windows every
+        # service looked dependency-free. Starwright feeds `requires` into
+        # resolve_dependencies and install_order, so selecting Corpus Callosum
+        # on a Windows box installed a bridge to nothing - the exact failure the
+        # bash side declares SVC_REQUIRES to prevent, and which the test suite
+        # names as its reason for existing.
+        [string[]] $Requires = @()
     )
     $flags  = @(Get-SerenFlagsFromSelf -ScriptPath $ScriptPath)
     if ($Extras.Count -gt 0) {
@@ -193,11 +208,15 @@ function Get-SerenDescribe {
     } else {
         $extras = @()
         foreach ($f in $flags) {
-            if ($f -eq 'mcp' -or $f -eq 'corp' -or $f -eq 'vector') { $extras += $f }
+            if ($f -eq 'mcp' -or $f -eq 'corp' -or $f -eq 'vector' -or $f -eq 'st') { $extras += $f }
         }
     }
     # canonical flag -> the actual PowerShell parameter to pass
     $params = [ordered] @{}
+    # Flags that take NO value ([switch] parameters). The front-end renders
+    # these as check boxes; anything else is a text box. Mirrors
+    # seren_switches_from_self on the bash side.
+    $switches = @()
     if ($ScriptPath) {
         try {
             $cmd = Get-Command -Name $ScriptPath -CommandType ExternalScript -ErrorAction Stop
@@ -206,7 +225,11 @@ function Get-SerenDescribe {
             foreach ($p in $cmd.Parameters.Keys) {
                 if ($common -contains $p) { continue }
                 $params[(ConvertTo-SerenFlagName $p)] = $p
+                if ($cmd.Parameters[$p].ParameterType -eq [switch]) {
+                    $switches += (ConvertTo-SerenFlagName $p)
+                }
             }
+            $switches = @($switches | Sort-Object -Unique)
         } catch { }
     }
     $obj = [ordered] @{
@@ -222,6 +245,12 @@ function Get-SerenDescribe {
         accent         = $Accent
         extras         = $extras
         flags          = $flags
+        # @() forces an ARRAY through ConvertTo-Json. Without it a single
+        # requirement serialises as a bare string and a one-dependency service
+        # would hand the TUI "seren-memory" where it iterates a list - which
+        # walks the characters.
+        switches       = @($switches)
+        requires       = @($Requires)
         params         = $params
     }
     # Write-Output is CORRECT here, unlike in Send-SerenEvent, and the
@@ -315,22 +344,127 @@ function Find-Python {
     return @{ Exe = $pyExe; Args = $pyArgs; Bin = $pyBin; Ver = $pyVer }
 }
 
-# -- resolve wheel source (local / GitHub / PyPI) -----------------------------
+# -- the dev wheelhouse (-Local DIR|URL) -------------------------------------
+# A wheelhouse is what seren-dev-publish.ps1 writes: one wheel per project plus
+# SHA256SUMS in sha256sum's format. It is a folder, or an http(s) URL where the
+# same folder is served (python -m http.server, which is what -Serve does).
+#
+# Returns @{ Src; Cleanup } like Resolve-Wheel, and leaves the pip arguments
+# that make the house count (--find-links + a constraints file) in
+# $global:serenPipArgs for Install-Package to pick up.
+#
+# WHY A CONSTRAINTS FILE: a dev build of seren-meninges is a pre-release
+# (2.4.1.dev3+g...), and pip never picks a pre-release to satisfy a plain
+# `seren-meninges>=2.4.0` unless told to. `--pre` would say so for EVERY
+# package in the tree. An exact `==` pin on the pre-release version says it
+# for that one package only, so every seren-* wheel in the house is pinned by
+# name and pip takes the dev copy - with its dependencies - and nothing else
+# changes.
+# -- Get-SerenSha256 - hex digest of a file, on every PowerShell edition ------
+# Not Get-FileHash: it is a module cmdlet, and a Windows PowerShell whose
+# Microsoft.PowerShell.Utility is damaged (seen in the wild) has no such
+# command, while the .NET class is always there.
+function Get-SerenSha256 {
+    param([string] $Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $fs = [System.IO.File]::OpenRead($Path)
+    try { $bytes = $sha.ComputeHash($fs) } finally { $fs.Dispose(); $sha.Dispose() }
+    return ([System.BitConverter]::ToString($bytes)).Replace("-", "").ToLower()
+}
+
+$global:serenPipArgs = @()
+function Resolve-LocalWheel {
+    param([string] $House, [string] $Package)
+    $pkgUs = $Package -replace '-', '_'
+    $stage = Join-Path ([System.IO.Path]::GetTempPath()) ("seren_local_" + [System.IO.Path]::GetRandomFileName().Replace('.', ''))
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    $isUrl = $House -match '^https?://'
+    if ($House -match '^file://') { $House = $House -replace '^file://', '' }
+    if ($isUrl) {
+        $House = $House.TrimEnd('/')
+        $findLinks = "$House/"
+        Step "Reading the dev wheelhouse at $House"
+        $index = Join-Path $stage "SHA256SUMS"
+        try { Invoke-WebRequest -Uri "$House/SHA256SUMS" -OutFile $index -UseBasicParsing }
+        catch { Die "no SHA256SUMS at $House - is seren-dev-publish.ps1 -Serve running there?" }
+    } else {
+        Step "Reading the dev wheelhouse at $House"
+        if (-not (Test-Path $House -PathType Container)) { Die "wheelhouse not found: $House" }
+        $findLinks = (Resolve-Path $House).Path
+        $index = Join-Path $findLinks "SHA256SUMS"
+        if (-not (Test-Path $index)) { Die "no SHA256SUMS in $House - run seren-dev-publish.ps1 first" }
+    }
+
+    # Newest wheel per seren-* project, from the index alone. Numeric runs are
+    # zero-padded so 3.0.1.dev2 sorts after 3.0.0 and .dev3 after .dev2 - the
+    # same order the bash side gets from `sort -V`.
+    $hashes = @{}
+    foreach ($line in Get-Content $index) {
+        if ($line -match '^([0-9a-fA-F]{64})\s+\*?(\S+)$') {
+            $n = $Matches[2]
+            if ($n -like 'seren_*.whl' -and $n -notmatch '/') { $hashes[$n] = $Matches[1].ToLower() }
+        }
+    }
+    $latest = @{}
+    foreach ($n in $hashes.Keys) {
+        $parts = $n.Split('-')
+        $dist = $parts[0]; $ver = $parts[1]
+        $key = [regex]::Replace($ver, '\d+', { param($m) $m.Value.PadLeft(8, '0') })
+        if (-not $latest.ContainsKey($dist) -or ([string]::CompareOrdinal($key, $latest[$dist].Key) -gt 0)) {
+            $latest[$dist] = @{ Name = $n; Ver = $ver; Key = $key }
+        }
+    }
+    $constraints = Join-Path $stage "constraints.txt"
+    $lines = @()
+    $best = $null
+    foreach ($dist in ($latest.Keys | Sort-Object)) {
+        $lines += "$($dist -replace '_', '-')==$($latest[$dist].Ver)"
+        if ($dist -eq $pkgUs) { $best = $latest[$dist].Name }
+    }
+    [System.IO.File]::WriteAllText($constraints, ($lines -join "`n") + "`n", (New-Object System.Text.UTF8Encoding $false))
+    if (-not $best) { Die "no $pkgUs-*.whl in the wheelhouse index ($($latest.Count) seren wheels listed)" }
+
+    # Fetch (or locate) the one wheel this card installs, and verify it either
+    # way - a folder can be edited by hand too.
+    if ($isUrl) {
+        $wheelSrc = Join-Path $stage $best
+        try { Invoke-WebRequest -Uri "$House/$([uri]::EscapeDataString($best))" -OutFile $wheelSrc -UseBasicParsing }
+        catch { Die "download failed: $best" }
+    } else {
+        $wheelSrc = Join-Path $findLinks $best
+        if (-not (Test-Path $wheelSrc)) { Die "index lists $best but the file is not in $House" }
+    }
+    $have = Get-SerenSha256 -Path $wheelSrc
+    if ($have -ne $hashes[$best]) {
+        if ($isUrl) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue }
+        Die "$best failed verification against the wheelhouse index (republish, or check what is serving it)"
+    }
+    $global:serenPipArgs = @('--find-links', $findLinks, '-c', $constraints)
+    Ok "Dev wheel $best  (+ $($latest.Count - 1) other seren wheel(s) pinned from the house)"
+    return @{ Src = $wheelSrc; Cleanup = $false }
+}
+
+# -- resolve wheel source (wheel / dev house / GitHub / PyPI) -----------------
+# Precedence: -Wheel > -Local > -Repo/-Ref > PyPI
 function Resolve-Wheel {
     param(
         [string] $Wheel,
         [string] $Ref,
         [string] $Repo,
-        [string] $Package
+        [string] $Package,
+        [string] $Local = ""
     )
     if ($Ref -and -not $Repo) { $Repo = "ChadRoesler/$Package" }
     $wheelSrc = $null
     $cleanupWheel = $false
+    $global:serenPipArgs = @()
     $pyInfo = $global:pyInfo
     if ($Wheel) {
         if (-not (Test-Path $Wheel)) { Die "wheel not found: $Wheel" }
         $wheelSrc = (Resolve-Path $Wheel).Path
         Ok "Installing from local wheel: $(Split-Path $wheelSrc -Leaf)"
+    } elseif ($Local) {
+        return Resolve-LocalWheel -House $Local -Package $Package
     } elseif ($Repo) {
         Step "Resolving the $Package release from GitHub ($Repo)"
         $api = if ($Ref) { "https://api.github.com/repos/$Repo/releases/tags/$Ref" }
@@ -367,11 +501,12 @@ function Create-Venv {
 
 # -- build extras suffix from switches ----------------------------------------
 function Get-Extras-Suffix {
-    param([switch] $Mcp, [switch] $Corp, [switch] $Vector)
+    param([switch] $Mcp, [switch] $Corp, [switch] $Vector, [switch] $St)
     $list = @()
     if ($Mcp)     { $list += "mcp" }
     if ($Corp)    { $list += "corp" }
     if ($Vector)  { $list += "vector" }
+    if ($St)      { $list += "st" }      # seren-memory: sentence-transformers for a named embedding_model
     if ($list.Count -eq 0) { return "" }
     return "[$($list -join ',')]"
 }
@@ -397,7 +532,9 @@ function Install-Package {
     $corpArgs = Get-Corp-Args -Vpy $Vpy
     Step "Installing seren-*${Extras}  $Label"
     & $Vpy -m pip install -q --upgrade pip
-    & $Vpy -m pip install -q --upgrade $corpArgs $installSpec
+    # $global:serenPipArgs is set by Resolve-LocalWheel (--find-links +
+    # constraints) and empty otherwise, so every card gets the house for free.
+    & $Vpy -m pip install -q --upgrade $corpArgs $global:serenPipArgs $installSpec
     if ($LASTEXITCODE -ne 0) { Die "pip install failed - see output above" }
     Ok "Installed"
 }

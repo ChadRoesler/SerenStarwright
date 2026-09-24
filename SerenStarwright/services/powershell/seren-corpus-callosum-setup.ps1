@@ -20,6 +20,7 @@ param(
   [string] $Token     = "",
   [switch] $GenToken,
   [string] $Wheel     = "",
+  [string] $Local     = "",
   [string] $Ref       = "",
   [string] $Repo      = "",
   [switch] $Service,
@@ -74,6 +75,11 @@ if ($Describe) {
         Accent      = '#9d7cff'
         DefaultHost = $SccHost
         DefaultPort = $Port
+        # Mirrors SVC_REQUIRES in seren-corpus-callosum-setup.sh. The config
+        # written below is pre-wired to memory:7420 and loci:7422, so this
+        # genuinely cannot work without both - installing it alone builds a
+        # bridge to nothing.
+        Requires    = @('seren-memory', 'seren-loci')
     }
     Get-SerenDescribe @describeArgs
     exit 0
@@ -85,21 +91,21 @@ $AppDir  = "$env:USERPROFILE\seren-corpus-callosum$Instance"
 $CfgPath = "$AppDir\seren-corpus-callosum.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7423) {
-  Warn "Instance '$Instance' uses default port 7423 — may collide."
+  Warn "Instance '$Instance' uses default port 7423 - may collide."
 }
 
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenCorpusCallosum setup (Windows)" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 
-# -- 1. find Python (3.10+; no upper cap — SCC never pulls torch) ------------
+# -- 1. find Python (3.10+; no upper cap - SCC never pulls torch) ------------
 $pyInfo = Find-Python -NoUpper
 $global:pyInfo = $pyInfo
 
 if ($Ref -and -not $Repo) { $Repo = "ChadRoesler/SerenCorpusCallosum" }
 
 # -- 2. resolve wheel ----------------------------------------------------------
-$wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-corpus-callosum"
+$wr = Resolve-Wheel -Wheel $Wheel -Local $Local -Ref $Ref -Repo $Repo -Package "seren-corpus-callosum"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args

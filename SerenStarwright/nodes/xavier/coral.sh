@@ -1,9 +1,9 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# xavier/coral.sh — Install Coral M.2 TPU support (Xavier)
+# xavier/coral.sh - Install Coral M.2 TPU support (Xavier)
 #
 # Sourced by seren-prepare-node.sh. Defines install_coral() which:
-#   1. Verifies hardware presence (informational only — install proceeds either way)
+#   1. Verifies hardware presence (informational only - install proceeds either way)
 #   2. Installs prebuilt gasket + apex kernel modules from $STAGED_GASKET_KO / $STAGED_APEX_KO
 #   3. Validates kernel match against $STAGED_CORAL_MANIFEST
 #   4. Configures kernel cmdline (pcie_aspm=off, gasket.dma_bit_mask=32)
@@ -12,7 +12,7 @@
 #   7. Adds modprobe sudoers rules (in addition to base sudoers from dispatcher)
 #   8. Installs pycoral + tflite-runtime
 #
-# Service phase — always re-runs when --coral is flagged.
+# Service phase - always re-runs when --coral is flagged.
 # REBOOT REQUIRED after this for kernel cmdline changes to take effect.
 # ══════════════════════════════════════════════════════════════
 
@@ -25,7 +25,7 @@ install_coral() {
     else
         warn "Coral TPU not detected on PCIe bus"
         warn "Make sure the M.2 A+E card is properly seated"
-        warn "Continuing — module install doesn't require hardware present"
+        warn "Continuing - module install doesn't require hardware present"
     fi
 
     # ── Verify staged modules ──
@@ -67,11 +67,11 @@ install_coral() {
     if sudo modprobe gasket 2>/dev/null && sudo modprobe apex 2>/dev/null; then
         log "Modules loaded successfully ✓"
         [ -c /dev/apex_0 ] && log "/dev/apex_0 present ✓" || \
-            warn "/dev/apex_0 not present — may need reboot for kernel cmdline (pcie_aspm=off)"
+            warn "/dev/apex_0 not present - may need reboot for kernel cmdline (pcie_aspm=off)"
         sudo modprobe -r apex 2>/dev/null || true
         sudo modprobe -r gasket 2>/dev/null || true
     else
-        warn "modprobe failed — likely needs reboot for kernel cmdline (pcie_aspm=off)"
+        warn "modprobe failed - likely needs reboot for kernel cmdline (pcie_aspm=off)"
     fi
 
     # ── Kernel cmdline (extlinux) ──
@@ -96,7 +96,7 @@ install_coral() {
 
     # ── Boot blacklist (load on demand) ──
     sudo tee /etc/modprobe.d/coral-blacklist.conf > /dev/null << 'EOF'
-# Coral M.2 TPU — blacklisted at boot, loaded on demand
+# Coral M.2 TPU - blacklisted at boot, loaded on demand
 # Saves ~200MB of unified memory when not in use
 # Load:   sudo modprobe gasket && sudo modprobe apex
 # Unload: sudo modprobe -r apex && sudo modprobe -r gasket
@@ -108,7 +108,7 @@ EOF
 
     # ── Udev rule for non-root /dev/apex_0 access ──
     sudo tee /etc/udev/rules.d/65-coral-tpu.rules > /dev/null << EOF
-# Coral M.2 TPU — allow non-root access for $TARGET_USER
+# Coral M.2 TPU - allow non-root access for $TARGET_USER
 SUBSYSTEM=="apex", MODE="0660", GROUP="$TARGET_USER"
 EOF
     sudo udevadm control --reload-rules
@@ -121,7 +121,7 @@ EOF
         log "Adding Coral modprobe rules to /etc/sudoers.d/seren..."
         sudo tee -a /etc/sudoers.d/seren > /dev/null << SUDOERS
 
-# Coral TPU — on-demand load/unload
+# Coral TPU - on-demand load/unload
 $TARGET_USER ALL=(root) NOPASSWD: /sbin/modprobe -r apex
 $TARGET_USER ALL=(root) NOPASSWD: /sbin/modprobe -r gasket
 $TARGET_USER ALL=(root) NOPASSWD: /sbin/modprobe apex
@@ -135,14 +135,14 @@ SUDOERS
     # ── Python libraries ──
     log "Installing pycoral + tflite-runtime under python3.10..."
     sudo -u "$TARGET_USER" python3.10 -m pip install --user tflite-runtime 2>/dev/null || \
-        warn "tflite-runtime via pip failed — may need manual install for aarch64"
+        warn "tflite-runtime via pip failed - may need manual install for aarch64"
     sudo -u "$TARGET_USER" python3.10 -m pip install --user pycoral 2>/dev/null || \
-        warn "pycoral via pip failed — may need manual install for aarch64"
+        warn "pycoral via pip failed - may need manual install for aarch64"
 
     # ── Test helper ──
     sudo -u "$TARGET_USER" tee "$USER_HOME/test-coral.sh" > /dev/null << 'TESTSCRIPT'
 #!/bin/bash
-# Quick Coral TPU test — run after reboot
+# Quick Coral TPU test - run after reboot
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
@@ -153,7 +153,7 @@ sudo modprobe apex
 sleep 2
 
 if [ -c /dev/apex_0 ]; then
-    echo -e "${GREEN}✓${NC} /dev/apex_0 exists — Coral TPU is alive!"
+    echo -e "${GREEN}✓${NC} /dev/apex_0 exists - Coral TPU is alive!"
     echo ""
     echo "PCIe device:"
     lspci | grep -i "Global Unichip\|089a" || echo "  (not visible via lspci)"

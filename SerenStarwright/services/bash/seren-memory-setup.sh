@@ -17,10 +17,13 @@
 #    --token TOKEN    Set a bearer token
 #    --gen-token      Generate a random bearer token
 #    --wheel PATH     Install from a local .whl
+#    --local DIR|URL  Install from a dev wheelhouse (seren-dev-publish.sh)
 #    --ref TAG        Pin to a GitHub release tag
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via systemd/launchd
 #    --mcp            Install the [mcp] extra
+#    --st             Install the [st] extra (sentence-transformers + torch) - only
+#                     needed when storage.embedding_model names a model
 #    --corp           Route TLS through OS trust store
 #    --instance NAME  Instance name
 #    --venv PATH      Override venv location
@@ -63,12 +66,14 @@ HOST="127.0.0.1"
 TOKEN=""
 GEN_TOKEN=false
 WHEEL=""
+LOCAL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
 # Empty = the unit runs as whoever installs it. Only meaningful with --service.
 SERVICE_USER=""
 MCP=false
+ST=false
 UPDATES_OFF=false
 CORP=false
 INSTANCE=""
@@ -100,10 +105,12 @@ while [[ $# -gt 0 ]]; do
     --token)     TOKEN="$2"; shift 2 ;;
     --gen-token) GEN_TOKEN=true; shift ;;
     --wheel)     WHEEL="$2"; shift 2 ;;
+    --local)     LOCAL="$2"; shift 2 ;;
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
+    --st)        ST=true; shift ;;
     --corp)      CORP=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
@@ -121,14 +128,14 @@ APP_DIR="$APP_DIR$INSTANCE"
 CFG_PATH="$APP_DIR/seren-memory.yaml"
 CONNECT_HOST="$HOST"
 [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
-[[ -n "$INSTANCE" && "$PORT" == "7420" ]] && warn "Instance '$INSTANCE' uses default port 7420 — may collide."
+[[ -n "$INSTANCE" && "$PORT" == "7420" ]] && warn "Instance '$INSTANCE' uses default port 7420 - may collide."
 
 echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenMemory setup (macOS)${NC}" || echo -e "${G}  SerenMemory setup (Linux)${NC}"
 echo -e "${G}==========================================${NC}"
 
 # -- 1. find Python (3.10-3.12; chromadb can't build on 3.13) ------------------
-PYBIN="$(find_python)"   # lib's find_python caps at 3.12 by default — good here
+PYBIN="$(find_python)"   # lib's find_python caps at 3.12 by default - good here
 
 [[ -n "$REF" && -z "$REPO" ]] && REPO="ChadRoesler/SerenMemory"
 
@@ -143,6 +150,7 @@ VPY="$VENV_DIR/bin/python"
 # extras
 EXTRAS_LIST=()
 $MCP  && EXTRAS_LIST+=("mcp")
+$ST   && EXTRAS_LIST+=("st")
 $CORP && EXTRAS_LIST+=("corp")
 EXTRAS=""
 [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
@@ -163,7 +171,7 @@ PY
 )"
 case "$CHECK" in
   OK) ok "Package imports and the Halls viewer asset is present" ;;
-  VIEWER_MISSING) warn "Package installed but halls.html is missing — /viewer will 404 (wheel-packaging regression)" ;;
+  VIEWER_MISSING) warn "Package installed but halls.html is missing - /viewer will 404 (wheel-packaging regression)" ;;
   *) die "Install looks broken: $CHECK" ;;
 esac
 

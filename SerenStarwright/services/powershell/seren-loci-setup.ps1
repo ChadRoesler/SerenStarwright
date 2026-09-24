@@ -9,6 +9,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -GenToken -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -Wheel .\seren_loci-0.1.0-py3-none-any.whl
+#    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -Local D:\serenDaemon\SerenCore\.dev-wheelhouse   # dev builds from seren-dev-publish.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -Mcp -Vector -Corp
 #    powershell -ExecutionPolicy Bypass -File .\seren-loci-setup.ps1 -NoUpdates  # turn update checking off
 # ══════════════════════════════════════════════════════════════════════════
@@ -20,6 +21,7 @@ param(
   [string] $Token     = "",
   [switch] $GenToken,
   [string] $Wheel     = "",
+  [string] $Local     = "",
   [string] $Ref       = "",
   [string] $Repo      = "",
   [switch] $Service,
@@ -86,7 +88,7 @@ $AppDir  = "$env:USERPROFILE\seren-loci$Instance"
 $CfgPath = "$AppDir\seren-loci.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7422) {
-  Warn "Instance '$Instance' uses default port 7422 — may collide."
+  Warn "Instance '$Instance' uses default port 7422 - may collide."
 }
 
 Write-Host "==========================================" -ForegroundColor Green
@@ -100,7 +102,7 @@ $global:pyInfo = $pyInfo
 if ($Ref -and -not $Repo) { $Repo = "ChadRoesler/SerenLoci" }
 
 # -- 2. resolve wheel ----------------------------------------------------------
-$wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-loci"
+$wr = Resolve-Wheel -Wheel $Wheel -Local $Local -Ref $Ref -Repo $Repo -Package "seren-loci"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args

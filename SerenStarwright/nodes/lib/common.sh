@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# common.sh — Shared helpers for seren-prepare-node.sh
+# common.sh - Shared helpers for seren-prepare-node.sh
 #
 # Sourced by seren-prepare-node.sh and platform modules.
 # Provides:
@@ -40,7 +40,7 @@ fail() { echo -e "${RED}[SEREN]${NC} $1" 2>/dev/null >&3 || true; echo -e "${RED
 info() { echo -e "${BLUE}[SEREN]${NC} $1" 2>/dev/null >&3 || true; echo -e "${BLUE}[SEREN]${NC} $1"; seren_event info  msg "$1"; }
 
 # ─────────────────────────────────────────────────────────────
-# Structured events — the Starwright contract, node-prep flavour
+# Structured events - the Starwright contract, node-prep flavour
 # ─────────────────────────────────────────────────────────────
 #
 # WHY A FILE AND NOT A STREAM, unlike the service installers:
@@ -54,7 +54,7 @@ info() { echo -e "${BLUE}[SEREN]${NC} $1" 2>/dev/null >&3 || true; echo -e "${BL
 # Both standard streams are already spoken for by the tee'd logging, and fd 3
 # is how human progress gets back to the caller. There is no free stream to
 # put events on without unpicking the logging that the whole of node prep is
-# built around — and prep shells out to apt-get, cmake, nvpmodel and pip,
+# built around - and prep shells out to apt-get, cmake, nvpmodel and pip,
 # none of which are famous for stream hygiene.
 #
 # So: an explicit file. --events PATH (or $SEREN_EVENTS_FILE). Starwright tails
@@ -75,7 +75,7 @@ seren_json_escape_str() {
     printf '%s' "$s" | sed -E 's/\x1b\[[0-9;]*m//g'
 }
 
-# seren_node_flags_from_self — read the DISPATCHER's own accepted flags.
+# seren_node_flags_from_self - read the DISPATCHER's own accepted flags.
 #
 # $0 inside a sourced library is still the parent script, so this greps
 # seren-prepare-node.sh's own case branches. Mirrors seren_flags_from_self on
@@ -107,7 +107,7 @@ seren_describe_node() {
         detected="\"$PLATFORM\""; fam="\"$JP_FAMILY\""; arch="\"$CUDA_ARCH\""
     fi
 
-    # name:display:description  — coral last, it's the hardware-gated one
+    # name:display:description  - coral last, it's the hardware-gated one
     local specs=(
         "llama:llama.cpp:Inference server"
         "kokoro:Kokoro:Text to speech"
@@ -133,13 +133,36 @@ seren_describe_node() {
         comps="$comps,\"description\":\"$(seren_json_escape_str "$desc")\""
         comps="$comps,\"available\":$avail"
         comps="$comps,\"hardware_gated\":$([ "$n" = coral ] && echo true || echo false)"
-        # foundation phases are state-tracked and skip; component phases never do
+        # Component phases never track state - asking for one means "make sure
+        # it's there", which is a reinstall. Foundation is a different animal
+        # and no longer runs implicitly at all; see --prep.
         comps="$comps,\"always_reinstalls\":true}"
     done
 
     printf '{"schema_version":1,"kind":"node"'
     printf ',"platform":%s,"jp_family":%s,"cuda_arch":%s' "$detected" "$fam" "$arch"
     printf ',"hostname":"%s"' "$(seren_json_escape_str "$(hostname 2>/dev/null || echo '')")"
+    # Has this MACHINE been prepared before? A front-end needs this to decide
+    # whether to OFFER prep or merely allow it - and, more importantly, to stop
+    # implying that foundation "runs first and skips when done", which is what
+    # the TUI used to say back when the state file lived in the checkout and was
+    # therefore missing on every fresh clone.
+    #
+    # A pure READ. No mkdir, no jq, no sudo: --describe creates nothing, and CI
+    # asserts exactly that by running it against a throwaway HOME.
+    local prov=false prov_at=null managed=null
+    if node_provisioned; then
+        prov=true
+        local _at; _at="$(seren_state_get _provisioned_at)"
+        [ -n "$_at" ] && prov_at="\"$(seren_json_escape_str "$_at")\""
+    fi
+    # The name seren itself set, if it ever did. Lets a UI say "seren named this
+    # box X" instead of guessing whether the current hostname was deliberate.
+    local _hn; _hn="$(seren_state_get _hostname_set_to)"
+    [ -n "$_hn" ] && managed="\"$(seren_json_escape_str "$_hn")\""
+    printf ',"provisioned":%s' "$prov"
+    printf ',"provisioned_at":%s' "$prov_at"
+    printf ',"hostname_managed":%s' "$managed"
     printf ',"components":[%s]' "$comps"
     # DERIVED, not hardcoded. This used to claim ["prebuilts","build"] for every
     # platform, which was a lie about the Spark - it has no build.sh - so a UI
@@ -179,17 +202,19 @@ seren_event() {
 # Platform detection
 # ─────────────────────────────────────────────────────────────
 # Sets these globals (read by everyone downstream):
-#   PLATFORM        — "xavier" or "nano" (which platform module to source)
-#   JP_FAMILY       — "jp5" or "jp6"
-#   PLATFORM_TAG    — "xavier" or "orin" (artifact filename suffix from build-prebuilts)
-#   RELEASE_SUFFIX  — "xavier" or "nano"  (release tag suffix on GitHub)
-#   CUDA_ARCH       — "72" (Xavier/Volta) or "87" (Orin/Ampere)
-#   TORCH_ARCH_LIST — "7.2" or "8.7"
-#   PYTORCH_VERSION — "2.1.0" or "2.3.1"
-#   TORCHVISION_VERSION — "0.16.0" or "0.18.1"
-#   KERNEL_VER      — `uname -r`
+#   PLATFORM        - "xavier", "nano" or "spark" (which platform module to source)
+#   JP_FAMILY       - "jp5", "jp6" or "jp7"
+#   PLATFORM_TAG    - "xavier", "orin" or "spark" (the artifact/folder tag the
+#                     build script uses; note nano -> orin)
+#   RELEASE_SUFFIX  - "<platform_tag>-<jp>": the platform folder name, which is
+#                     what a release tag ends in (20260916_orin-jp6)
+#   CUDA_ARCH       - "72" (Xavier/Volta), "87" (Orin/Ampere), "121" (GB10)
+#   TORCH_ARCH_LIST - "7.2", "8.7", "12.1"
+#   PYTORCH_VERSION / TORCHVISION_VERSION - the held baseline the release was
+#                     built at (mirrors SerenSystemPrebuilts lib/platform.sh)
+#   KERNEL_VER      - `uname -r`
 # ─────────────────────────────────────────────────────────────
-# detect_platform — figure out which node we're on.
+# detect_platform - figure out which node we're on.
 #
 # $SEREN_PLATFORM (or --platform) OVERRIDES EVERYTHING. That escape hatch is
 # not a nicety: the Spark heuristics below are written from its spec, not from
@@ -197,8 +222,8 @@ seren_event() {
 # running on is a bad time on hardware new enough to fool detection.
 #
 # Jetsons announce themselves in /etc/nv_tegra_release (R35 = Xavier/jp5,
-# R36 = Orin Nano/jp6). The DGX Spark does NOT have that file at all — see
-# spark/foundation.sh — so it needs an entirely separate path, which is why
+# R36 = Orin Nano/jp6). The DGX Spark does NOT have that file at all - see
+# spark/foundation.sh - so it needs an entirely separate path, which is why
 # spark/ sat unreachable: detect_platform had no case for it and every run
 # died in the *) branch before dispatch.
 # ─────────────────────────────────────────────────────────────
@@ -242,13 +267,13 @@ detect_platform() {
     return 0
 }
 
-# _looks_like_spark — best-effort DGX Spark detection.
+# _looks_like_spark - best-effort DGX Spark detection.
 #
 # UNVERIFIED: written from the Spark's spec and spark/foundation.sh, not from a
 # machine anyone has run this on. Any single signal here could be wrong on real
 # hardware, which is exactly why --platform spark exists and is checked first.
 # If this function guesses wrong in either direction, the override is the fix
-# and this function is the bug — please report what your Spark actually says.
+# and this function is the bug - please report what your Spark actually says.
 #
 # Signals, any one of which is enough:
 #   - device-tree model names the board (Grace/ARM variants)
@@ -281,34 +306,35 @@ _looks_like_spark() {
     return 1
 }
 
-# _set_platform_vars — single place where per-platform constants live, so the
+# _set_platform_vars - single place where per-platform constants live, so the
 # override path and the auto-detect path can't drift apart.
 _set_platform_vars() {
     case "$1" in
+        # THE PINS MIRROR SerenSystemPrebuilts lib/platform.sh - the versions
+        # the release folders were actually built at. They had drifted: this
+        # said torch 2.3.1 / torchvision 0.18.1 for the Nano while the archive
+        # holds 2.11.0 / 0.26.0, and left the Spark blank with "CC 120,
+        # tentative" while the Spark archive was selftested at sm_121.
         xavier)
             PLATFORM="xavier";  JP_FAMILY="jp5";  PLATFORM_TAG="xavier"
-            RELEASE_SUFFIX="xavier"
+            RELEASE_SUFFIX="xavier-jp5"
             CUDA_ARCH="72";     TORCH_ARCH_LIST="7.2"
             PYTORCH_VERSION="2.1.0";  TORCHVISION_VERSION="0.16.0"
             ;;
         nano)
             PLATFORM="nano";    JP_FAMILY="jp6";  PLATFORM_TAG="orin"
-            RELEASE_SUFFIX="nano"
+            RELEASE_SUFFIX="orin-jp6"
             CUDA_ARCH="87";     TORCH_ARCH_LIST="8.7"
-            PYTORCH_VERSION="2.3.1";  TORCHVISION_VERSION="0.18.1"
+            PYTORCH_VERSION="2.11.0"; TORCHVISION_VERSION="0.26.0"
             ;;
         spark)
-            # TENTATIVE, and flagged as such in spark/foundation.sh too:
-            # Blackwell GB10 compute capability is believed to be 12.0 (arch
-            # 120). The spark/ modules don't currently read these, so a wrong
-            # value here is cosmetic until something does - but fix it rather
-            # than trust it. Torch versions deliberately left empty: JetPack 7's
-            # shipping versions aren't known to me, and an invented pin is worse
-            # than an obviously absent one.
+            # GB10 is sm_121 - not the 120 this used to guess. The Spark
+            # archive's selftest launches kernels on the real device and asserts
+            # the arch list, so this is measured, not read off a spec sheet.
             PLATFORM="spark";   JP_FAMILY="jp7";  PLATFORM_TAG="spark"
-            RELEASE_SUFFIX="spark"
-            CUDA_ARCH="120";    TORCH_ARCH_LIST="12.0"
-            PYTORCH_VERSION="";       TORCHVISION_VERSION=""
+            RELEASE_SUFFIX="spark-jp7"
+            CUDA_ARCH="121";    TORCH_ARCH_LIST="12.1"
+            PYTORCH_VERSION="2.11.0"; TORCHVISION_VERSION="0.26.0"
             ;;
         *)
             fail "_set_platform_vars: unknown platform '$1'"
@@ -323,7 +349,7 @@ _set_platform_vars() {
 # Phase tracking
 # ─────────────────────────────────────────────────────────────
 # State file is per-script-run, set by seren-prepare-node.sh as $STATE_FILE.
-# Service phases (llama/kokoro/etc) are NOT tracked — they always re-run
+# Service phases (llama/kokoro/etc) are NOT tracked - they always re-run
 # when explicitly flagged. Only foundation phases use phase_*.
 ensure_jq() {
     if ! command -v jq &>/dev/null; then
@@ -331,6 +357,131 @@ ensure_jq() {
             sudo apt-get update >/dev/null 2>&1
             sudo apt-get install -y jq
         }
+    fi
+}
+
+# ────────────────────────────────────────────────────────────
+# Phase state - WHERE IT LIVES, AND WHY IT MOVED
+# ────────────────────────────────────────────────────────────
+#
+# It used to be $SCRIPT_DIR/.seren-setup.state.json - next to the script, and
+# in .gitignore. So "this node is already prepared" was a property of the
+# DIRECTORY YOU RAN FROM, not of the machine, and it was missing by default on:
+#
+#   - a fresh clone (the file is gitignored, so it is never in one)
+#   - a second checkout, or the same checkout moved
+#   - EVERY .pyz rebuild - the bundle extracts to a path keyed on the
+#     archive's mtime+size, so a new build gets a virgin state file
+#
+# An empty state file means every foundation phase re-runs, and it used to mean
+# the hostname phase re-ran too, against a name derived from that invocation's
+# service flags. Adding one component to an already-built box therefore renamed
+# it. The rename is gone (see --rename in seren-prepare-node.sh), but the
+# underlying wrongness was the state location, so that is fixed here: the state
+# of a machine belongs ON the machine.
+#
+# ~/.seren is already the family convention - write_node_manifest puts node.json
+# there - so this is the same directory, not a new one to learn.
+#
+# $SEREN_STATE_FILE overrides, which is what makes this testable: CI asserts
+# --describe creates nothing, and a test run must not scribble in a real home.
+seren_state_path() {
+    if [ -n "${SEREN_STATE_FILE:-}" ]; then
+        echo "$SEREN_STATE_FILE"
+        return 0
+    fi
+    local u="${TARGET_USER:-$(id -un 2>/dev/null || echo root)}"
+    local home="/home/$u"
+    [ "$u" = "root" ] && home="/root"
+    echo "$home/.seren/node-state.json"
+}
+
+# One-time carry-over from the old per-checkout location, so somebody upgrading
+# does not get a re-run of every foundation phase as their reward for pulling.
+# Best-effort by design: a failure here costs time, never correctness.
+seren_state_migrate() {
+    local new="$1" legacy="$2"
+    [ -f "$new" ] && return 0
+    [ -f "$legacy" ] || return 0
+    # An empty-object state file carries no information; copying it would just
+    # create the new file and hide a real legacy one nobody has found yet.
+    local body; body="$(tr -d '[:space:]' < "$legacy" 2>/dev/null || echo '')"
+    [ "$body" = "{}" ] && return 0
+    [ -z "$body" ] && return 0
+    if cp "$legacy" "$new" 2>/dev/null; then
+        info "Migrated phase state: $legacy -> $new"
+    fi
+    return 0
+}
+
+# Create the state file's directory and the file itself. Separate from the read
+# helpers on purpose: --describe READS state and must create nothing, so no
+# read path is allowed to mkdir.
+seren_state_init() {
+    local sf="$1"
+    local dir; dir="$(dirname "$sf")"
+    mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir" 2>/dev/null || true
+    if [ ! -w "$dir" ] && [ -n "${TARGET_USER:-}" ]; then
+        sudo chown "$TARGET_USER" "$dir" 2>/dev/null || true
+    fi
+    [ -f "$sf" ] || echo '{}' > "$sf" 2>/dev/null || true
+    [ -f "$sf" ] || return 1
+    return 0
+}
+
+# Has this MACHINE ever completed a full prep run?
+#
+# Deliberately grep and not jq: this is read to DECIDE whether to prep, which
+# happens before ensure_jq has run, and it is read again by --describe, which
+# promises to need nothing at all. A dependency here would defeat both.
+node_provisioned() {
+    local sf; sf="$(seren_state_path)"
+    [ -r "$sf" ] || return 1
+    grep -q '"_provisioned_at"' "$sf" 2>/dev/null
+}
+
+# Read one metadata key out of the state file without jq. Empty if absent.
+seren_state_get() {
+    local key="$1" sf pair
+    sf="$(seren_state_path)"
+    [ -r "$sf" ] || return 0
+    # grep + parameter expansion rather than a sed capture group: this file is
+    # read by --describe, which must work on a box with nothing installed, and
+    # the nested quoting a backreference needs here is exactly how this helper
+    # first shipped emitting a literal 0x01 byte instead of the value.
+    pair="$(grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$sf" 2>/dev/null | head -1)"
+    [ -n "$pair" ] || return 0
+    pair="${pair#*:}"       # drop the key and the colon
+    pair="${pair#*\"}"      # drop the opening quote of the value
+    echo "${pair%\"*}"      # drop the closing quote
+}
+
+# Stamp the machine as prepared. Called once, after foundation completes.
+mark_provisioned() {
+    local platform="${1:-unknown}"
+    local now; now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local tmp; tmp="$(mktemp)"
+    local prog='._provisioned_at = $at | ._provisioned_platform = $plat'
+    if jq --arg at "$now" --arg plat "$platform" "$prog" "$STATE_FILE" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$STATE_FILE"
+        log "Node marked provisioned ($platform) at $now"
+    else
+        rm -f "$tmp"
+        warn "Could not stamp provisioned state in $STATE_FILE"
+    fi
+}
+
+# Record that WE set the hostname, and to what. Provenance, not just a flag:
+# it lets a later run say "seren named this box X" instead of guessing.
+mark_hostname_set() {
+    local name="$1"
+    local now; now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local tmp; tmp="$(mktemp)"
+    local prog='._hostname_set_to = $n | ._hostname_set_at = $at'
+    if jq --arg n "$name" --arg at "$now" "$prog" "$STATE_FILE" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$STATE_FILE"
+    else
+        rm -f "$tmp"
     fi
 }
 
@@ -342,13 +493,13 @@ phase_mark() {
 }
 phase_skip_if_done() {
     if [ "$(phase_done "$1")" = "true" ]; then
-        info "Phase '$1' already complete — skipping (delete $STATE_FILE to redo)"
+        info "Phase '$1' already complete - skipping (delete $STATE_FILE to redo)"
         return 0
     fi
     return 1
 }
 
-# Foundation phase wrapper — respects state tracking
+# Foundation phase wrapper - respects state tracking
 run_phase() {
     local key="$1"; shift
     local label="$1"; shift
@@ -364,9 +515,9 @@ run_phase() {
     seren_event phase_done key "$key" label "$label"
 }
 
-# Service phase wrapper — ALWAYS runs, never tracked
+# Service phase wrapper - ALWAYS runs, never tracked
 # Used for llama/kokoro/comfy/chroma/coral installs because user explicitly
-# asked for them — re-installing is "make sure it's there" not "skip work".
+# asked for them - re-installing is "make sure it's there" not "skip work".
 run_service() {
     local label="$1"; shift
     # tracked=false is the honest bit a UI needs: unlike foundation phases,
@@ -401,21 +552,21 @@ phase_max_power() {
     # "not a Jetson?" reads like something went wrong on exactly the platform
     # where nothing did.
     if ! command -v nvpmodel &>/dev/null; then
-        info "No nvpmodel on this platform — power profile is managed by the OS. Skipping."
+        info "No nvpmodel on this platform - power profile is managed by the OS. Skipping."
         return 0
     fi
 
     log "Setting nvpmodel mode 0 (MAXN)..."
-    sudo nvpmodel -m 0 || warn "nvpmodel -m 0 failed — continuing anyway"
+    sudo nvpmodel -m 0 || warn "nvpmodel -m 0 failed - continuing anyway"
 
     if command -v jetson_clocks &>/dev/null; then
         log "Locking clocks via jetson_clocks..."
-        sudo jetson_clocks || warn "jetson_clocks failed — continuing anyway"
+        sudo jetson_clocks || warn "jetson_clocks failed - continuing anyway"
     else
-        warn "jetson_clocks not found — clocks will scale dynamically"
+        warn "jetson_clocks not found - clocks will scale dynamically"
     fi
 
-    # Best-effort fan check — warn if MAXN on a Jetson with no detectable fan
+    # Best-effort fan check - warn if MAXN on a Jetson with no detectable fan
     local fan_rpm=""
     if [ -r /sys/devices/pwm-fan/target_pwm ]; then
         fan_rpm=$(cat /sys/devices/pwm-fan/target_pwm 2>/dev/null || echo "")
@@ -423,7 +574,7 @@ phase_max_power() {
         fan_rpm=$(cat /sys/class/hwmon/hwmon0/fan1_input 2>/dev/null || echo "")
     fi
     if [ -z "$fan_rpm" ] || [ "$fan_rpm" = "0" ]; then
-        warn "No active fan detected — MAXN power may cause thermal throttling."
+        warn "No active fan detected - MAXN power may cause thermal throttling."
         warn "If perf seems bad after this completes, check temps: cat /sys/class/thermal/thermal_zone*/temp"
     fi
 
@@ -431,7 +582,7 @@ phase_max_power() {
     log "Installing seren-max-power.service for boot persistence..."
     sudo tee /etc/systemd/system/seren-max-power.service > /dev/null << 'EOF'
 [Unit]
-Description=Seren — Set Jetson to max power mode at boot
+Description=Seren - Set Jetson to max power mode at boot
 After=multi-user.target
 DefaultDependencies=no
 
@@ -453,14 +604,19 @@ EOF
 # ─────────────────────────────────────────────────────────────
 # GitHub release tag resolution
 # ─────────────────────────────────────────────────────────────
-PREBUILT_REPO="https://github.com/ChadRoesler/Nvidia_Jetson_Prebuilt"
-PREBUILT_API="https://api.github.com/repos/ChadRoesler/Nvidia_Jetson_Prebuilt/releases"
+# SerenSystemPrebuilts - NOT Nvidia_Jetson_Prebuilt. The old name was the
+# repo before the reorg; the URL kept working only because GitHub redirects
+# renamed repositories, and the tags it resolved carried torch pins this tree
+# had already moved past.
+PREBUILT_REPO="https://github.com/ChadRoesler/SerenSystemPrebuilts"
+PREBUILT_API="https://api.github.com/repos/ChadRoesler/SerenSystemPrebuilts/releases?per_page=100"
 
 # Caller sets:
-#   USER_PREBUILT_TAG — empty for auto-resolve, or pinned tag like "2026.04.29-xavier"
+#   USER_PREBUILT_TAG - empty for auto-resolve, or a pinned tag like
+#                       "20260916_xavier-jp5" (YYYYMMDD_<platform>-<jp>)
 # Sets:
-#   PREBUILT_TAG — resolved tag
-#   PREBUILT_BASE — full URL prefix for asset downloads
+#   PREBUILT_TAG - resolved tag
+#   PREBUILT_BASE - full URL prefix for asset downloads
 resolve_release_tag() {
     if [ -n "${PREBUILT_TAG:-}" ] && [ -n "${PREBUILT_BASE:-}" ]; then
         return 0   # already resolved this run
@@ -473,7 +629,7 @@ resolve_release_tag() {
         return 0
     fi
 
-    log "Resolving newest *-${RELEASE_SUFFIX} release from GitHub API..."
+    log "Resolving newest *_${RELEASE_SUFFIX} release from GitHub API..."
     ensure_jq
     command -v curl &>/dev/null || sudo apt-get install -y curl >/dev/null 2>&1
 
@@ -481,17 +637,225 @@ resolve_release_tag() {
     response=$(curl -fsSL "$PREBUILT_API" 2>/dev/null) || \
         fail "Could not reach GitHub API at $PREBUILT_API. Pass --tag TAG to skip API lookup."
 
-    PREBUILT_TAG=$(echo "$response" | jq -r --arg suffix "-${RELEASE_SUFFIX}" \
-        '[.[] | select(.tag_name | endswith($suffix))] | .[0].tag_name // empty')
+    # Tags are YYYYMMDD_<platform>-<jp>, so the newest BUILD sorts last by
+    # name - sorted here rather than trusting the API's order, which is by
+    # creation time and a re-upload would reorder.
+    PREBUILT_TAG=$(echo "$response" | jq -r --arg suffix "_${RELEASE_SUFFIX}" \
+        '[.[] | select(.draft | not) | select(.tag_name | endswith($suffix)) | .tag_name] | sort | last // empty')
 
     if [ -z "$PREBUILT_TAG" ]; then
-        fail "No release found matching *-${RELEASE_SUFFIX}. Check the repo or pin --tag TAG."
+        fail "No release found matching *_${RELEASE_SUFFIX}. Check the repo or pin --tag TAG."
         return 1
     fi
 
     PREBUILT_BASE="${PREBUILT_REPO}/releases/download/${PREBUILT_TAG}"
     log "Resolved: $PREBUILT_TAG"
     return 0
+}
+
+# ─────────────────────────────────────────────────────────────
+# Prebuilt staging - driven by the release's own SHA256SUMS
+# ─────────────────────────────────────────────────────────────
+#
+# WHAT THIS REPLACED. Three near-identical <platform>/prebuilts.sh files, each
+# hardcoding the asset names it expected: `llama-server-orin-aarch64` (the
+# archive writes llama-server-jp6-orin-aarch64), a torchvision wheel tagged
+# `+fbb4cc5` on every platform (that is the XAVIER build's commit; the Nano's
+# is +336d36e), and torch versions that had drifted from what was built. Each
+# ran bare wget, chmod +x'd the result before anything checked it, and the
+# Spark had no file at all - so `--llama` on a Spark died on "staged binary
+# missing" after the driver had cheerfully said "services install directly".
+#
+# The release ships a SHA256SUMS listing every file it holds. So: fetch that
+# first, SELECT what this run needs from it by pattern, download each asset
+# and verify it against the listed hash before it is used. Names come from the
+# archive, never from here. A byte that does not match is deleted and the run
+# stops; nothing is made executable until it has been checked.
+#
+# Releases are flat: one asset per file, subdirectories flattened. The two
+# apt folders are never uploaded (their debs are the box's own backup, not
+# something that can be hosted), and the wheelhouse is not needed for an
+# online node install, so selection is restricted to top-level entries.
+#
+# Legacy tags (2026.05.24-nano) have no SHA256SUMS. They are not resolved
+# automatically any more - the tag scheme is YYYYMMDD_<platform>-<jp> - and
+# pinning one with --tag gets a clear refusal rather than an unverified fetch.
+
+# Where staged artifacts live for the service modules to consume.
+export PREBUILT_DIR="${PREBUILT_DIR:-/home/${TARGET_USER:-$(id -un)}/seren-prebuilts}"
+
+# Run a command as the target user - directly when that is already us, so
+# this works on a box (or a test) with no sudo.
+_as_target() {
+    if [ "${TARGET_USER:-$(id -un)}" = "$(id -un)" ]; then "$@"; else sudo -u "$TARGET_USER" "$@"; fi
+}
+
+# The asset name as it appears in the URL: '+' -> %2B, '%' -> %25, ' ' -> %20.
+# Pure bash on purpose - no python3 dependency in the one place a node fetches
+# its binaries from, and byte-wise so a non-ASCII name still round-trips.
+seren_urlencode() {
+    local s="$1" out="" i c
+    local LC_ALL=C
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        case "$c" in
+            [A-Za-z0-9._~-]) out+="$c" ;;
+            *) printf -v c '%%%02X' "'$c"; out+="$c" ;;
+        esac
+    done
+    printf '%s
+' "$out"
+}
+
+# seren_prebuilts_index - fetch the release's SHA256SUMS once per run.
+# Sets PREBUILT_INDEX (a local path). Refuses a release that has none.
+seren_prebuilts_index() {
+    if [ -n "${PREBUILT_INDEX:-}" ] && [ -s "$PREBUILT_INDEX" ]; then return 0; fi
+    resolve_release_tag || return 1
+    _as_target mkdir -p "$PREBUILT_DIR/.release"
+    PREBUILT_INDEX="$PREBUILT_DIR/.release/SHA256SUMS-${PREBUILT_TAG}"
+    # Always fetched, never cached across runs: it is a few KB, and a stale
+    # copy is exactly how a re-issued asset would slip past verification.
+    rm -f "$PREBUILT_INDEX"
+    log "Fetching the release index (SHA256SUMS) for $PREBUILT_TAG..."
+    if ! _as_target curl -fsSL --retry 3 -o "$PREBUILT_INDEX" "${PREBUILT_BASE}/SHA256SUMS"; then
+        rm -f "$PREBUILT_INDEX"
+        fail "Release $PREBUILT_TAG has no SHA256SUMS, so nothing in it can be verified."
+        fail "  Releases from 2026-09-23 on carry one; tags before that (2026.05.24-nano)"
+        fail "  do not. Pin a newer tag with --tag, or download by hand and stage into"
+        fail "  $PREBUILT_DIR."
+        return 1
+    fi
+    export PREBUILT_INDEX
+    log "Release index: $(grep -c . "$PREBUILT_INDEX") file(s) listed in $PREBUILT_TAG"
+}
+
+# seren_prebuilts_pick GLOB - the top-level entries of the index whose name
+# matches GLOB, one per line. Subdirectory entries (apt/, apt-toolchain/,
+# wheelhouse/, vendor/, vllm/, sources/) are never picked here: none of them
+# are release assets a node install needs, and two of them are never uploaded.
+seren_prebuilts_pick() {
+    local glob="$1" sum rel
+    [ -s "${PREBUILT_INDEX:-}" ] || return 0
+    while read -r sum rel; do
+        [ -n "$rel" ] || continue
+        # sha256sum prints "*name" for a file hashed in binary mode (always,
+        # on Windows). `sha256sum -c` accepts both; so does this.
+        rel="${rel#\*}"
+        case "$rel" in */*) continue ;; esac
+        # shellcheck disable=SC2254
+        case "$rel" in $glob) echo "$rel" ;; esac
+    done < "$PREBUILT_INDEX"
+}
+
+# seren_prebuilts_get NAME - download the asset NAME into PREBUILT_DIR and
+# verify it against the index. Prints the local path. A file already present
+# and matching is not fetched again; one present and NOT matching is refetched
+# once, and refused if it still does not match.
+seren_prebuilts_get() {
+    local name="$1" want got dest url attempt
+    # EVERYTHING SAID HERE GOES TO STDERR. The one stdout line is the staged
+    # path, captured by the caller with $(...); the driver's log() prints to
+    # stdout, so an unredirected caption would land inside STAGED_LLAMA_BIN.
+    _pb_log()  { log  "$@" >&2; }
+    _pb_warn() { warn "$@" >&2; }
+    _pb_fail() { fail "$@" >&2; }
+    want="$(awk -v n="$name" '{ r = $2; sub(/^\*/, "", r); if (r == n) { print $1; exit } }' "$PREBUILT_INDEX")"
+    [ -n "$want" ] || { _pb_fail "$name is not in the release index"; return 1; }
+    dest="$PREBUILT_DIR/$name"
+    url="${PREBUILT_BASE}/$(seren_urlencode "$name")"
+    for attempt in 1 2; do
+        if [ ! -f "$dest" ]; then
+            _pb_log "Downloading $name..."
+            _as_target curl -fSL --retry 3 --progress-bar -o "$dest" "$url" || {
+                rm -f "$dest"; fail "could not download $url"; return 1; }
+        fi
+        got="$(sha256sum "$dest" | awk '{print $1}')"
+        if [ "$got" = "$want" ]; then
+            _pb_log "  verified $name ✓"
+            echo "$dest"
+            return 0
+        fi
+        _pb_warn "  $name does not match the release's SHA256SUMS (got ${got:0:12}, want ${want:0:12})"
+        rm -f "$dest"
+        [ "$attempt" = 1 ] && warn "  refetching once"
+    done
+    _pb_fail "$name failed verification twice - refusing to stage it. The release or the"
+    _pb_fail "  download path is not serving the bytes the archive recorded."
+    return 1
+}
+
+# seren_prebuilts_stage GLOB VARNAME [required] - pick one matching asset,
+# fetch and verify it, export VARNAME as its local path. With `required`, a
+# release that has no such asset fails the run; otherwise it is noted.
+seren_prebuilts_stage() {
+    local glob="$1" var="$2" required="${3:-}" name path count
+    name="$(seren_prebuilts_pick "$glob" | head -1)"
+    count="$(seren_prebuilts_pick "$glob" | grep -c . || true)"
+    if [ -z "$name" ]; then
+        if [ "$required" = "required" ]; then
+            fail "release $PREBUILT_TAG has no asset matching '$glob' - a $PLATFORM node needs it"
+            return 1
+        fi
+        info "release $PREBUILT_TAG has no '$glob' - skipping (optional)"
+        return 0
+    fi
+    [ "$count" -gt 1 ] && warn "$count assets match '$glob' in $PREBUILT_TAG; using $name"
+    path="$(seren_prebuilts_get "$name")" || return 1
+    export "$var=$path"
+}
+
+# ── the two entry points the dispatcher calls (same names as before) ──
+
+run_prebuilts_download_foundation() {
+    # Python and SQLite tarballs, staged BEFORE foundation so the Xavier can
+    # skip forty minutes of source builds. The Nano and the Spark ship a new
+    # enough Python and SQLite natively and their foundation phases do not
+    # read these, so there is nothing to stage there - said, not assumed.
+    if [ "$PLATFORM" != "xavier" ]; then
+        info "Foundation prebuilts: nothing to stage on $PLATFORM (Python/SQLite are native)"
+        return 0
+    fi
+    _as_target mkdir -p "$PREBUILT_DIR"
+    seren_prebuilts_index || return 1
+    seren_prebuilts_stage 'python3.*-*.tar.gz' STAGED_PYTHON_TARBALL || return 1
+    seren_prebuilts_stage 'sqlite3.*-*.tar.gz' STAGED_SQLITE_TARBALL || return 1
+    [ -n "${STAGED_PYTHON_TARBALL:-}" ] || warn "no Python tarball in the release - foundation will source-build (~30 min)"
+    [ -n "${STAGED_SQLITE_TARBALL:-}" ] || warn "no SQLite tarball in the release - foundation will source-build (~10 min)"
+}
+
+run_prebuilts_download_services() {
+    _as_target mkdir -p "$PREBUILT_DIR"
+    seren_prebuilts_index || return 1
+
+    if $INSTALL_LLAMA; then
+        seren_prebuilts_stage 'llama-server-*' STAGED_LLAMA_BIN required || return 1
+        chmod +x "$STAGED_LLAMA_BIN"      # AFTER verification, never before
+    fi
+
+    # torch + torchvision for whichever component needs them. The names come
+    # from the index, so the torchvision local-version tag is whatever THIS
+    # platform's build produced - not a hardcoded commit from another box's.
+    if $INSTALL_COMFYUI || ${INSTALL_MSMOE:-false}; then
+        seren_prebuilts_stage 'torch-*.whl'        STAGED_TORCH_WHL   required || return 1
+        seren_prebuilts_stage 'torchvision-*.whl'  STAGED_TVISION_WHL required || return 1
+        # Required on the Xavier (nothing on PyPI covers sm_72), a spare elsewhere.
+        seren_prebuilts_stage 'bitsandbytes-*.whl' STAGED_BNB_WHL \
+            "$([ "$PLATFORM" = xavier ] && echo required)" || return 1
+    fi
+
+    if ${INSTALL_CORAL:-false}; then
+        seren_prebuilts_stage 'gasket-*.ko'      STAGED_GASKET_KO       required || return 1
+        seren_prebuilts_stage 'apex-*.ko'        STAGED_APEX_KO         required || return 1
+        seren_prebuilts_stage 'coral-*.manifest' STAGED_CORAL_MANIFEST  || return 1
+        [ -n "${STAGED_CORAL_MANIFEST:-}" ] || warn "No Coral manifest in the release - skipping the kernel-version check"
+    fi
+
+    log "Staged from $PREBUILT_TAG into $PREBUILT_DIR"
+}
+
+run_prebuilts_download() {
+    run_prebuilts_download_foundation && run_prebuilts_download_services
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -514,7 +878,7 @@ source_service() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# apt helpers — ask the release what it HAS, do not declare it
+# apt helpers - ask the release what it HAS, do not declare it
 # ─────────────────────────────────────────────────────────────
 #
 # WHY THIS EXISTS, from a real failure on the Spark:
@@ -541,7 +905,7 @@ source_service() {
 # "never heard of it". Both mean unusable, both are worth reporting by name, and
 # neither is worth killing a node prep over.
 
-# seren_apt_has — is this package installable on THIS release?
+# seren_apt_has - is this package installable on THIS release?
 # Not "does the binary exist": `which netcat` answers on a box where
 # `apt install netcat` cannot work. The candidate version is the real question.
 seren_apt_has() {
@@ -550,7 +914,7 @@ seren_apt_has() {
     [ -n "$cand" ] && [ "$cand" != "(none)" ]
 }
 
-# seren_apt_first — the first name in a list that this release can install.
+# seren_apt_first - the first name in a list that this release can install.
 # For packages that got renamed across releases: netcat-openbsd on one, the
 # traditional one elsewhere. Prints nothing and returns 1 if none resolve.
 seren_apt_first() {
@@ -561,7 +925,7 @@ seren_apt_first() {
     return 1
 }
 
-# seren_apt_install — install what resolves, name what does not.
+# seren_apt_install - install what resolves, name what does not.
 #
 # REQUIRED vs OPTIONAL is the caller's call, made by which function they use.
 # This one is the optional flavour: a name that has aged out warns and the rest
@@ -585,7 +949,7 @@ seren_apt_install() {
     return 0
 }
 
-# seren_apt_install_required — the same, except a missing name is fatal AND SAID.
+# seren_apt_install_required - the same, except a missing name is fatal AND SAID.
 # Used for the handful without which the node is not prepared at all.
 seren_apt_install_required() {
     local missing=() p
@@ -607,7 +971,7 @@ seren_apt_install_required() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Venv helpers — one venv per Python service
+# Venv helpers - one venv per Python service
 # ─────────────────────────────────────────────────────────────
 # Convention: real venv lives at /mnt/nvme/seren-venvs/{service}/ when NVMe
 # is available, else at /home/$TARGET_USER/seren-venvs/{service}/. Either way,
@@ -719,7 +1083,7 @@ ensure_venv() {
         elif [ -L "$venv_path" ]; then
             local current_target; current_target=$(readlink "$venv_path")
             if [ "$current_target" != "$real_venv" ]; then
-                warn "Symlink $venv_path points to $current_target, expected $real_venv — leaving alone"
+                warn "Symlink $venv_path points to $current_target, expected $real_venv - leaving alone"
             fi
         fi
     fi
@@ -740,14 +1104,14 @@ venv_python() {
 }
 
 # ═════════════════════════════════════════════════════════════
-# Manifest writers — ~/.seren/{node,services/<name>}.json
+# Manifest writers - ~/.seren/{node,services/<name>}.json
 # ═════════════════════════════════════════════════════════════
 #
 # Each service install calls write_service_manifest at the end. The node
 # manifest is written once during foundation Phase 1.
 #
 # Manifests are the agent's source of truth for "what's installed on this
-# box" — replacing fragile directory probing. Each manifest has:
+# box" - replacing fragile directory probing. Each manifest has:
 #   - Well-known fields (port, endpoint, paths, lifecycle scripts)
 #   - serviceSpecific{} sub-object for service-tunable settings + advanced
 #     user customization. The agent ignores serviceSpecific contents; tools
@@ -772,7 +1136,7 @@ venv_python() {
 #       --service-specific compute_type=int8_float16
 
 # Internal: JSON-escape a value. Handles backslashes, quotes, newlines.
-# Doesn't try to handle arbitrary unicode — that'd need a proper JSON
+# Doesn't try to handle arbitrary unicode - that'd need a proper JSON
 # encoder. For our use (paths, identifiers, version strings) this is fine.
 _seren_json_escape() {
     local s="$1"
@@ -786,12 +1150,12 @@ _seren_json_escape() {
 
 _seren_manifest_dir() {
     if [ -z "${USER_HOME:-}" ]; then
-        echo "ERROR: USER_HOME is empty — manifest helpers can't proceed." >&2
+        echo "ERROR: USER_HOME is empty - manifest helpers can't proceed." >&2
         echo "       This is usually a bug in seren-prepare-node.sh's init order." >&2
         return 1
     fi
     if [ -z "${TARGET_USER:-}" ]; then
-        echo "ERROR: TARGET_USER is empty — manifest helpers can't proceed." >&2
+        echo "ERROR: TARGET_USER is empty - manifest helpers can't proceed." >&2
         return 1
     fi
     local d="$USER_HOME/.seren"
@@ -863,7 +1227,7 @@ write_service_manifest() {
     json+="\"installed_at\":\"${now}\","
     json+='"schema_version":1,'
 
-    # serviceSpecific sub-object — always present, even if empty
+    # serviceSpecific sub-object - always present, even if empty
     json+='"serviceSpecific":{'
     local first=true
     for i in "${!spec_keys[@]}"; do
@@ -879,7 +1243,7 @@ write_service_manifest() {
     done
     json+='}}'
 
-    # Pretty-print via jq if available — easier for humans to read/edit
+    # Pretty-print via jq if available - easier for humans to read/edit
     if command -v jq &>/dev/null; then
         local pretty; pretty=$(echo "$json" | jq . 2>/dev/null)
         if [ -n "$pretty" ]; then
@@ -951,239 +1315,12 @@ write_node_manifest() {
 }
 
 # ═════════════════════════════════════════════════════════════
-# Agent install — shared between Xavier and Nano
+# (The per-node "seren-agent" installer that used to live here is gone.)
 # ═════════════════════════════════════════════════════════════
 #
-# The Seren agent is the per-node management plane. It's a tiny FastAPI
-# app exposing /api/v1/{system,service/*}/* endpoints, manifest-driven,
-# bearer-token authed.
-#
-# Why shared install logic: the agent doesn't touch CUDA or platform-
-# specific kernels. Same Python deps, same systemd unit, same lifecycle
-# on both Xavier and Nano. Platform agent.sh files just wrap this.
-#
-# Inputs (passed explicitly to keep this self-contained):
-#   $1 — TARGET_USER (e.g. the login you run Seren as)
-#   $2 — SCRIPT_DIR (location of seren-agent.tar.gz to extract from)
-#
-# Side effects:
-#   - Extracts seren-agent.tar.gz → $USER_HOME/seren-agent/agent/...
-#   - Creates ~/seren-venvs/agent venv with fastapi, httpx, uvicorn
-#   - Installs /etc/systemd/system/seren-agent.service (Type=simple,
-#     Restart=on-failure, After=network-online.target)
-#   - Installs ~/start_agent.sh and ~/stop_agent.sh wrappers around
-#     systemctl (so the manifest's lifecycle scripts work uniformly)
-#   - Writes ~/.seren/services/agent.json manifest
-#   - Enables (but does NOT start) the service — caller can start later
-#     via systemctl or via the agent's own /api/v1/service/agent/start
-#     endpoint after a reboot
-install_agent_common() {
-    local target_user="$1"
-    local script_dir="$2"
-    local user_home="/home/$target_user"
-
-    log "▶ Service — Seren Agent (FastAPI management plane)"
-
-    # ── Verify tarball exists before doing anything else ──
-    local tarball="$script_dir/seren-agent.tar.gz"
-    if [ ! -f "$tarball" ]; then
-        fail "seren-agent.tar.gz not found at $tarball"
-        fail "Build it from the agent/ source tree:"
-        fail "  cd $script_dir && tar czf seren-agent.tar.gz agent/"
-        return 1
-    fi
-    # Sanity-check the tarball isn't corrupted
-    if ! tar tzf "$tarball" > /dev/null 2>&1; then
-        fail "seren-agent.tar.gz is corrupted or not a valid gzip tarball"
-        return 1
-    fi
-    # Sanity-check it contains agent/__init__.py (the package entry)
-    if ! tar tzf "$tarball" | grep -q '^agent/__init__.py$'; then
-        fail "seren-agent.tar.gz is missing agent/__init__.py — wrong layout?"
-        fail "Expected entries like: agent/__init__.py, agent/app.py, ..."
-        return 1
-    fi
-
-    # ── Extract agent code ──
-    # Land at $user_home/seren-agent/agent/ (note the nested 'agent/' is the
-    # Python package; the outer 'seren-agent/' is just the install dir).
-    local install_dir="$user_home/seren-agent"
-    log "Extracting agent code to $install_dir..."
-    sudo -u "$target_user" mkdir -p "$install_dir"
-    # Wipe any previous agent/ inside the install dir so old files don't
-    # linger if the package layout changed across versions. We do NOT wipe
-    # the install_dir itself — anything outside agent/ stays put.
-    sudo -u "$target_user" rm -rf "$install_dir/agent"
-    sudo -u "$target_user" tar xzf "$tarball" -C "$install_dir"
-    if [ ! -f "$install_dir/agent/__init__.py" ]; then
-        fail "Extraction succeeded but $install_dir/agent/__init__.py is missing"
-        return 1
-    fi
-
-    # ── Venv + deps ──
-    ensure_venv agent
-    log "Installing agent Python deps into venv (fastapi, httpx, uvicorn)..."
-    venv_pip agent install \
-        fastapi \
-        "httpx>=0.27" \
-        "uvicorn[standard]" \
-        || { fail "agent dep install failed"; return 1; }
-
-    # ── Verify agent module imports cleanly in the venv ──
-    # If this fails, the deploy is broken — better to know now than at
-    # systemd start time when it's noisier to diagnose.
-    log "Verifying agent imports..."
-    if ! sudo -u "$target_user" \
-        env PYTHONPATH="$install_dir" \
-        "$user_home/seren-venvs/agent/bin/python" \
-        -c "from agent import __version__; print(f'agent version {__version__} imports OK')"
-    then
-        fail "agent module fails to import — deploy is broken"
-        return 1
-    fi
-
-    # ── Make sure secrets exist (defensive) ──
-    # foundation Phase 1 normally generates the token, but if someone runs
-    # the agent install standalone we want to make sure auth is configured.
-    # Agent will run without auth if no token, but with a loud warning header.
-    if [ ! -f "$user_home/.seren/secrets.json" ]; then
-        if [ -f "$script_dir/seren-secrets.sh" ]; then
-            log "No agent token found — generating one..."
-            bash "$script_dir/seren-secrets.sh" -u "$target_user"
-        else
-            warn "No agent token AND seren-secrets.sh missing. Agent will run"
-            warn "with auth DISABLED (responses will include X-Seren-Auth: disabled)."
-            warn "Manually generate: bash $script_dir/seren-secrets.sh -u $target_user"
-        fi
-    fi
-
-    # ── Logs dir (for systemd journald spillover and manual inspection) ──
-    sudo -u "$target_user" mkdir -p "$user_home/seren-logs"
-
-    # ── start_agent.sh / stop_agent.sh wrappers ──
-    # The agent is the one service we run via systemd (rather than the
-    # start_<service>.sh + PID file convention) because it's infrastructure
-    # — auto-restart on crash and auto-start at boot matter here. But we
-    # still ship wrapper scripts so the agent's manifest can declare
-    # start_script/stop_script paths uniformly (the agent's own
-    # /api/v1/service/agent/start endpoint subprocesses them through
-    # the lifecycle module).
-    sudo -u "$target_user" tee "$user_home/start_agent.sh" > /dev/null << 'STARTEOF'
-#!/bin/bash
-# start_agent.sh — bring up the Seren agent via systemd.
-# Agent's manifest declares this as its start_script for self-management.
-sudo systemctl start seren-agent.service
-echo "seren-agent: $(systemctl is-active seren-agent.service)"
-STARTEOF
-    sudo -u "$target_user" chmod +x "$user_home/start_agent.sh"
-
-    sudo -u "$target_user" tee "$user_home/stop_agent.sh" > /dev/null << 'STOPEOF'
-#!/bin/bash
-# stop_agent.sh — stop the Seren agent via systemd.
-sudo systemctl stop seren-agent.service
-echo "seren-agent: $(systemctl is-active seren-agent.service)"
-STOPEOF
-    sudo -u "$target_user" chmod +x "$user_home/stop_agent.sh"
-
-    # ── systemd unit ──
-    log "Installing seren-agent.service..."
-    sudo tee /etc/systemd/system/seren-agent.service > /dev/null << EOF
-[Unit]
-Description=Seren — per-node management plane (FastAPI agent)
-Documentation=https://github.com/ChadRoesler (seren-v5/agent)
-After=network-online.target
-Wants=network-online.target
-# Don't pile up restart attempts on a permanently-broken install:
-StartLimitIntervalSec=60
-StartLimitBurst=5
-
-[Service]
-Type=simple
-User=$target_user
-WorkingDirectory=$install_dir
-Environment="PYTHONPATH=$install_dir"
-Environment="AGENT_PORT=7777"
-Environment="AGENT_HOST=0.0.0.0"
-ExecStart=$user_home/seren-venvs/agent/bin/python -m agent.app
-Restart=on-failure
-RestartSec=5
-# Forward stdout/stderr to journald (queryable via journalctl -u seren-agent)
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sudo chmod 644 /etc/systemd/system/seren-agent.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable seren-agent.service
-    log "seren-agent.service installed + enabled for boot"
-
-    # ── Sudoers entry — let the target user start/stop the agent without password ──
-    # The wrapper scripts above use `sudo systemctl ...` and would otherwise
-    # prompt for a password every time. Limit the sudoers grant to the exact
-    # commands we need.
-    sudo tee /etc/sudoers.d/seren-agent > /dev/null << EOF
-# Generated by install_agent_common() — allow $target_user to manage seren-agent.service
-$target_user ALL=(root) NOPASSWD: /bin/systemctl start seren-agent.service
-$target_user ALL=(root) NOPASSWD: /bin/systemctl stop seren-agent.service
-$target_user ALL=(root) NOPASSWD: /bin/systemctl restart seren-agent.service
-$target_user ALL=(root) NOPASSWD: /bin/systemctl status seren-agent.service
-$target_user ALL=(root) NOPASSWD: /usr/bin/systemctl start seren-agent.service
-$target_user ALL=(root) NOPASSWD: /usr/bin/systemctl stop seren-agent.service
-$target_user ALL=(root) NOPASSWD: /usr/bin/systemctl restart seren-agent.service
-$target_user ALL=(root) NOPASSWD: /usr/bin/systemctl status seren-agent.service
-# Reboot — for the agent's POST /api/v1/system/reboot and /reboot/cancel endpoints.
-# /sbin/shutdown -r +N    schedules a reboot N minutes out (dashboard fires +1)
-# /sbin/shutdown -c       cancels a scheduled reboot
-# Wildcards on the time argument are intentional — restricts to -r and -c
-# specifically (not -h halt, not -P poweroff). The N minutes is bounded
-# by the agent's input clamp (0..60) so wildcard doesn't widen the blast.
-$target_user ALL=(root) NOPASSWD: /sbin/shutdown -r *
-$target_user ALL=(root) NOPASSWD: /sbin/shutdown -c
-EOF
-    sudo chmod 440 /etc/sudoers.d/seren-agent
-    sudo visudo -cf /etc/sudoers.d/seren-agent > /dev/null || {
-        fail "Sudoers entry failed validation — aborting"
-        sudo rm -f /etc/sudoers.d/seren-agent
-        return 1
-    }
-
-    # ── Write manifest ──
-    # Note: no pid_path declared. Agent is systemd-managed; lifecycle helpers
-    # detect missing pid_path and fall back to systemctl is-active. (See
-    # lifecycle.py — to be enhanced in a follow-up if needed; for now status
-    # checks return 'pid: None' for the agent which is fine.)
-    write_service_manifest "agent" \
-        implementation=seren-agent \
-        port=7777 \
-        endpoint=/api/v1/system/ping \
-        start_script="$user_home/start_agent.sh" \
-        stop_script="$user_home/stop_agent.sh" \
-        log_path="$user_home/seren-logs/agent.log" \
-        venv_path="$user_home/seren-venvs/agent" \
-        repo_path="$install_dir" \
-        --service-specific systemd_unit=seren-agent.service \
-        --service-specific managed_by=systemd
-
-    # ── Print next steps ──
-    log "Seren Agent installed."
-    log "  Code:    $install_dir/agent/"
-    log "  Venv:    ~/seren-venvs/agent"
-    log "  Service: seren-agent.service (enabled at boot, NOT yet started)"
-    log ""
-    log "Start the agent now with:"
-    log "  sudo systemctl start seren-agent"
-    log "Then verify:"
-    log "  curl http://localhost:7777/api/v1/system/ping"
-    log "  curl http://localhost:7777/  # info page"
-    log "  sudo journalctl -u seren-agent -f"
-    log ""
-    log "Auth token (give this to the C# RuntimeHost / chat app):"
-    if [ -f "$user_home/.seren/secrets.json" ]; then
-        log "  $(jq -r .agent_token "$user_home/.seren/secrets.json" 2>/dev/null || echo '(jq unavailable; cat ~/.seren/secrets.json)')"
-    else
-        warn "  No token file at ~/.seren/secrets.json — auth is DISABLED"
-    fi
-    log "✓ Service — Seren Agent"
-}
+# install_agent_common() was 240 lines that nothing called: it unpacked a
+# seren-agent.tar.gz that no longer exists, ran a seren-secrets.sh that was
+# never in this tree, installed a unit on port 7777 - the Observatory's port -
+# and wrote a second, wider sudoers file. The Observatory replaced the agent
+# and has its own installer under services/. Dead code that documents a
+# system which is not there is worse than none, because it reads as true.

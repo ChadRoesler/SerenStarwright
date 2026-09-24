@@ -236,12 +236,158 @@ if (-not $bash) {
         $p = $psServices[$name]
         if ($b.default_port -ne $p.default_port) {
             Bad "$name : port differs (bash $($b.default_port) vs ps $($p.default_port))"
-        } elseif ($b.group -ne $p.group) {
+            continue
+        }
+        if ($b.group -ne $p.group) {
             Bad "$name : group differs (bash '$($b.group)' vs ps '$($p.group)')"
-        } else {
-            Good ("{0,-24} port + group agree" -f $name)
+            continue
+        }
+
+        # -- requires ---------------------------------------------------------
+        # CHECKED BECAUSE IT WAS SILENTLY ABSENT. Get-SerenDescribe had no
+        # Requires parameter at all, so every PowerShell service reported no
+        # dependencies. Starwright feeds `requires` into resolve_dependencies and
+        # install_order, so Corpus Callosum on Windows installed a bridge to
+        # nothing while the bash side got it right. Port and group agreeing told
+        # us nothing about that, which is why this check now exists.
+        $bReq = @($b.requires | Where-Object { $_ }) | Sort-Object
+        $pReq = @($p.requires | Where-Object { $_ }) | Sort-Object
+        if (($bReq -join ',') -ne ($pReq -join ',')) {
+            Bad ("{0} : requires differs (bash [{1}] vs ps [{2}])" -f `
+                 $name, ($bReq -join ' '), ($pReq -join ' '))
+            continue
+        }
+
+        # -- flags ------------------------------------------------------------
+        # Pinned rather than demanded equal. Some asymmetry is REAL and must not
+        # be papered over, so the two kinds are separated:
+        #
+        #   ALLOWED  - a flag that only makes sense on one OS. `local-system` is
+        #              the NSSM service logon; there is no such thing on Linux.
+        #   KNOWN    - a genuine feature gap, printed on every run so it stays
+        #              visible instead of decaying into folklore. Fix the gap and
+        #              delete the line; it will then be enforced like anything else.
+        #
+        # Anything NOT in either list fails. That is the point: this pins today's
+        # shape so tomorrow's drift is loud.
+        $allowedPsOnly = @('local-system')
+        $knownGaps = @{
+            'seren-memory'      = @{ ps = @('logging-dir');       bash = @() }
+        }
+        $bFlags = @($b.flags | Where-Object { $_ })
+        $pFlags = @($p.flags | Where-Object { $_ })
+        $psOnly   = @($pFlags | Where-Object { $bFlags -notcontains $_ })
+        $bashOnly = @($bFlags | Where-Object { $pFlags -notcontains $_ })
+
+        $gap = $knownGaps[$name]
+        $expectedPsOnly   = @($allowedPsOnly) + @(if ($gap) { $gap.ps })
+        $expectedBashOnly = @(if ($gap) { $gap.bash })
+
+        $unexpectedPs   = @($psOnly   | Where-Object { $expectedPsOnly   -notcontains $_ })
+        $unexpectedBash = @($bashOnly | Where-Object { $expectedBashOnly -notcontains $_ })
+
+        if ($unexpectedPs.Count -or $unexpectedBash.Count) {
+            Bad ("{0} : unexpected flag drift - ps-only [{1}] bash-only [{2}]" -f `
+                 $name, ($unexpectedPs -join ' '), ($unexpectedBash -join ' '))
+            continue
+        }
+
+        # -- switches ---------------------------------------------------------
+        # Which flags take no value. Same allowed asymmetry as the flags
+        # (local-system is a PowerShell switch with no Linux counterpart).
+        $bSw = @($b.switches | Where-Object { $_ })
+        $pSw = @($p.switches | Where-Object { $_ })
+        $swPsOnly   = @($pSw | Where-Object { $bSw -notcontains $_ -and $allowedPsOnly -notcontains $_ -and $expectedPsOnly -notcontains $_ })
+        $swBashOnly = @($bSw | Where-Object { $pSw -notcontains $_ -and $expectedBashOnly -notcontains $_ })
+        if ($swPsOnly.Count -or $swBashOnly.Count) {
+            Bad ("{0} : switch drift - ps-only [{1}] bash-only [{2}]" -f `
+                 $name, ($swPsOnly -join ' '), ($swBashOnly -join ' '))
+            continue
+        }
+        if ($bSw -notcontains 'no-updates' -or $pSw -notcontains 'no-updates') {
+            Bad ("{0} : --no-updates is not reported as a switch (bash [{1}] ps [{2}])" -f `
+                 $name, ($bSw -join ' '), ($pSw -join ' '))
+            continue
+        }
+
+        Good ("{0,-24} port, group, requires, flags, switches agree" -f $name)
+        if ($gap) {
+            $g = @()
+            if ($gap.ps.Count)   { $g += "ps-only: $($gap.ps -join ' ')" }
+            if ($gap.bash.Count) { $g += "bash-only: $($gap.bash -join ' ')" }
+            Note ("known feature gap - {0}" -f ($g -join '; '))
         }
     }
+}
+
+# -- 5. the dev wheelhouse (-Local) -------------------------------------------
+# Resolve-LocalWheel is the PowerShell half of --local. It never opens a wheel,
+# so plain files with the right names stand in for wheels here; what is under
+# test is the index reading, the newest-per-project pick, the pins, and the
+# refusals. The bash half has the same fixture with a real pip behind it
+# (services/tests/test-local-wheelhouse.sh).
+Section "Dev wheelhouse (-Local)"
+$house = Join-Path ([System.IO.Path]::GetTempPath()) ("seren_verify_house_" + [System.IO.Path]::GetRandomFileName().Replace('.', ''))
+New-Item -ItemType Directory -Path $house -Force | Out-Null
+try {
+    $fake = @(
+        "seren_meninges-2.4.0-py3-none-any.whl",
+        "seren_meninges-2.4.1.dev3+gabc1234-py3-none-any.whl",
+        "seren_memory-3.0.1.dev2+gdef5678-py3-none-any.whl",
+        "seren_loci-2.2.0+d20260923-py3-none-any.whl"
+    )
+    $sums = @()
+    foreach ($n in $fake) {
+        [System.IO.File]::WriteAllText((Join-Path $house $n), "fake $n", (New-Object System.Text.UTF8Encoding $false))
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $bytes = $sha.ComputeHash([System.IO.File]::ReadAllBytes((Join-Path $house $n)))
+        $sums += (([System.BitConverter]::ToString($bytes)).Replace("-", "").ToLower() + "  " + $n)
+    }
+    $sums += ("deadbeef" * 8) + "  old/seren_memory-9.9.9-py3-none-any.whl"
+    [System.IO.File]::WriteAllText((Join-Path $house "SHA256SUMS"), (($sums -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+
+    # The library's Die exits the process; here it has to throw instead.
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    function Die($m) { throw $m }
+    function Step($m) { }
+    function Ok($m) { }
+
+    $r = Resolve-LocalWheel -House $house -Package "seren-memory"
+    if ((Split-Path $r.Src -Leaf) -eq "seren_memory-3.0.1.dev2+gdef5678-py3-none-any.whl") { Good "newest seren_memory wheel picked" }
+    else { Bad "picked $($r.Src)" }
+    $pins = @()
+    if ($global:serenPipArgs.Count -eq 4 -and $global:serenPipArgs[0] -eq "--find-links") {
+        Good "pip gets --find-links + a constraints file"
+        $pins = @(Get-Content $global:serenPipArgs[3])
+    } else { Bad "pip args: $($global:serenPipArgs -join ' ')" }
+    if ($pins -contains "seren-meninges==2.4.1.dev3+gabc1234" -and $pins -notcontains "seren-meninges==2.4.0") { Good "the dev meninges is pinned, not the release beside it" }
+    else { Bad "pins: $($pins -join ' ')" }
+    if ($pins -contains "seren-loci==2.2.0+d20260923") { Good "every seren wheel in the house is pinned" } else { Bad "loci not pinned" }
+    if (-not ($pins -join ' ').Contains("9.9.9")) { Good "the old/ subdirectory entry is ignored" } else { Bad "subdirectory entry leaked" }
+
+    $r2 = Resolve-LocalWheel -House ("file://" + $house) -Package "seren-loci"
+    if ((Split-Path $r2.Src -Leaf) -like "seren_loci-*") { Good "file:// house behaves like a folder" } else { Bad "file:// pick: $($r2.Src)" }
+
+    [System.IO.File]::WriteAllText((Join-Path $house "seren_loci-2.2.0+d20260923-py3-none-any.whl"), "tampered", (New-Object System.Text.UTF8Encoding $false))
+    $refused = $false
+    try { Resolve-LocalWheel -House $house -Package "seren-loci" | Out-Null } catch { $refused = ("$_" -like "*failed verification*") }
+    if ($refused) { Good "a wheel that does not match the index is refused" } else { Bad "tampered wheel accepted" }
+
+    $refused = $false
+    try { Resolve-LocalWheel -House $house -Package "seren-probe" | Out-Null } catch { $refused = ("$_" -like "*no seren_probe-*") }
+    if ($refused) { Good "a house without this card's wheel says so" } else { Bad "missing package not refused" }
+
+    Remove-Item -Force (Join-Path $house "SHA256SUMS")
+    $refused = $false
+    try { Resolve-LocalWheel -House $house -Package "seren-memory" | Out-Null } catch { $refused = ("$_" -like "*seren-dev-publish.ps1*") }
+    if ($refused) { Good "a house with no index is refused, naming the publisher" } else { Bad "indexless house accepted" }
+
+    $wr = Resolve-Wheel -Wheel (Join-Path $house "seren_memory-3.0.1.dev2+gdef5678-py3-none-any.whl") -Local $house -Package "seren-memory"
+    if ($global:serenPipArgs.Count -eq 0) { Good "-Wheel still beats -Local, and carries no house args" } else { Bad "-Wheel with -Local left pip args behind" }
+} catch {
+    Bad "wheelhouse section threw: $_"
+} finally {
+    Remove-Item -Recurse -Force $house -ErrorAction SilentlyContinue
 }
 
 # -- summary ------------------------------------------------------------------

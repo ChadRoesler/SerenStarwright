@@ -3,10 +3,11 @@
 #  seren-install-lib.sh  -  Shared installer library for all seren services
 #
 #  Source this from any seren-X-setup.sh to get common functions:
-#    find_python, resolve_wheel, create_venv, pip_install, sanity_check,
+#    find_python, resolve_wheel (+ resolve_local_wheel), create_venv,
+#    pip_install, sanity_check,
 #    write_launcher, setup_autostart, print_done
 #
-#  Memory and Loci are the template leaders — see seren-memory-setup.sh and
+#  Memory and Loci are the template leaders - see seren-memory-setup.sh and
 #  seren-loci-setup.sh for the canonical reference implementations.
 #
 #  USAGE (sourced, not exec'd):
@@ -186,6 +187,19 @@ seren_flags_from_self() {
     | tr -d ' )' | sed 's/^--//' | sort -u | tr '\n' ' '
 }
 
+# -- seren_switches_from_self - which of those flags take NO value ------------
+# A case branch that ends in a lone `shift ;;` consumes only the flag; one that
+# ends in `shift 2 ;;` consumes a value. The front-end needs the difference:
+# it used to render every non-universal flag as a text box, so ticking
+# --no-updates meant typing something, and `--no-updates yes` was refused by
+# the card as an unknown flag. Derived, like the flags, so it cannot drift.
+seren_switches_from_self() {
+  [[ -r "${0:-}" ]] || return 0
+  # `exit N ;;` branches (--describe) take no value either.
+  grep -E '^[[:space:]]+--[a-z-]+\)[^;]*;[[:space:]]*(shift|exit [0-9]+)[[:space:]]*;;' "$0" 2>/dev/null \
+    | grep -oE '^[[:space:]]+--[a-z-]+' | tr -d ' ' | sed 's/^--//' | sort -u | tr '\n' ' '
+}
+
 # -- seren_describe - the --describe payload ----------------------------------
 # Reads the SVC_* identity vars each installer sets alongside its defaults, plus
 # PORT/HOST. Must be callable before ANY work happens - see the --describe scan
@@ -223,11 +237,15 @@ seren_describe() {
     # declares mcp as a CORE dep rather than an extra (lodestar, workbench).
     # Those installers set SVC_EXTRAS explicitly to override this derivation.
     for f in $flags; do
-      case "$f" in mcp|corp|vector) extras+="${extras:+ }$f" ;; esac
+      case "$f" in mcp|corp|vector|st) extras+="${extras:+ }$f" ;; esac
     done
   fi
   for f in $extras; do extras_json+="${extras_json:+,}\"$(_json_esc "$f")\""; done
   for f in $flags;  do flags_json+="${flags_json:+,}\"$(_json_esc "$f")\""; done
+  local switches_json="" sw
+  for sw in ${SVC_SWITCHES:-$(seren_switches_from_self)}; do
+    switches_json+="${switches_json:+,}\"$(_json_esc "$sw")\""
+  done
   printf '{"schema_version":1'
   printf ',"name":"%s"'         "$(_json_esc "${SVC_NAME:-unknown}")"
   printf ',"display":"%s"'      "$(_json_esc "${SVC_DISPLAY:-${SVC_NAME:-unknown}}")"
@@ -239,6 +257,7 @@ seren_describe() {
   printf ',"accent":"%s"'       "$(_json_esc "${SVC_ACCENT:-}")"
   printf ',"extras":[%s]'       "$extras_json"
   printf ',"flags":[%s]'        "$flags_json"
+  printf ',"switches":[%s]'     "$switches_json"
   printf ',"requires":[%s]'     "$requires_json"
   printf '}\n'
 }
@@ -285,16 +304,117 @@ find_python() {
   echo "$PYBIN"
 }
 
-# -- resolve_wheel - determine install source (local wheel / GitHub / PyPI) ----
-# Sets: WHEEL_SRC, CLEANUP_WHEEL
-# Reads: WHEEL, REF, REPO, PACKAGE, PYBIN
+# -- resolve_local_wheel - the dev wheelhouse (--local DIR|URL) ----------------
+# A wheelhouse is what seren-dev-publish.sh writes: one wheel per project plus
+# SHA256SUMS in sha256sum's format. It is a folder, or an http(s) URL where the
+# same folder is served (python -m http.server, which is what --serve does).
+#
+# Sets: WHEEL_SRC (the newest wheel for PACKAGE, verified), CLEANUP_WHEEL,
+#       EXTRA_PIP_ARGS (--find-links + a constraints file), LOCAL_STAGE
+# Reads: LOCAL, PACKAGE
+#
+# WHY A CONSTRAINTS FILE: a dev build of seren-meninges is a pre-release
+# (2.4.1.dev3+g...), and pip never picks a pre-release to satisfy a plain
+# `seren-meninges>=2.4.0` unless told to. `--pre` would say so for EVERY
+# package in the tree, including whatever textual or fastapi rc happens to be
+# on PyPI that day. An exact `==` pin on the pre-release version says it for
+# that one package only, so every seren-* wheel in the house is pinned by
+# name and pip takes the dev copy - with its dependencies - and nothing else
+# changes. The seren wheels in the house are the whole point of the house.
+resolve_local_wheel() {
+  local house="$1" pkg_us index line name best="" n=0
+  pkg_us="$(echo "$PACKAGE" | tr '-' '_')"
+  LOCAL_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/seren_local_XXXXXX")"
+  local findlinks="$house"
+  case "$house" in
+    http://*|https://*)
+      step "Reading the dev wheelhouse at $house"
+      command -v curl >/dev/null 2>&1 || die "curl is required (sudo apt install curl)"
+      house="${house%/}"; findlinks="$house/"
+      index="$LOCAL_STAGE/SHA256SUMS"
+      curl -fsSL --retry 3 -o "$index" "$house/SHA256SUMS" \n        || die "no SHA256SUMS at $house - is seren-dev-publish.sh --serve running there?"
+      ;;
+    *)
+      house="${house#file://}"; findlinks="$house"
+      step "Reading the dev wheelhouse at $house"
+      [[ -d "$house" ]] || die "wheelhouse not found: $house"
+      index="$house/SHA256SUMS"
+      [[ -s "$index" ]] || die "no SHA256SUMS in $house - run seren-dev-publish.sh first"
+      ;;
+  esac
+
+  # Newest wheel per seren-* project, from the index alone. `sort -V` orders
+  # 3.0.1.dev2 after 3.0.0 and 3.0.1.dev3 after .dev2, which is the order a
+  # publisher produces them in.
+  : > "$LOCAL_STAGE/constraints.txt"
+  while IFS= read -r line; do
+    name="${line##* }"; name="${name#\*}"
+    [[ "$name" == seren_*.whl && "$name" != */* ]] || continue
+    echo "$name"
+  done < "$index" | sort -V | awk -F- '{ latest[$1] = $0 } END { for (k in latest) print latest[k] }'     | sort > "$LOCAL_STAGE/wheels.txt"
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    local dist ver
+    dist="${name%%-*}"; ver="${name#*-}"; ver="${ver%%-*}"
+    echo "$(echo "$dist" | tr '_' '-')==$ver" >> "$LOCAL_STAGE/constraints.txt"
+    n=$((n+1))
+    [[ "$dist" == "$pkg_us" ]] && best="$name"
+  done < "$LOCAL_STAGE/wheels.txt"
+  [[ -n "$best" ]] || die "no ${pkg_us}-*.whl in the wheelhouse index ($n seren wheels listed)"
+
+  # Fetch (or locate) the one wheel this card installs, and verify it either
+  # way - a folder can be edited by hand too.
+  local want have
+  want="$(awk -v n="$best" '{ f = $2; sub(/^\*/, "", f); if (f == n) { print $1; exit } }' "$index")"
+  case "$findlinks" in
+    http://*|https://*)
+      curl -fsSL --retry 3 -o "$LOCAL_STAGE/$best" "$house/$(seren_urlencode "$best")" \n        || die "download failed: $best"
+      WHEEL_SRC="$LOCAL_STAGE/$best"
+      ;;
+    *)
+      [[ -f "$house/$best" ]] || die "index lists $best but the file is not in $house"
+      WHEEL_SRC="$house/$best"
+      ;;
+  esac
+  have="$(sha256sum "$WHEEL_SRC" | cut -d' ' -f1)"
+  if [[ "$have" != "$want" ]]; then
+    rm -f "$LOCAL_STAGE/$best"
+    die "$best failed verification against the wheelhouse index (republish, or check what is serving it)"
+  fi
+  CLEANUP_WHEEL=false
+  EXTRA_PIP_ARGS="--find-links $findlinks -c $LOCAL_STAGE/constraints.txt"
+  ok "Dev wheel $best  (+ $((n-1)) other seren wheel(s) pinned from the house)"
+}
+
+# Percent-encode the reserved characters a wheel name can carry ('+' in a
+# local version is the live one - unencoded it is a space to a web server).
+seren_urlencode() {
+  local s="$1" out="" i c
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out+="$c" ;;
+      *) out+="$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  echo "$out"
+}
+
+# -- resolve_wheel - determine install source (wheel / dev house / GitHub / PyPI)
+# Sets: WHEEL_SRC, CLEANUP_WHEEL, EXTRA_PIP_ARGS
+# Reads: WHEEL, LOCAL, REF, REPO, PACKAGE, PYBIN
+# Precedence: --wheel > --local > --repo/--ref > PyPI
 resolve_wheel() {
   WHEEL_SRC=""
   CLEANUP_WHEEL=false
+  EXTRA_PIP_ARGS=""
   if [[ -n "${WHEEL:-}" ]]; then
     [[ -f "$WHEEL" ]] || die "wheel not found: $WHEEL"
     WHEEL_SRC="$WHEEL"
     ok "Installing from local wheel: $(basename "$WHEEL")"
+  elif [[ -n "${LOCAL:-}" ]]; then
+    resolve_local_wheel "$LOCAL"
   elif [[ -n "${REPO:-}" ]]; then
     step "Resolving the $PACKAGE release from GitHub ($REPO)"
     command -v curl >/dev/null 2>&1 || die "curl is required (sudo apt install curl)"
@@ -352,8 +472,10 @@ pip_install() {
   # warns and carries on. The install that matters is the next line.
   "$vpy" -m pip install -q --upgrade pip \
     || warn "could not upgrade pip in the venv - continuing with the pip that is there"
+  # EXTRA_PIP_ARGS is set by resolve_local_wheel (--find-links + constraints)
+  # and empty otherwise, so every card gets the dev wheelhouse for free.
   # shellcheck disable=SC2086
-  "$vpy" -m pip install -q --upgrade $corp_flag "${src}${extras}" || die "pip install failed"
+  "$vpy" -m pip install -q --upgrade $corp_flag ${EXTRA_PIP_ARGS:-} "${src}${extras}" || die "pip install failed"
   ok "Installed"
 }
 
@@ -428,13 +550,13 @@ setup_autostart() {
       printf '%s=%s\n' "$env_var" "$token" > "$app_dir/${service}.env"
       chmod 600 "$app_dir/${service}.env"
     fi
-    local venv_flag=""
-    [[ -n "$venv_override" ]] && venv_flag="--venv $venv_override"
-    local user_flag=""
-    [[ -n "$service_user" ]] && user_flag="--service-user $service_user"
+    # Arrays: a path with a space must stay one argument.
+    local -a venv_flag=() user_flag=()
+    [[ -n "$venv_override" ]] && venv_flag=(--venv "$venv_override")
+    [[ -n "$service_user" ]] && user_flag=(--service-user "$service_user")
     # Both flag vars are intentionally UNQUOTED: each is a flag+value pair that
     # has to word-split into two arguments, and each is empty when unused.
-    bash "$wrapper" $venv_flag $user_flag --instance "$instance" || die "service install failed"
+    bash "$wrapper" "${venv_flag[@]}" "${user_flag[@]}" --instance "$instance" || die "service install failed"
   else
     # NAMING THE ABSENT FILE, because "not found" sent people looking at the
     # wrapper when the missing half was usually the shared core - two files,

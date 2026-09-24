@@ -98,9 +98,15 @@ $NodesRel    = (Get-LayoutValue "nodes"    "nodes").Replace("/", "\")
 # -- find a Python ------------------------------------------------------------
 $PyExe  = $null
 $PyArgs = @()
+# Under Windows PowerShell 5.1 with $ErrorActionPreference = "Stop", a native
+# command's redirected stderr is a terminating error - so `py -3.12` answering
+# "No suitable Python runtime found" on a box that has only 3.11 killed the
+# build here instead of trying the next version. The probe runs with the
+# preference relaxed; the exit code is the only answer it needs.
 foreach ($v in @("3.12", "3.11", "3.10", "3")) {
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        & py "-$v" -c "import sys" 2>$null | Out-Null
+        $eap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        try { $null = & py "-$v" -c "import sys" 2>&1 } finally { $ErrorActionPreference = $eap }
         if ($LASTEXITCODE -eq 0) { $PyExe = "py"; $PyArgs = @("-$v"); break }
     }
 }

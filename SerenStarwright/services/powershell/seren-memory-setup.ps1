@@ -9,6 +9,7 @@
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -GenToken -Service
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -Wheel .\seren_memory-0.1.0-py3-none-any.whl
+#    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -Local D:\serenDaemon\SerenCore\.dev-wheelhouse   # dev builds from seren-dev-publish.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -Mcp -Corp
 #    powershell -ExecutionPolicy Bypass -File .\seren-memory-setup.ps1 -NoUpdates  # turn update checking off
 # ══════════════════════════════════════════════════════════════════════════
@@ -20,10 +21,12 @@ param(
   [string] $Token      = "",
   [switch] $GenToken,
   [string] $Wheel      = "",
+  [string] $Local      = "",
   [string] $Ref        = "",
   [string] $Repo       = "",
   [switch] $Service,
   [switch] $Mcp,
+  [switch] $St,         # [st] extra: sentence-transformers (+torch) for a named embedding_model
   [switch] $Corp,
   [switch] $NoUpdates,
   # -- service identity (only meaningful alongside -Service) -------------------
@@ -86,7 +89,7 @@ $AppDir  = "$env:USERPROFILE\seren-memory$Instance"
 $CfgPath = "$AppDir\seren-memory.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7420) {
-  Warn "Instance '$Instance' uses default port 7420 — may collide."
+  Warn "Instance '$Instance' uses default port 7420 - may collide."
 }
 
 Write-Host "==========================================" -ForegroundColor Green
@@ -100,11 +103,11 @@ $global:pyInfo = $pyInfo
 if ($Ref -and -not $Repo) { $Repo = "ChadRoesler/SerenMemory" }
 
 # -- 2. resolve wheel ----------------------------------------------------------
-$wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-memory"
+$wr = Resolve-Wheel -Wheel $Wheel -Local $Local -Ref $Ref -Repo $Repo -Package "seren-memory"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
-$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp
+$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp -St:$St
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label " (chromadb$(if ($Mcp) { ' + MCP SDK' } else { '' })$(if ($Corp) { ' + truststore' } else { '' }))"
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 

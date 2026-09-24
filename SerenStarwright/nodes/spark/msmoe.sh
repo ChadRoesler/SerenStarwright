@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# spark/msmoe.sh — Install Ms.MoE Maker (spark)
+# spark/msmoe.sh - Install Ms.MoE Maker (spark)
 #
 # Sourced by seren-prepare-node.sh. Defines install_msmoe().
 #
@@ -21,7 +21,7 @@
 # Own venv at ~/seren-venvs/msmoe (ensure_venv moves it to NVMe when there
 # is one), so the training stack cannot clobber another component's pins.
 #
-# Service phase — always re-runs when flagged. Idempotent.
+# Service phase - always re-runs when flagged. Idempotent.
 # ══════════════════════════════════════════════════════════════
 
 install_msmoe() {
@@ -38,7 +38,7 @@ install_msmoe() {
         log "Installing prebuilt PyTorch ${PYTORCH_VERSION:-} into venv..."
         venv_pip msmoe install "$STAGED_TORCH_WHL"
     else
-        warn "Prebuilt PyTorch wheel missing — falling back to the NVIDIA redist"
+        warn "Prebuilt PyTorch wheel missing - falling back to the NVIDIA redist"
         venv_pip msmoe install torch \
             --extra-index-url https://developer.download.nvidia.com/compute/redist/jp/v70/ || \
             warn "PyTorch install failed; builds will not run (validate still will)"
@@ -55,7 +55,7 @@ install_msmoe() {
     # not a dead node-prep run. The verify block below says what landed.
     log "Installing ms-moe-maker[train] into venv..."
     venv_pip msmoe install "ms-moe-maker[train]" || \
-        warn "Some [train] deps failed — see the check below for what is usable"
+        warn "Some [train] deps failed - see the check below for what is usable"
 
     # ── Verify, and be specific about it ──
     # A CPU-only torch is the failure this whole module exists to prevent, so
@@ -70,7 +70,7 @@ try:
     if torch.cuda.is_available():
         print(f'  Device: {torch.cuda.get_device_name(0)}')
     else:
-        print('  !! torch has no CUDA — this box cannot train. Check the wheel.')
+        print('  !! torch has no CUDA - this box cannot train. Check the wheel.')
 except Exception as e:
     print(f'  !! torch unusable: {e}')
 for mod in ('transformers', 'datasets', 'safetensors', 'accelerate',
@@ -79,8 +79,8 @@ for mod in ('transformers', 'datasets', 'safetensors', 'accelerate',
         importlib.import_module(mod)
         print(f'  ok   {mod}')
     except Exception as e:
-        print(f'  MISSING {mod} — {type(e).__name__}')
-" 2>&1 || warn "Verification could not run — check the venv"
+        print(f'  MISSING {mod} - {type(e).__name__}')
+" 2>&1 || warn "Verification could not run - check the venv"
 
     # The CLI is what Theatre forks, so prove it answers before saying done.
     if venv_python msmoe -m ms_moe_maker --describe >/dev/null 2>&1; then
@@ -97,7 +97,7 @@ for mod in ('transformers', 'datasets', 'safetensors', 'accelerate',
         log "Run root: /mnt/nvme/msMoEMaker"
     else
         sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/msMoEMaker"
-        warn "No /mnt/nvme — run root is $USER_HOME/msMoEMaker. A full build"
+        warn "No /mnt/nvme - run root is $USER_HOME/msMoEMaker. A full build"
         warn "writes tens of gigabytes; put it on real storage before a gauntlet."
     fi
 

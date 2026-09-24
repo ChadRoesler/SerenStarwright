@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# xavier/prebuilts.sh - prebuilt staging for Jetson AGX Xavier (jp5)
+# spark/prebuilts.sh - prebuilt staging for DGX Spark (jp7)
 #
 # Sourced by seren-prepare-node.sh when not in --build mode. The staging
 # itself lives in lib/common.sh (run_prebuilts_download_foundation /

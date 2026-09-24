@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # ==========================================================================
-#  setup-lodestar-service.sh  -  SerenLodestar pointed wrapper
+#  setup-hippocampus-service.sh  -  SerenHippocampus pointed wrapper (Linux + macOS)
 #
-#  Was setup-runtimehost-service.sh (.NET) - renamed when runtimehost → lodestar
-#  on PyPI. Now a Python service using the shared generic core
-#  (setup-seren-service.sh). Follows the Memory/Loci service-wrapper pattern.
+#  The CONVENTION half of the generic-core / pointed-wrapper split. Knows
+#  what a SerenHippocampus install looks like (dirs, instance suffix, module)
+#  and hands it to setup-seren-service.sh, which does the systemd/launchd work.
+#
+#  INSTANCE CONVENTION (mirrors seren-hippocampus-setup.sh):
+#    --instance Test suffixes everything:
+#      Service:  seren-hippocampusTest
+#      Venv:     ~/seren-venvs/hippocampusTest
+#      AppDir:   ~/seren-hippocampusTest
+#      Config:   ~/seren-hippocampusTest/seren-hippocampus.yaml
+#
+#  No MemoryMax fence: the hippocampus holds no store and no model; it is a
+#  scheduler with an HTTP client.
 #
 #  FLAGS
 #    --instance NAME   Instance name                 (default: "")
@@ -21,8 +31,6 @@ VENV_DIR=""
 APP_DIR=""
 CFG_PATH=""
 HEALTH_PORT=0
-# Empty = run as the invoking user, which is the only default that keeps ~ in
-# the config resolving to the home the installer just wrote into.
 SERVICE_USER=""
 
 while [[ $# -gt 0 ]]; do
@@ -33,20 +41,19 @@ while [[ $# -gt 0 ]]; do
     --config)      CFG_PATH="$2"; shift 2 ;;
     --health-port) HEALTH_PORT="$2"; shift 2 ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
-    -h|--help)     sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)     sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)             echo "unknown flag: $1  (try --help)" >&2; exit 1 ;;
   esac
 done
 
-# -- identity lines ------------------------------------------------------------
-SERVICE_NAME="seren-lodestar$INSTANCE"
-MODULE="seren_lodestar"
-[[ -n "$VENV_DIR" ]] || VENV_DIR="$HOME/seren-venvs/lodestar$INSTANCE"
-[[ -n "$APP_DIR"  ]] || APP_DIR="$HOME/seren-lodestar$INSTANCE"
-[[ -n "$CFG_PATH" ]] || CFG_PATH="$APP_DIR/seren-lodestar.yaml"
+SERVICE_NAME="seren-hippocampus$INSTANCE"
+MODULE="seren_hippocampus"
+[[ -n "$VENV_DIR" ]] || VENV_DIR="$HOME/seren-venvs/hippocampus$INSTANCE"
+[[ -n "$APP_DIR"  ]] || APP_DIR="$HOME/seren-hippocampus$INSTANCE"
+[[ -n "$CFG_PATH" ]] || CFG_PATH="$APP_DIR/seren-hippocampus.yaml"
 
-# -- delegate to the shared generic core ----------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 find_upward() {
   local rel="$1" dir="${2:-$SCRIPT_DIR}"
   while [[ "$dir" != "/" && -n "$dir" ]]; do
@@ -58,7 +65,8 @@ find_upward() {
 
 CORE="$(find_upward "services/lib/setup-seren-service.sh")"
 if [[ ! -f "$CORE" ]]; then
-  echo "ERROR: setup-seren-service.sh not found." >&2; exit 1
+  echo "ERROR: setup-seren-service.sh not found walking up from this script ($SCRIPT_DIR)." >&2
+  exit 1
 fi
 
 exec bash "$CORE" \
@@ -69,5 +77,5 @@ exec bash "$CORE" \
   --config       "$CFG_PATH" \
   --health-port  "$HEALTH_PORT" \
   --service-user "$SERVICE_USER" \
-  --health-path  /api/v1/system/ping \
-  --description  "SerenLodestar$INSTANCE - cluster head / orchestrator"
+  --memory-max   none \
+  --description  "SerenHippocampus$INSTANCE - the sleep cycle for SerenMemory"

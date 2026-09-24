@@ -2,13 +2,16 @@
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-probe-setup.ps1  -  one-shot SerenProbe installer (Windows)
 #
-#  Local-only memory (RAG) Evaluation probe. No MCP, no TLS, no bearer token —
-#  it's a private infra tool that only binds to 127.0.0.1.
+#  Memory (RAG) evaluation harness. Binds to 127.0.0.1 by default; beyond
+#  loopback it wants a bearer (-Token / -GenToken) or refuses to start.
+#  -Mcp adds the MCP surface for a connected model; -Corp adds OS-trust-store
+#  TLS for intercepting proxies.
 #
 #  USAGE
 #    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1
-#    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -Service
+#    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -Service -GenToken
 #    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -Wheel .\seren_probe-0.1.0-py3-none-any.whl
+#    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -Local D:\serenDaemon\SerenCore\.dev-wheelhouse   # dev builds from seren-dev-publish.ps1
 #    powershell -ExecutionPolicy Bypass -File .\seren-probe-setup.ps1 -NoUpdates  # turn update checking off
 # ══════════════════════════════════════════════════════════════════════════
 #>
@@ -16,7 +19,10 @@
 param(
   [int]    $Port      = 7430,
   [string] $ProbeHost = "127.0.0.1",
+  [string] $Token     = "",
+  [switch] $GenToken,
   [string] $Wheel     = "",
+  [string] $Local     = "",
   [string] $Ref       = "",
   [string] $Repo      = "",
   [switch] $Service,
@@ -66,7 +72,7 @@ if ($Describe) {
         Description = 'Memory (RAG) Evaluation'
         Group       = 'auxiliary'
         Package     = 'seren-probe'
-        Accent      = '#7fd88f'
+        Accent      = '#8fffb4'
         DefaultHost = $ProbeHost
         DefaultPort = $Port
     }
@@ -80,7 +86,7 @@ $AppDir  = "$env:USERPROFILE\seren-probe$Instance"
 $CfgPath = "$AppDir\seren-probe.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7430) {
-  Warn "Instance '$Instance' uses default port 7430 — may collide."
+  Warn "Instance '$Instance' uses default port 7430 - may collide."
 }
 
 Write-Host "==========================================" -ForegroundColor Green
@@ -94,7 +100,7 @@ $global:pyInfo = $pyInfo
 if ($Ref -and -not $Repo) { $Repo = "ChadRoesler/SerenProbe" }
 
 # -- 2. resolve wheel ----------------------------------------------------------
-$wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-probe"
+$wr = Resolve-Wheel -Wheel $Wheel -Local $Local -Ref $Ref -Repo $Repo -Package "seren-probe"
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
@@ -102,12 +108,16 @@ $extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp
 Install-Package -Vpy $vpy -WheelSrc $wr.Src -Extras $extras -Label ""
 if ($wr.Cleanup) { Remove-Item -Force $wr.Src -ErrorAction SilentlyContinue }
 
-# -- 4. sanity check (import + viewer/probe.html) -----------------------------
-Sanity-Check -Vpy $vpy -Module "seren_probe" -AssetRelPath "viewer/probe.html" -AssetLabel "viewer"
+# -- 4. sanity check (import + the viewer fragments) --------------------------
+# The dashboard is rendered from viewer/ui/*.html through the shared Meninges
+# shell; there has never been a viewer/probe.html, so the old check warned on
+# every single install.
+Sanity-Check -Vpy $vpy -Module "seren_probe" -AssetRelPath "viewer/ui/body.html" -AssetLabel "viewer"
 
 # -- 5. config --------------------------------------------------------------
 Step "Writing config at $CfgPath"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+if ($GenToken) { $Token = & $vpy -c "import secrets; print(secrets.token_urlsafe(32))" }
 if (Test-Path $CfgPath) {
   $bak = "$CfgPath.bak.$([int][double]::Parse((Get-Date -UFormat %s)))"
   Copy-Item $CfgPath $bak
@@ -119,10 +129,12 @@ if (Test-Path $CfgPath) {
 server:
   host: $ProbeHost
   port: $Port
-
-storage:
-  db_path: ~/.seren-probe$Instance/probe.db
+  bearer_token: "$Token"
+$(if ($Corp) { "tls:`n  trust_system_store: true`n" })
 "@ | Write-SerenTextFile -Path $CfgPath
+# No storage block: SerenProbe keeps its topology state and results under
+# ~/.seren-probe/ on its own and reads no db_path.
+if ($Token) { & $vpy -c "import os,stat; os.chmod('$CfgPath', 0o600)" 2>$null }
 Ok "Config written"
 
 if ($NoUpdates) {
@@ -144,7 +156,10 @@ updates:
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-probe" -Vpy $vpy -Module "seren_probe" -CfgPath $CfgPath
 
 # -- 6. optional autostart ----------------------------------------------------
-if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-probe" -AppDir $AppDir -Token "" -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem }
+if ($Service) {
+  if ($Token) { "$Token" | Write-SerenTextFile -Path "$AppDir\seren-probe.env" }
+  Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-probe" -AppDir $AppDir -Token $Token -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem
+}
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($ProbeHost -eq "0.0.0.0") { "127.0.0.1" } else { $ProbeHost }
@@ -155,8 +170,10 @@ Write-Host "==========================================" -ForegroundColor Green
 if (-not $Service) {
   Write-Host "  Start it:        $launcher" -ForegroundColor Blue
 }
-Write-Host "  Dashboard:        http://${connectHost}:$Port/probe" -ForegroundColor Blue
+Write-Host "  Dashboard:        http://${connectHost}:$Port/viewer" -ForegroundColor Blue
 Write-Host "  Health:           http://${connectHost}:$Port/health" -ForegroundColor Blue
+if ($Token) { Write-Host "  Bearer token:     $Token" -ForegroundColor Yellow }
+if ($Mcp)   { Write-Host "  MCP endpoint:     http://${connectHost}:$Port/mcp/" -ForegroundColor Blue }
 Write-Host "Rip it and win. 🌭🔧" -ForegroundColor Green
 
 # -- Starwright contract: structured completion event -------------------------
@@ -165,9 +182,9 @@ $doneArgs = @{
     ConnectHost = $connectHost
     Port        = $Port
     Autostart   = ([bool] $Service)
-    Token       = ""
-    Mcp         = $false
-    Corp        = $false
+    Token       = $Token
+    Mcp         = ([bool] $Mcp)
+    Corp        = ([bool] $Corp)
     Vector      = $false
     Venv        = $VenvDir
     Config      = $CfgPath

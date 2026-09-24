@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# nano/foundation.sh — Orin Nano (jp6/R36) OS prereq phases
+# nano/foundation.sh - Orin Nano (jp6/R36) OS prereq phases
 #
 # Sourced by seren-prepare-node.sh. Defines run_foundation() for Nano.
 #
@@ -11,15 +11,24 @@
 #   - JetPack 6 ships everything we need at the OS level
 #
 # Phases:
-#   01_nano_os_trim    — disable bloat, install build essentials
-#   02_nano_cuda_nvcc  — ensure cuda-nvcc-12-6 (often missing from base flash)
-#   03_nano_nvme       — mount NVMe + swap + pip relocation (if NVMe present)
+#   01_nano_os_trim    - disable bloat, install build essentials
+#   02_nano_cuda_nvcc  - ensure cuda-nvcc-12-6 (often missing from base flash)
+#   03_nano_nvme       - mount NVMe + swap + pip relocation (if NVMe present)
 # ══════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────
-# Phase 1 — OS trim (lighter than Xavier, Ubuntu 22.04 base)
+# Phase 1 - OS trim (lighter than Xavier, Ubuntu 22.04 base)
 # ─────────────────────────────────────────────────────────────
 phase_nano_os_trim() {
+    # CONSENT. This phase removes the desktop, docker and snap and sets the
+    # default target to multi-user: correct for a dedicated node, unforgivable
+    # as a side effect. It runs only with --trim-os; otherwise it skips and
+    # says so on the console, where the prompt would have been.
+    if [ "${TRIM_OS:-false}" != "true" ]; then
+        warn "OS trim SKIPPED: pass --trim-os to remove the desktop, docker and snap (headless node)"
+        echo -e "${YELLOW}[SEREN]${NC} OS trim skipped - pass --trim-os to make this a headless node" >&3 2>/dev/null || true
+        return 0
+    fi
     sudo systemctl set-default multi-user.target
     sudo systemctl disable gdm3.service lightdm.service 2>/dev/null || true
 
@@ -87,7 +96,7 @@ phase_nano_os_trim() {
         || warn "some optional packages did not install - see above"
 
     if ! command -v python3.10 &>/dev/null; then
-        fail "python3.10 not found after apt install — JetPack 6 should ship this"
+        fail "python3.10 not found after apt install - JetPack 6 should ship this"
         return 1
     fi
     # STATED, so ensure_venv does not have to guess - it probes as a fallback,
@@ -101,7 +110,7 @@ phase_nano_os_trim() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 2 — Ensure cuda-nvcc-12-6 is installed
+# Phase 2 - Ensure cuda-nvcc-12-6 is installed
 # ─────────────────────────────────────────────────────────────
 # JetPack 6 ships CUDA 12.6 runtime but cuda-nvcc-12-6 is sometimes a
 # separate package that doesn't get installed by the base flash.
@@ -115,14 +124,14 @@ phase_nano_cuda_nvcc() {
 
     log "Installing cuda-nvcc-12-6 explicitly..."
     sudo apt install -y cuda-nvcc-12-6 2>/dev/null || {
-        warn "cuda-nvcc-12-6 not found via apt — adding NVIDIA CUDA repo..."
+        warn "cuda-nvcc-12-6 not found via apt - adding NVIDIA CUDA repo..."
         cd /tmp
         wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/cuda-keyring_1.1-1_all.deb
         sudo dpkg -i cuda-keyring_1.1-1_all.deb
         rm -f cuda-keyring_1.1-1_all.deb
         sudo apt-get update
         sudo apt-get install -y cuda-nvcc-12-6 || \
-            fail "Could not install cuda-nvcc-12-6 — manual intervention needed"
+            fail "Could not install cuda-nvcc-12-6 - manual intervention needed"
     }
 
     # PATH for nvcc (bashrc persistence)
@@ -137,14 +146,14 @@ EOF
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 3 — NVMe + swap + pip relocation (only if NVMe present)
+# Phase 3 - NVMe + swap + pip relocation (only if NVMe present)
 # ─────────────────────────────────────────────────────────────
 # Nano often has NVMe but isn't required for it (microSD boot is supported).
-# If no NVMe, skip this phase — the Nano's onboard storage is bigger than
+# If no NVMe, skip this phase - the Nano's onboard storage is bigger than
 # Xavier's 32GB eMMC, so it's less critical.
 phase_nano_nvme() {
     if ! lsblk | grep -q nvme0n1; then
-        info "No NVMe detected — skipping NVMe phase (Nano has more onboard storage than Xavier)"
+        info "No NVMe detected - skipping NVMe phase (Nano has more onboard storage than Xavier)"
         mkdir -p ~/models
         return 0
     fi
@@ -152,15 +161,28 @@ phase_nano_nvme() {
     if ! mount | grep -q "/mnt/nvme"; then
         local NEED_FORMAT=false
         if ! lsblk | grep -q nvme0n1p1; then
-            log "No nvme0n1p1 partition — creating fresh"
+            log "No nvme0n1p1 partition - creating fresh"
             NEED_FORMAT=true
         elif ! sudo blkid /dev/nvme0n1p1 | grep -q 'TYPE="ext4"'; then
             local CURRENT_FS
             CURRENT_FS=$(sudo blkid /dev/nvme0n1p1 -o value -s TYPE 2>/dev/null || echo "unknown")
-            warn "nvme0n1p1 has filesystem '$CURRENT_FS' (expected ext4) — reformatting"
+            warn "nvme0n1p1 has filesystem '$CURRENT_FS' (expected ext4) - reformatting"
             NEED_FORMAT=true
         fi
 
+        if $NEED_FORMAT && [ "${WIPE_NVME:-false}" != "true" ]; then
+            # STOP, do not format. The disk is not ext4 (or not partitioned),
+            # and nobody said it could be wiped. Say exactly what would happen
+            # and how to allow it, on the console as well as in the log.
+            local dev_state
+            dev_state="$(lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT /dev/nvme0n1 2>/dev/null | sed 's/^/      /')"
+            echo -e "${RED}[SEREN]${NC} NVMe /dev/nvme0n1 is not an ext4 data disk and --wipe-nvme was not given." >&3 2>/dev/null || true
+            echo -e "${RED}[SEREN]${NC} Prep will NOT format it. Current state:" >&3 2>/dev/null || true
+            echo "$dev_state" >&3 2>/dev/null || true
+            echo -e "${RED}[SEREN]${NC} If this disk is yours to erase, re-run with --wipe-nvme (everything on it is lost)." >&3 2>/dev/null || true
+            fail "NVMe needs formatting and --wipe-nvme was not given. Refusing to wipe /dev/nvme0n1."
+            return 1
+        fi
         if $NEED_FORMAT; then
             sudo wipefs -a /dev/nvme0n1 2>/dev/null || true
             sudo wipefs -a /dev/nvme0n1p1 2>/dev/null || true
@@ -181,7 +203,7 @@ phase_nano_nvme() {
         echo '/dev/nvme0n1p1 /mnt/nvme ext4 defaults 0 2' | sudo tee -a /etc/fstab >/dev/null
     fi
 
-    # 8GB swap on NVMe (smaller than Xavier — Nano is 8GB unified, less need)
+    # 8GB swap on NVMe (smaller than Xavier - Nano is 8GB unified, less need)
     if ! swapon --show | grep -q nvme; then
         sudo swapoff -a 2>/dev/null || true
         sudo fallocate -l 8G /mnt/nvme/8GB.swap
@@ -194,7 +216,7 @@ phase_nano_nvme() {
 
     sudo -u "$TARGET_USER" mkdir -p /mnt/nvme/models /mnt/nvme/pip-packages /mnt/nvme/pip-cache
 
-    # Idempotent pip relocation — same pattern as Xavier
+    # Idempotent pip relocation - same pattern as Xavier
     local USER_HOME="/home/$TARGET_USER"
 
     if [ -d "$USER_HOME/.local/lib" ] && [ ! -L "$USER_HOME/.local/lib" ]; then
@@ -207,7 +229,7 @@ phase_nano_nvme() {
         sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local"
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-packages/lib "$USER_HOME/.local/lib"
     else
-        log "~/.local/lib already symlinked — skipping"
+        log "~/.local/lib already symlinked - skipping"
     fi
 
     if [ -d "$USER_HOME/.local/bin" ] && [ ! -L "$USER_HOME/.local/bin" ]; then
@@ -219,7 +241,7 @@ phase_nano_nvme() {
         sudo -u "$TARGET_USER" mkdir -p /mnt/nvme/pip-packages/bin
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-packages/bin "$USER_HOME/.local/bin"
     else
-        log "~/.local/bin already symlinked — skipping"
+        log "~/.local/bin already symlinked - skipping"
     fi
 
     if [ -d "$USER_HOME/.cache/pip" ] && [ ! -L "$USER_HOME/.cache/pip" ]; then
@@ -231,7 +253,7 @@ phase_nano_nvme() {
         sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.cache"
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-cache "$USER_HOME/.cache/pip"
     else
-        log "~/.cache/pip already symlinked — skipping"
+        log "~/.cache/pip already symlinked - skipping"
     fi
 }
 
@@ -239,10 +261,10 @@ phase_nano_nvme() {
 # Foundation entry point
 # ─────────────────────────────────────────────────────────────
 run_foundation() {
-    # Phase 0 runs first — Orin Nano Super gets a meaningful boost
+    # Phase 0 runs first - Orin Nano Super gets a meaningful boost
     # (15W default → 25W MAXN). Skipped if --no-max-power.
-    run_phase "00_max_power"      "Phase 0 — Max power mode"     phase_max_power
-    run_phase "01_nano_os_trim"   "Phase 1 — OS trim"            phase_nano_os_trim
-    run_phase "02_nano_cuda_nvcc" "Phase 2 — cuda-nvcc-12-6"     phase_nano_cuda_nvcc
-    run_phase "03_nano_nvme"      "Phase 3 — NVMe + swap + pip"  phase_nano_nvme
+    run_phase "00_max_power"      "Phase 0 - Max power mode"     phase_max_power
+    run_phase "01_nano_os_trim"   "Phase 1 - OS trim"            phase_nano_os_trim
+    run_phase "02_nano_cuda_nvcc" "Phase 2 - cuda-nvcc-12-6"     phase_nano_cuda_nvcc
+    run_phase "03_nano_nvme"      "Phase 3 - NVMe + swap + pip"  phase_nano_nvme
 }

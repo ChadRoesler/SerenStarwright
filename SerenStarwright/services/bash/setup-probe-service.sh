@@ -2,7 +2,7 @@
 # ==========================================================================
 #  setup-probe-service.sh  -  SerenProbe pointed wrapper (Linux + macOS)
 #
-#  Local-only probe — no bearer token, no env-file, no env vars.
+#  Local-only probe - no bearer token, no env-file, no env vars.
 #  Follows the Margin pattern (private, localhost-only).
 #
 #  INSTANCE CONVENTION (mirrors seren-probe-setup.sh):

@@ -2,7 +2,7 @@
 # ==========================================================================
 #  seren-workbench-setup.sh  -  one-shot SerenWorkbench installer (Linux + macOS)
 #
-#  The user-facing MCP/IDE — was seren-mcp (.NET), now seren-workbench on PyPI.
+#  The user-facing MCP/IDE - was seren-mcp (.NET), now seren-workbench on PyPI.
 #  Follows the Memory/Loci pattern (template leaders).
 #
 #  USAGE
@@ -19,6 +19,7 @@
 #    --token TOKEN    Set a bearer token
 #    --gen-token      Generate a random bearer token
 #    --wheel PATH     Install from a local .whl
+#    --local DIR|URL  Install from a dev wheelhouse (seren-dev-publish.sh)
 #    --ref TAG        Pin to a GitHub release tag
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via setup-workbench-service.sh
@@ -65,6 +66,7 @@ HOST="127.0.0.1"
 TOKEN=""
 GEN_TOKEN=false
 WHEEL=""
+LOCAL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
@@ -105,6 +107,7 @@ while [[ $# -gt 0 ]]; do
     --token)     TOKEN="$2"; shift 2 ;;
     --gen-token) GEN_TOKEN=true; shift ;;
     --wheel)     WHEEL="$2"; shift 2 ;;
+    --local)     LOCAL="$2"; shift 2 ;;
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
@@ -125,7 +128,7 @@ VENV_DIR="$VENV_DIR$INSTANCE"
 APP_DIR="$APP_DIR$INSTANCE"
 CFG_PATH="$APP_DIR/seren-workbench.yaml"
 CONNECT_HOST="$HOST"; [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
-[[ -n "$INSTANCE" && "$PORT" == "7425" ]] && warn "Instance '$INSTANCE' using default port 7425 — may collide."
+[[ -n "$INSTANCE" && "$PORT" == "7425" ]] && warn "Instance '$INSTANCE' using default port 7425 - may collide."
 
 echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenWorkbench setup (macOS)${NC}" || echo -e "${G}  SerenWorkbench setup (Linux)${NC}"
