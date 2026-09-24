@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# nano/build.sh — Build artifacts from source (Nano, --build flag)
+# nano/build.sh - Build artifacts from source (Nano, --build flag)
 #
 # Sourced by seren-prepare-node.sh when --build is passed. Same pattern as
 # xavier/build.sh but skips python/sqlite (Nano gets those natively).
@@ -24,7 +24,7 @@ run_build_path() {
         sudo -u "$TARGET_USER" git clone "$PREBUILT_REPO" repo
     fi
 
-    # Map service flags → build-prebuilts.sh flags
+    # Map service flags → build-jetson-prebuilts.sh flags
     local BUILD_FLAGS=()
     $INSTALL_LLAMA   && BUILD_FLAGS+=("--llama")
     if $INSTALL_COMFYUI; then
@@ -33,24 +33,26 @@ run_build_path() {
     $INSTALL_CORAL && BUILD_FLAGS+=("--coral")
 
     if [ ${#BUILD_FLAGS[@]} -eq 0 ]; then
-        warn "No services need build artifacts — skipping build"
+        warn "No services need build artifacts - skipping build"
         return 0
     fi
 
-    # Nano has 8GB unified — cap parallelism for pytorch builds
+    # Nano has 8GB unified - cap parallelism for pytorch builds
     if $INSTALL_COMFYUI; then
-        log "Nano has 8GB unified memory — capping --max-jobs 2 for pytorch build"
+        log "Nano has 8GB unified memory - capping --max-jobs 2 for pytorch build"
         BUILD_FLAGS+=("--max-jobs" "2")
     fi
 
-    log "Running build-prebuilts.sh ${BUILD_FLAGS[*]} — this takes hours."
+    log "Running build-jetson-prebuilts.sh ${BUILD_FLAGS[*]} - this takes hours."
     cd "$PREBUILT_DIR/repo"
-    sudo -u "$TARGET_USER" bash ./build-prebuilts.sh "${BUILD_FLAGS[@]}"
+    sudo -u "$TARGET_USER" bash ./build-jetson-prebuilts.sh "${BUILD_FLAGS[@]}"
 
     # Auto-discover and stage produced artifacts
+    # The builder writes into a PER-PLATFORM folder now: <output>/orin-${JP_FAMILY}/.
     local PB_OUT
     if [ -d /mnt/nvme/prebuilt ]; then PB_OUT=/mnt/nvme/prebuilt
     else PB_OUT="/home/$TARGET_USER/prebuilt"; fi
+    [ -d "$PB_OUT/orin-${JP_FAMILY}" ] && PB_OUT="$PB_OUT/orin-${JP_FAMILY}"
 
     cd "$PREBUILT_DIR"
 
@@ -70,8 +72,12 @@ run_build_path() {
         local FOUND_TORCH FOUND_TVISION
         FOUND_TORCH=$(find "$PB_OUT" -maxdepth 1 -type f -name 'torch-*cp310*aarch64.whl' | head -1 || true)
         FOUND_TVISION=$(find "$PB_OUT" -maxdepth 1 -type f -name 'torchvision-*cp310*aarch64.whl' | head -1 || true)
-        [ -n "$FOUND_TORCH" ]   && cp -f "$FOUND_TORCH"   "$PREBUILT_DIR/$PREBUILT_TORCH_WHL"
-        [ -n "$FOUND_TVISION" ] && cp -f "$FOUND_TVISION" "$PREBUILT_DIR/$PREBUILT_TVISION_WHL_LOCAL"
+        # UNDER THEIR OWN NAMES. A wheel copied to a hardcoded filename fails
+        # pip's name/metadata check the moment the built version or the
+        # torchvision local tag differs from the guess (it did: +fbb4cc5 is the
+        # Xavier's commit and this file used it for every platform).
+        [ -n "$FOUND_TORCH" ]   && cp -f "$FOUND_TORCH"   "$PREBUILT_DIR/" && PREBUILT_TORCH_WHL="$(basename "$FOUND_TORCH")"
+        [ -n "$FOUND_TVISION" ] && cp -f "$FOUND_TVISION" "$PREBUILT_DIR/" && PREBUILT_TVISION_WHL_LOCAL="$(basename "$FOUND_TVISION")"
     fi
 
     if $INSTALL_CORAL; then

@@ -25,6 +25,7 @@
 #                     generated config as a stages: entry.
 #    --repo-dir PATH  SerenTheatre repo checkout   (default: sibling ../SerenTheatre)
 #    --wheel PATH     Install from a local .whl
+#    --local DIR|URL  Install from a dev wheelhouse (seren-dev-publish.sh)
 #    --pypi           Install seren-theatre from PyPI
 #    --ref TAG        Pin to a GitHub release tag
 #    --repo SLUG      GitHub release repo
@@ -76,6 +77,7 @@ PORT=7427
 HOST="127.0.0.1"
 REPO_DIR="$(find_upward "SerenTheatre" || true)"   # sibling checkout (build source)
 WHEEL=""
+LOCAL=""
 USE_PYPI=false
 REF=""
 REPO=""
@@ -141,6 +143,7 @@ while [[ $# -gt 0 ]]; do
     --stage)     STAGES+=("$2"); shift 2 ;;
     --repo-dir)  REPO_DIR="$2"; shift 2 ;;
     --wheel)     WHEEL="$2"; shift 2 ;;
+    --local)     LOCAL="$2"; shift 2 ;;
     --pypi)      USE_PYPI=true; shift ;;
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
@@ -162,7 +165,7 @@ APP_DIR="$APP_DIR$INSTANCE"
 CFG_PATH="$APP_DIR/seren-theatre.yaml"
 CONNECT_HOST="$HOST"
 [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
-[[ -n "$INSTANCE" && "$PORT" == "7427" ]] && warn "Instance '$INSTANCE' uses default port 7427 — may collide."
+[[ -n "$INSTANCE" && "$PORT" == "7427" ]] && warn "Instance '$INSTANCE' uses default port 7427 - may collide."
 
 # -- 0. preflight: is anyone already sitting in this seat? ---------------------
 # Cheap, non-fatal, and the guard that would have caught 7426. It does NOT scan
@@ -210,7 +213,7 @@ PYBIN="$(find_python)"
 [[ -n "$REF" && -z "$REPO" ]] && REPO="ChadRoesler/SerenTheatre"
 
 # -- 2. resolve what to install ------------------------------------------------
-# Precedence: --wheel > --repo/--ref (GitHub) > --pypi > local build (default)
+# Precedence: --wheel > --local (dev wheelhouse) > --repo/--ref (GitHub) > --pypi > local build (default)
 PACKAGE="seren-theatre"
 WHEEL_SRC=""
 CLEANUP_WHEEL=false
@@ -218,7 +221,7 @@ if [[ -n "$WHEEL" ]]; then
   [[ -f "$WHEEL" ]] || die "wheel not found: $WHEEL"
   WHEEL_SRC="$WHEEL"
   ok "Installing from local wheel: $(basename "$WHEEL")"
-elif [[ -n "$REPO" ]]; then
+elif [[ -n "$LOCAL" || -n "$REPO" ]]; then
   resolve_wheel
 elif $USE_PYPI; then
   WHEEL_SRC="seren-theatre"
@@ -316,7 +319,7 @@ case "$CARD" in
            warn "cross-checks the port and accent below against the package."
            warn "Released before the identity card existed; upgrade to a newer"
            warn "seren-theatre when convenient. The install itself is fine." ;;
-  DESCRIBE_INCOMPLETE*) warn "Installed but $CARD — Starwright's grid will show gaps" ;;
+  DESCRIBE_INCOMPLETE*) warn "Installed but $CARD - Starwright's grid will show gaps" ;;
   *) warn "Identity card is present but broken: $CARD"
      warn "That is a bug in seren-theatre, not in this install - worth"
      warn "reporting. Nothing below is cross-checked as a result." ;;

@@ -4,7 +4,7 @@
 #  Python-module-shaped seren service.
 #
 #  *** THIS IS THE BASE TEMPLATE ***
-#  Memory and Loci are the template leaders — see seren-memory-setup.sh and
+#  Memory and Loci are the template leaders - see seren-memory-setup.sh and
 #  seren-loci-setup.sh for the canonical reference implementations.
 #
 #  This script is the MECHANISM half: it handles Python discovery, venv
@@ -336,12 +336,13 @@ if $INSTALL_SERVICE; then
     # collision above meant INSTALL_SERVICE was never true, so this branch was
     # unreachable and the bug never got a chance to fire. Two defects, the
     # first one hiding the second.
-    venv_flag=""
-    [[ -n "$VENV_DIR" ]] && venv_flag="--venv $VENV_DIR"
-    user_flag=""
-    [[ -n "$SERVICE_USER" ]] && user_flag="--service-user $SERVICE_USER"
+    # ARRAYS, not strings. `$venv_flag` unquoted split a venv path with a
+    # space into two arguments and the wrapper died on the second half.
+    local -a venv_flag=() user_flag=()
+    [[ -n "$VENV_DIR" ]] && venv_flag=(--venv "$VENV_DIR")
+    [[ -n "$SERVICE_USER" ]] && user_flag=(--service-user "$SERVICE_USER")
     # Unquoted on purpose: flag+value pairs that must word-split, empty if unset.
-    bash "$WRAPPER" $venv_flag $user_flag --instance "${INSTANCE}" || die "service install failed"
+    bash "$WRAPPER" "${venv_flag[@]}" "${user_flag[@]}" --instance "${INSTANCE}" || die "service install failed"
   else
     warn "setup-${SERVICE#seren-}-service.sh not found. Run it manually:"
     warn "  bash setup-${SERVICE#seren-}-service.sh --instance '${INSTANCE}'"

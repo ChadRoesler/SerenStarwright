@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  seren-register-services.sh — make this node's Observatory aware of the
+#  seren-register-services.sh - make this node's Observatory aware of the
 #  Seren services already installed on it.
 #
 #  WHY THIS EXISTS
 #  Observatory reports exactly what it finds in ~/.seren/services/*.json and
 #  nothing else. For a long time no installer wrote those files, so a node
-#  could be running six healthy services and its own management plane — and
-#  Lodestar above it — would report an empty box. setup-seren-service.sh now
+#  could be running six healthy services and its own management plane - and
+#  Lodestar above it - would report an empty box. setup-seren-service.sh now
 #  writes a manifest as part of installing a unit; this script is the backfill
 #  for everything installed before that, so nobody has to reinstall a working
 #  service just to be seen.
 #
 #  EVERYTHING IS DERIVED FROM THE RUNNING SYSTEM. The unit list comes from
 #  systemd, the config path comes out of the unit's own ExecStart, and the port
-#  comes out of that config file. No table of service names, no assumed ports —
+#  comes out of that config file. No table of service names, no assumed ports -
 #  those are the things that drift, and a manifest that lies about a port is
 #  worse than no manifest, because the health check then fails convincingly.
 #
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-command -v systemctl >/dev/null 2>&1 || die "no systemctl — this is for systemd nodes"
+command -v systemctl >/dev/null 2>&1 || die "no systemctl - this is for systemd nodes"
 
 SERVICES_DIR="$HOME/.seren/services"
 HEALTH_PATH="/health"
@@ -89,7 +89,7 @@ PY
   status="write"
   if [[ -f "$target" ]] && ! $FORCE; then status="exists (use --force)"; fi
   if [[ "$port" == "0" ]]; then
-    warn "$name: couldn't resolve a port${cfg:+ from $cfg} — writing port 0, health check will be skipped"
+    warn "$name: couldn't resolve a port${cfg:+ from $cfg} - writing port 0, health check will be skipped"
   fi
 
   printf "  %-26s port=%-6s unit=%-28s %s\n" "$name" "$port" "$unit" "$status"
@@ -117,8 +117,8 @@ done
 echo
 if $APPLY; then
   ok "wrote $WROTE manifest(s), skipped $SKIPPED  ->  $SERVICES_DIR"
-  echo -e "  Observatory picks these up on the NEXT REQUEST — no restart needed."
+  echo -e "  Observatory picks these up on the NEXT REQUEST - no restart needed."
   echo -e "  Check it:  ${B}curl -s http://127.0.0.1:7777/api/v1/system/services${NC}"
 else
-  warn "dry run — nothing written. Re-run with --apply."
+  warn "dry run - nothing written. Re-run with --apply."
 fi

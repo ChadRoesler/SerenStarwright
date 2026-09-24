@@ -34,6 +34,7 @@ param(
   # fresh install lands on something real instead of an empty room.
   [string[]] $Stage       = @(),
   [string]   $Wheel       = "",
+  [string]   $Local       = "",
   [string]   $Ref         = "",
   [string]   $Repo        = "",
   [string]   $RepoDir     = "",
@@ -115,7 +116,7 @@ $AppDir  = "$env:USERPROFILE\seren-theatre$Instance"
 $CfgPath = "$AppDir\seren-theatre.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7427) {
-  Warn "Instance '$Instance' uses default port 7427 — may collide."
+  Warn "Instance '$Instance' uses default port 7427 - may collide."
 }
 
 Write-Host "==========================================" -ForegroundColor Green
@@ -138,8 +139,8 @@ if ($Wheel) {
   if (-not (Test-Path $Wheel)) { Die "wheel not found: $Wheel" }
   $wheelSrc = (Resolve-Path $Wheel).Path
   Ok "Installing from local wheel: $(Split-Path $wheelSrc -Leaf)"
-} elseif ($Repo) {
-  $wr = Resolve-Wheel -Wheel $Wheel -Ref $Ref -Repo $Repo -Package "seren-theatre"
+} elseif ($Local -or $Repo) {
+  $wr = Resolve-Wheel -Wheel $Wheel -Local $Local -Ref $Ref -Repo $Repo -Package "seren-theatre"
   $wheelSrc = $wr.Src
   $cleanupWheel = $wr.Cleanup
 } elseif ($Pypi) {

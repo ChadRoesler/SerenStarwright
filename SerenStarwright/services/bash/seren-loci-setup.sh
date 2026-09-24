@@ -17,6 +17,7 @@
 #    --token TOKEN    Set a bearer token
 #    --gen-token      Generate a random bearer token
 #    --wheel PATH     Install from a local .whl
+#    --local DIR|URL  Install from a dev wheelhouse (seren-dev-publish.sh)
 #    --ref TAG        Pin to a GitHub release tag
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via systemd/launchd
@@ -64,6 +65,7 @@ HOST="127.0.0.1"
 TOKEN=""
 GEN_TOKEN=false
 WHEEL=""
+LOCAL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
@@ -102,6 +104,7 @@ while [[ $# -gt 0 ]]; do
     --token)     TOKEN="$2"; shift 2 ;;
     --gen-token) GEN_TOKEN=true; shift ;;
     --wheel)     WHEEL="$2"; shift 2 ;;
+    --local)     LOCAL="$2"; shift 2 ;;
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
@@ -124,7 +127,7 @@ APP_DIR="$APP_DIR$INSTANCE"
 CFG_PATH="$APP_DIR/seren-loci.yaml"
 CONNECT_HOST="$HOST"
 [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
-[[ -n "$INSTANCE" && "$PORT" == "7422" ]] && warn "Instance '$INSTANCE' uses default port 7422 — may collide."
+[[ -n "$INSTANCE" && "$PORT" == "7422" ]] && warn "Instance '$INSTANCE' uses default port 7422 - may collide."
 
 echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenLoci setup (macOS)${NC}" || echo -e "${G}  SerenLoci setup (Linux)${NC}"
@@ -167,7 +170,7 @@ PY
 )"
 case "$CHECK" in
   OK) ok "Package imports and the viewer asset is present" ;;
-  VIEWER_MISSING) warn "Package installed but loci.html is missing — /viewer will 404 (wheel-packaging regression)" ;;
+  VIEWER_MISSING) warn "Package installed but loci.html is missing - /viewer will 404 (wheel-packaging regression)" ;;
   *) die "Install looks broken: $CHECK" ;;
 esac
 

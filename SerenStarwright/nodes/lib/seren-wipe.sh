@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# seren-wipe.sh — Reset a node back to pre-seren state
+# seren-wipe.sh - Reset a node back to pre-seren state
 #
 # Removes everything seren-prepare-node.sh installs:
 #   - All venvs at /mnt/nvme/seren-venvs/* and ~/seren-venvs/*
@@ -8,13 +8,14 @@
 #   - Staged prebuilts: ~/seren-prebuilts/
 #   - User pip packages on NVMe: /mnt/nvme/pip-packages/, /mnt/nvme/pip-cache/
 #   - Persistence dirs: ~/seren-memory/
-#   - Phase tracker: .seren-setup.state.json
+#   - Phase tracker: ~/.seren/node-state.json (and the legacy
+#     .seren-setup.state.json, for a node prepped before it moved)
 #
 # Optionally (with --deep):
 #   - Removes /usr/local/bin/python3.10 + /usr/local/lib/python3.10
 #   - Removes /usr/local/{bin,lib,include,share}/sqlite3 stuff (Xavier only)
 #   - Removes seren-max-power.service systemd unit
-#   - Removes /etc/sudoers.d/seren
+#   - Removes /etc/sudoers.d/seren and /usr/local/sbin/seren-systemctl
 #   - Removes hostname customization (resets to localhost)
 #
 # Does NOT touch:
@@ -93,7 +94,7 @@ USER_HOME="/home/$TARGET_USER"
 [ "$TARGET_USER" = "root" ] && USER_HOME="/root"
 
 # ─────────────────────────────────────────────────────────────
-# Build the target list — what we'd remove
+# Build the target list - what we'd remove
 # ─────────────────────────────────────────────────────────────
 SHALLOW_TARGETS=(
     # Venvs (NVMe-backed + home symlinks)
@@ -120,10 +121,20 @@ SHALLOW_TARGETS=(
     "$USER_HOME/test-coral.sh"
 )
 
-# Phase tracker + log files — discovered dynamically since the script can
-# live anywhere (~/setup, ~/seren-v5, /opt/seren, wherever). We search the
-# user's home dir + common locations rather than hardcoding a path.
+# Phase tracker + log files.
+#
+# THE TRACKER MUST GO, and it has a fixed home now. Phase state moved from a file
+# beside the script to ~/.seren/node-state.json precisely so it would survive a
+# re-clone - which means a wipe that misses it leaves the node claiming to be
+# prepared, and the next seren-prepare-node.sh run skips every foundation phase
+# on a box that no longer has a foundation. Named explicitly rather than left to
+# the find below, because "node-state.json" is a generic enough filename that
+# matching it anywhere under a home directory could hit something unrelated.
 STATE_FILES=()
+[ -f "$USER_HOME/.seren/node-state.json" ] && STATE_FILES+=("$USER_HOME/.seren/node-state.json")
+
+# The legacy per-checkout tracker and the logs are still discovered dynamically,
+# since a checkout can live anywhere (~/setup, ~/seren-v5, /opt/seren, wherever).
 while IFS= read -r f; do
     [ -n "$f" ] && STATE_FILES+=("$f")
 done < <(
@@ -157,7 +168,7 @@ DEEP_TARGETS=(
     "/usr/local/share/man/man1/sqlite3.1"
 )
 
-# ~/.local is a symlink (created by foundation phase 6) — wipe contents not the symlink
+# ~/.local is a symlink (created by foundation phase 6) - wipe contents not the symlink
 LOCAL_DIRS=(
     "$USER_HOME/.local/lib/python3.10"
     "$USER_HOME/.local/bin"
@@ -168,7 +179,7 @@ LOCAL_DIRS=(
 # ─────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}══════════════════════════════════════════${NC}"
-echo -e "${GREEN}  Seren Wipe — preview${NC}"
+echo -e "${GREEN}  Seren Wipe - preview${NC}"
 echo -e "${GREEN}══════════════════════════════════════════${NC}"
 echo ""
 log "Target user:   $TARGET_USER"
@@ -233,7 +244,7 @@ echo -e "  ${BLUE}·${NC} JetPack, kernel, CUDA toolkit"
 echo ""
 
 if $DRY_RUN; then
-    log "Dry run — exiting without removing anything."
+    log "Dry run - exiting without removing anything."
     exit 0
 fi
 
@@ -269,10 +280,10 @@ for t in "${SHALLOW_TARGETS[@]}"; do remove_path "$t"; done
 # Phase tracker + logs (discovered earlier)
 for t in "${STATE_FILES[@]}"; do remove_path "$t"; done
 
-# User-local pip leftovers — careful with the .local/bin symlink itself
+# User-local pip leftovers - careful with the .local/bin symlink itself
 for t in "${LOCAL_DIRS[@]}"; do
     if [ -L "$t" ]; then
-        # It's a symlink to NVMe — kill the symlink, the target is already gone
+        # It's a symlink to NVMe - kill the symlink, the target is already gone
         sudo rm -f "$t"
         log "removed symlink: $t"
     else
@@ -298,10 +309,14 @@ if $DEEP; then
         log "removed: seren-max-power.service"
     fi
 
-    # sudoers
+    # sudoers, and the helper it names
     if [ -f /etc/sudoers.d/seren ]; then
         sudo rm -f /etc/sudoers.d/seren
         log "removed: /etc/sudoers.d/seren"
+    fi
+    if [ -f /usr/local/sbin/seren-systemctl ]; then
+        sudo rm -f /usr/local/sbin/seren-systemctl
+        log "removed: /usr/local/sbin/seren-systemctl"
     fi
 
     # hostname

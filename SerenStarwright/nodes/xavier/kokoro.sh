@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# xavier/kokoro.sh — Install Kokoro-FastAPI TTS (Xavier)
+# xavier/kokoro.sh - Install Kokoro-FastAPI TTS (Xavier)
 #
 # Sourced by seren-prepare-node.sh. Defines install_kokoro().
 #
@@ -10,7 +10,7 @@
 #   - transformers==4.45.2     (last version compatible with hub 0.23.5)
 #   - numpy==1.26.1            (matches our PyTorch 2.1.0 ABI)
 #
-# Service phase — always re-runs when -k is flagged. Idempotent.
+# Service phase - always re-runs when -k is flagged. Idempotent.
 # Start with: ~/seren-venvs/kokoro/bin/python -m uvicorn ...
 # ══════════════════════════════════════════════════════════════
 
@@ -23,9 +23,9 @@ install_kokoro() {
         log "Cloning Kokoro-FastAPI..."
         sudo -u "$TARGET_USER" git clone https://github.com/remsky/Kokoro-FastAPI.git
     else
-        log "Kokoro-FastAPI already cloned — pulling latest..."
+        log "Kokoro-FastAPI already cloned - pulling latest..."
         sudo -u "$TARGET_USER" git -C Kokoro-FastAPI pull --ff-only 2>/dev/null || \
-            warn "git pull failed — local changes? leaving repo as-is"
+            warn "git pull failed - local changes? leaving repo as-is"
     fi
 
     # ── Venv ──
@@ -40,11 +40,11 @@ install_kokoro() {
         "numpy==1.26.1" \
         pydub inflect loguru kokoro
 
-    # Project requirements (best-effort — main deps already pinned above)
+    # Project requirements (best-effort - main deps already pinned above)
     cd "$USER_HOME/Kokoro-FastAPI"
     if [ -f requirements.txt ]; then
         venv_pip kokoro install -r requirements.txt 2>/dev/null || \
-            warn "Some requirements.txt entries failed — main deps already pinned, likely fine"
+            warn "Some requirements.txt entries failed - main deps already pinned, likely fine"
     fi
 
     # ── Voice models from HuggingFace ──
@@ -53,14 +53,14 @@ install_kokoro() {
         venv_python kokoro -c "
 from huggingface_hub import snapshot_download
 snapshot_download(repo_id='hexgrad/Kokoro-82M', local_dir='src/models/v1_0')
-" || warn "Voice download failed — re-run manually later"
+" || warn "Voice download failed - re-run manually later"
     else
-        log "Voice models already present — skipping download"
+        log "Voice models already present - skipping download"
     fi
 
     # ── Verify import in the venv ──
     venv_python kokoro -c "import kokoro; print('  kokoro module imports OK')" 2>&1 || \
-        warn "kokoro import failed — check pip install above"
+        warn "kokoro import failed - check pip install above"
 
     log "Kokoro-FastAPI installed at $USER_HOME/Kokoro-FastAPI"
     log "Venv: ~/seren-venvs/kokoro"

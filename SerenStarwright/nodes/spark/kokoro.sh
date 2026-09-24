@@ -1,8 +1,8 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# spark/kokoro.sh — Install Kokoro-FastAPI TTS (DGX Spark)
+# spark/kokoro.sh - Install Kokoro-FastAPI TTS (DGX Spark)
 #
-# Same pattern as nano/kokoro.sh. Spark has 128GB + fast NVMe —
+# Same pattern as nano/kokoro.sh. Spark has 128GB + fast NVMe -
 # model download and runtime are comfortable here. Uses the JP7
 # Python (3.11+), no numpy pinning needed (PyTorch 3.x compatible).
 # ══════════════════════════════════════════════════════════════
@@ -15,9 +15,9 @@ install_kokoro() {
         log "Cloning Kokoro-FastAPI..."
         sudo -u "$TARGET_USER" git clone https://github.com/remsky/Kokoro-FastAPI.git
     else
-        log "Kokoro-FastAPI already cloned — pulling latest..."
+        log "Kokoro-FastAPI already cloned - pulling latest..."
         sudo -u "$TARGET_USER" git -C Kokoro-FastAPI pull --ff-only 2>/dev/null || \
-            warn "git pull failed — local changes? leaving repo as-is"
+            warn "git pull failed - local changes? leaving repo as-is"
     fi
 
     ensure_venv kokoro
@@ -31,7 +31,7 @@ install_kokoro() {
     cd "$USER_HOME/Kokoro-FastAPI"
     if [ -f requirements.txt ]; then
         venv_pip kokoro install -r requirements.txt 2>/dev/null || \
-            warn "Some requirements.txt entries failed — main deps already installed"
+            warn "Some requirements.txt entries failed - main deps already installed"
     fi
 
     if [ ! -d "src/models/v1_0" ] || [ -z "$(ls -A src/models/v1_0 2>/dev/null)" ]; then
@@ -39,13 +39,13 @@ install_kokoro() {
         venv_python kokoro -c "
 from huggingface_hub import snapshot_download
 snapshot_download(repo_id='hexgrad/Kokoro-82M', local_dir='src/models/v1_0')
-" || warn "Voice download failed — re-run manually later"
+" || warn "Voice download failed - re-run manually later"
     else
-        log "Voice models already present — skipping download"
+        log "Voice models already present - skipping download"
     fi
 
     venv_python kokoro -c "import kokoro; print('  kokoro module imports OK')" 2>&1 || \
-        warn "kokoro import failed — check pip install above"
+        warn "kokoro import failed - check pip install above"
 
     log "Kokoro-FastAPI installed at $USER_HOME/Kokoro-FastAPI"
     log "Venv: ~/seren-venvs/kokoro"

@@ -1,8 +1,8 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# spark/chroma.sh — Install ChromaDB vector store (DGX Spark)
+# spark/chroma.sh - Install ChromaDB vector store (DGX Spark)
 #
-# Ubuntu 24.04 ships SQLite 3.40+ — well above ChromaDB's 3.35 minimum.
+# Ubuntu 24.04 ships SQLite 3.40+ - well above ChromaDB's 3.35 minimum.
 # No source build needed. Spark has 128GB, so persistence dir can be
 # generous.
 # ══════════════════════════════════════════════════════════════
@@ -10,7 +10,7 @@
 install_chroma() {
     local USER_HOME="/home/$TARGET_USER"
 
-    # Sanity check — Ubuntu 24.04 should have 3.40+
+    # Sanity check - Ubuntu 24.04 should have 3.40+
     local SQLITE_VERSION
     SQLITE_VERSION=$(sqlite3 --version 2>/dev/null | awk '{print $1}' || echo "0")
     local REQUIRED="3.35.0"

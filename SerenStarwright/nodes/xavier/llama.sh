@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# xavier/llama.sh — Install llama.cpp inference server (Xavier)
+# xavier/llama.sh - Install llama.cpp inference server (Xavier)
 #
 # Sourced by seren-prepare-node.sh. Defines install_llama() which copies
 # the staged llama-server binary into ~/llama.cpp/build/bin/.
@@ -25,7 +25,7 @@ install_llama() {
     sudo -u "$TARGET_USER" cp -f "$STAGED_LLAMA_BIN" "$BIN_DIR/llama-server"
     chmod +x "$BIN_DIR/llama-server"
 
-    # Verify it loads — needs LD_LIBRARY_PATH from cuda phase
+    # Verify it loads - needs LD_LIBRARY_PATH from cuda phase
     log "llama-server installed at $BIN_DIR/llama-server"
     if "$BIN_DIR/llama-server" --version 2>&1 | head -3; then
         log "llama-server reports version OK"

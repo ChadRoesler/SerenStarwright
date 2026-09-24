@@ -1,34 +1,43 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# spark/foundation.sh — DGX Spark (jp7/GB10 Blackwell) OS prereq phases
+# spark/foundation.sh - DGX Spark (jp7/GB10 Blackwell) OS prereq phases
 #
 # Sourced by seren-prepare-node.sh. Defines run_foundation() for Spark.
 #
-# The Spark is NOT a Jetson — no /etc/nv_tegra_release, no nvpmodel,
+# The Spark is NOT a Jetson - no /etc/nv_tegra_release, no nvpmodel,
 # no eMMC, no custom Maxwell/Volta/Ampere GPU. It's a desktop-class
 # x86_64 (or Grace ARM) system with a GB10 Blackwell GPU, 128GB unified
 # memory, active cooling, and JetPack 7 on Ubuntu 24.04.
 #
 # This means:
-#   - No MAXN power phase (no nvpmodel — Spark manages power at the
+#   - No MAXN power phase (no nvpmodel - Spark manages power at the
 #     firmware/hardware level transparently)
-#   - No Python source build — JP7 ships Python 3.11+ natively
-#   - No SQLite source build — Ubuntu 24.04 ships SQLite 3.40+
-#   - No NVMe reformat/mount — Spark has built-in NVMe at /mnt/nvme
+#   - No Python source build - JP7 ships Python 3.11+ natively
+#   - No SQLite source build - Ubuntu 24.04 ships SQLite 3.40+
+#   - No NVMe reformat/mount - Spark has built-in NVMe at /mnt/nvme
 #   - CUDA toolkit is pre-installed via JetPack 7
-#   - Blackwell GB10 CUDA arch — the key differentiator for builds
+#   - Blackwell GB10 CUDA arch - the key differentiator for builds
 #
 # Phases:
-#   01_spark_os_trim     — disable bloat, install build essentials
-#   02_spark_cuda        — ensure CUDA toolkit is complete for Blackwell
-#   03_spark_nvme        — verify NVMe, set up model dirs + pip relocation
+#   01_spark_os_trim     - disable bloat, install build essentials
+#   02_spark_cuda        - ensure CUDA toolkit is complete for Blackwell
+#   03_spark_nvme        - verify NVMe, set up model dirs + pip relocation
 # ══════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────
-# Phase 1 — OS trim (Ubuntu 24.04 base, lighter than Jetson)
+# Phase 1 - OS trim (Ubuntu 24.04 base, lighter than Jetson)
 # ─────────────────────────────────────────────────────────────
 phase_spark_os_trim() {
-    # Spark ships as a headless dev workstation — trim desktop cruft
+    # CONSENT. This phase removes the desktop, docker and snap and sets the
+    # default target to multi-user: correct for a dedicated node, unforgivable
+    # as a side effect. It runs only with --trim-os; otherwise it skips and
+    # says so on the console, where the prompt would have been.
+    if [ "${TRIM_OS:-false}" != "true" ]; then
+        warn "OS trim SKIPPED: pass --trim-os to remove the desktop, docker and snap (headless node)"
+        echo -e "${YELLOW}[SEREN]${NC} OS trim skipped - pass --trim-os to make this a headless node" >&3 2>/dev/null || true
+        return 0
+    fi
+    # Spark ships as a headless dev workstation - trim desktop cruft
     sudo systemctl set-default multi-user.target
     sudo systemctl disable gdm3.service lightdm.service 2>/dev/null || true
 
@@ -132,12 +141,12 @@ phase_spark_os_trim() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 2 — Ensure CUDA toolkit is complete for Blackwell
+# Phase 2 - Ensure CUDA toolkit is complete for Blackwell
 # ─────────────────────────────────────────────────────────────
 # JetPack 7 ships CUDA for Blackwell. The toolkit is pre-installed but
 # we verify and install any missing components (cuda-nvcc, etc.).
-# Blackwell GB10 compute capability is 120 (tentative — adjust after
-# NVIDIA docs confirm).
+# Blackwell GB10 compute capability is 12.1 (sm_121) - measured by the
+# SerenSystemPrebuilts selftest on the real device, not read off a spec sheet.
 phase_spark_cuda() {
     if command -v nvcc &>/dev/null; then
         local NVCC_VER
@@ -146,7 +155,7 @@ phase_spark_cuda() {
     else
         log "Installing cuda-toolkit for JetPack 7..."
         sudo apt install -y cuda-toolkit 2>/dev/null || {
-            warn "cuda-toolkit not found via apt — adding NVIDIA CUDA repo..."
+            warn "cuda-toolkit not found via apt - adding NVIDIA CUDA repo..."
             cd /tmp
             # JP7 on Ubuntu 24.04 (arm64 or x86_64)
             local ARCH
@@ -156,16 +165,15 @@ phase_spark_cuda() {
             rm -f cuda-keyring_1.1-1_all.deb
             sudo apt-get update
             sudo apt-get install -y cuda-toolkit || \
-                fail "Could not install CUDA toolkit — manual intervention needed"
+                fail "Could not install CUDA toolkit - manual intervention needed"
         }
     fi
 
-    # Blackwell GB10 compute capability — NVIDIA docs will confirm
-    # Tentative: CC 120 (Blackwell family). If nvcc doesn't recognize
-    # it yet, fall back to generic Blackwell arch.
+    # GB10 is sm_121; the prebuilt torch and llama-server for this box are
+    # compiled for exactly that and selftested on it.
     local CC
     CC=$(nvcc --version 2>/dev/null | grep "release" | awk '{print $6}' | cut -d',' -f1 || echo "0")
-    log "CUDA $CC detected — Blackwell GB10 support confirmed"
+    log "CUDA $CC detected - Blackwell GB10 support confirmed"
 
     # PATH for nvcc (bashrc persistence)
     if ! grep -q 'cuda' "/home/$TARGET_USER/.bashrc" 2>/dev/null; then
@@ -179,55 +187,79 @@ EOF
 }
 
 # ─────────────────────────────────────────────────────────────
-# Phase 3 — NVMe + pip relocation (Spark has built-in NVMe)
+# Phase 3 - NVMe + pip relocation (Spark has built-in NVMe)
 # ─────────────────────────────────────────────────────────────
-# Spark ships with substantial NVMe storage (likely 1TB+). We set up
-# model storage, venv backing, and pip relocation to keep the root fs
-# clean. Unlike Jetson, Spark doesn't need swap — 128GB unified memory
-# is plenty for inference workloads.
+# Spark ships with substantial NVMe storage (1TB+, 4TB when expanded). We
+# set up model storage, venv backing, and pip relocation to keep the root
+# fs clean, plus a swapfile as OOM insurance. The spare disk is resolved
+# dynamically so we never reformat the drive that backs /.
 phase_spark_nvme() {
-    if ! lsblk | grep -q nvme0n1; then
-        info "No NVMe detected — Spark should have built-in NVMe; continuing with home dir"
+    if ! lsblk | grep -q nvme; then
+        info "No NVMe detected - Spark should have built-in NVMe; continuing with home dir"
         mkdir -p ~/models
         return 0
     fi
 
+    # NEVER touch the disk that backs root. With a large add-in drive the
+    # spare NVMe is not guaranteed to enumerate as nvme0n1, and a factory
+    # 4TB often arrives with a leftover vfat/EFI partition that would make
+    # us 'reformat' the wrong disk. Resolve the real target first.
+    local ROOT_SRC ROOT_DISK NVME_DEV NVME_PART
+    ROOT_SRC=$(findmnt -n -o SOURCE / 2>/dev/null || echo "")
+    ROOT_DISK=$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null || echo "")
+
+    NVME_DEV=""
+    for d in $(lsblk -dno NAME | grep '^nvme'); do
+        [ "$d" = "$ROOT_DISK" ] && continue
+        NVME_DEV="$d"
+        break
+    done
+
+    if [ -z "$NVME_DEV" ]; then
+        warn "Only NVMe present is the root disk ($ROOT_SRC) - nothing to mount; using home dir"
+        mkdir -p ~/models
+        return 0
+    fi
+
+    NVME_PART="${NVME_DEV}p1"
+    log "NVMe target: /dev/$NVME_PART (root is on $ROOT_SRC, leaving it alone)"
+
     # Mount NVMe at /mnt/nvme if not already mounted
     if ! mount | grep -q "/mnt/nvme"; then
         local NEED_FORMAT=false
-        if ! lsblk | grep -q nvme0n1p1; then
-            log "No nvme0n1p1 partition — creating fresh"
+        if ! lsblk | grep -q "$NVME_PART"; then
+            log "No $NVME_PART partition - creating fresh"
             NEED_FORMAT=true
-        elif ! sudo blkid /dev/nvme0n1p1 | grep -q 'TYPE="ext4"'; then
+        elif ! sudo blkid "/dev/$NVME_PART" | grep -q 'TYPE="ext4"'; then
             local CURRENT_FS
-            CURRENT_FS=$(sudo blkid /dev/nvme0n1p1 -o value -s TYPE 2>/dev/null || echo "unknown")
-            warn "nvme0n1p1 has filesystem '$CURRENT_FS' (expected ext4) — reformatting"
+            CURRENT_FS=$(sudo blkid "/dev/$NVME_PART" -o value -s TYPE 2>/dev/null || echo "unknown")
+            warn "/dev/$NVME_PART has filesystem '$CURRENT_FS' (expected ext4) - reformatting"
             NEED_FORMAT=true
         fi
 
         if $NEED_FORMAT; then
-            sudo wipefs -a /dev/nvme0n1 2>/dev/null || true
-            sudo wipefs -a /dev/nvme0n1p1 2>/dev/null || true
-            sudo parted /dev/nvme0n1 --script mklabel gpt
-            sudo parted /dev/nvme0n1 --script mkpart primary ext4 0% 100%
+            sudo wipefs -a "/dev/$NVME_DEV" 2>/dev/null || true
+            sudo wipefs -a "/dev/$NVME_PART" 2>/dev/null || true
+            sudo parted "/dev/$NVME_DEV" --script mklabel gpt
+            sudo parted "/dev/$NVME_DEV" --script mkpart primary ext4 0% 100%
             sleep 2
-            sudo partprobe /dev/nvme0n1 2>/dev/null || true
-            sudo mkfs.ext4 -F /dev/nvme0n1p1
+            sudo partprobe "/dev/$NVME_DEV" 2>/dev/null || true
+            sudo mkfs.ext4 -F "/dev/$NVME_PART"
         fi
 
         sudo mkdir -p /mnt/nvme
-        sudo mount /dev/nvme0n1p1 /mnt/nvme
+        sudo mount "/dev/$NVME_PART" /mnt/nvme
         sudo chown "$TARGET_USER":"$TARGET_USER" /mnt/nvme
 
-        if grep -q '/dev/nvme0n1p1' /etc/fstab; then
-            sudo sed -i '\|/dev/nvme0n1p1|d' /etc/fstab
+        if grep -q "/dev/$NVME_PART" /etc/fstab; then
+            sudo sed -i "\|/dev/$NVME_PART|d" /etc/fstab
         fi
-        echo '/dev/nvme0n1p1 /mnt/nvme ext4 defaults 0 2' | sudo tee -a /etc/fstab >/dev/null
+        echo "/dev/$NVME_PART /mnt/nvme ext4 defaults 0 2" | sudo tee -a /etc/fstab >/dev/null
     fi
 
     sudo -u "$TARGET_USER" mkdir -p /mnt/nvme/models /mnt/nvme/pip-packages /mnt/nvme/pip-cache
 
-    # Idempotent pip relocation — same pattern as Xavier/Nano
+    # Idempotent pip relocation - same pattern as Xavier/Nano
     local USER_HOME="/home/$TARGET_USER"
 
     if [ -d "$USER_HOME/.local/lib" ] && [ ! -L "$USER_HOME/.local/lib" ]; then
@@ -240,7 +272,7 @@ phase_spark_nvme() {
         sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.local"
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-packages/lib "$USER_HOME/.local/lib"
     else
-        log "~/.local/lib already symlinked — skipping"
+        log "~/.local/lib already symlinked - skipping"
     fi
 
     if [ -d "$USER_HOME/.local/bin" ] && [ ! -L "$USER_HOME/.local/bin" ]; then
@@ -252,7 +284,7 @@ phase_spark_nvme() {
         sudo -u "$TARGET_USER" mkdir -p /mnt/nvme/pip-packages/bin
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-packages/bin "$USER_HOME/.local/bin"
     else
-        log "~/.local/bin already symlinked — skipping"
+        log "~/.local/bin already symlinked - skipping"
     fi
 
     if [ -d "$USER_HOME/.cache/pip" ] && [ ! -L "$USER_HOME/.cache/pip" ]; then
@@ -264,19 +296,28 @@ phase_spark_nvme() {
         sudo -u "$TARGET_USER" mkdir -p "$USER_HOME/.cache"
         sudo -u "$TARGET_USER" ln -s /mnt/nvme/pip-cache "$USER_HOME/.cache/pip"
     else
-        log "~/.cache/pip already symlinked — skipping"
+        log "~/.cache/pip already symlinked - skipping"
     fi
 
-    # Spark has 128GB unified — no swap needed
-    info "128GB unified memory — swap not needed, skipping"
+    # 32GB swap on the NVMe. 128GB unified covers inference, but the 4TB
+    # disk makes cheap insurance against a runaway build/loader OOM.
+    if ! swapon --show | grep -q nvme; then
+        sudo swapoff -a 2>/dev/null || true
+        sudo fallocate -l 32G /mnt/nvme/32GB.swap
+        sudo chmod 600 /mnt/nvme/32GB.swap
+        sudo mkswap /mnt/nvme/32GB.swap
+        sudo swapon /mnt/nvme/32GB.swap
+        grep -q "32GB.swap" /etc/fstab || \
+            echo '/mnt/nvme/32GB.swap none swap sw 0 0' | sudo tee -a /etc/fstab
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────
 # Foundation entry point
 # ─────────────────────────────────────────────────────────────
 run_foundation() {
-    # No MAXN phase — Spark manages power at firmware level
-    run_phase "01_spark_os_trim"  "Phase 1 — OS trim"            phase_spark_os_trim
-    run_phase "02_spark_cuda"     "Phase 2 — CUDA toolkit"        phase_spark_cuda
-    run_phase "03_spark_nvme"     "Phase 3 — NVMe + pip"          phase_spark_nvme
+    # No MAXN phase - Spark manages power at firmware level
+    run_phase "01_spark_os_trim"  "Phase 1 - OS trim"            phase_spark_os_trim
+    run_phase "02_spark_cuda"     "Phase 2 - CUDA toolkit"        phase_spark_cuda
+    run_phase "03_spark_nvme"     "Phase 3 - NVMe + pip"          phase_spark_nvme
 }

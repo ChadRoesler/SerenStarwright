@@ -1,0 +1,62 @@
+#!/bin/bash
+# ══════════════════════════════════════════════════════════════
+# seren-systemctl - the ONLY systemctl a Seren node grants without a password
+#
+# Installed to /usr/local/sbin/seren-systemctl (root:root 0755) by
+# seren-prepare-node.sh, and named in /etc/sudoers.d/seren as the sole
+# systemctl grant. The Observatory calls `sudo -n seren-systemctl start
+# seren-llama.service` to manage the services it supervises.
+#
+# WHY A HELPER AND NOT A SUDOERS GLOB. The grant used to read
+#
+#     ALL=(root) NOPASSWD: /bin/systemctl start *
+#     ALL=(root) NOPASSWD: /bin/mv /tmp/*.service /etc/systemd/system/*
+#
+# which is root: write any unit into /tmp, mv it into place, start it. And a
+# glob does not narrow it the way it looks like it should - sudoers' `*`
+# matches SPACES, so `systemctl enable seren-*` also permits
+# `systemctl enable seren-x /home/me/evil.service`, which links a unit from a
+# user-writable path and runs it as root at the next boot. There is no
+# sudoers spelling that admits exactly one argument of one shape. A script
+# can check that; a glob cannot.
+#
+# So this takes exactly two words - a verb from a short list and one unit
+# name that starts with `seren-` - and refuses everything else, including
+# extra arguments, paths, and any unit that is not the family's. It then
+# execs the real systemctl. Nothing here can install a unit; installers run
+# as a person with sudo, not through this.
+# ══════════════════════════════════════════════════════════════
+set -eu
+
+usage() {
+    echo "usage: seren-systemctl <start|stop|restart|status|is-active|enable|disable|daemon-reload> [seren-<name>.service]" >&2
+    exit 64
+}
+
+[ "$#" -ge 1 ] || usage
+verb="$1"; shift
+
+case "$verb" in
+    daemon-reload)
+        [ "$#" -eq 0 ] || usage
+        exec /bin/systemctl daemon-reload
+        ;;
+    start|stop|restart|status|is-active|enable|disable)
+        [ "$#" -eq 1 ] || usage
+        unit="$1"
+        # One unit, no path, no glob, no space, no option: the family's units
+        # and nothing else. `seren-llama` and `seren-llama.service` both work.
+        case "$unit" in
+            seren-*) ;;
+            *) echo "seren-systemctl: refusing '$unit' - only seren-* units" >&2; exit 77 ;;
+        esac
+        if ! printf '%s' "$unit" | grep -Eq '^seren-[A-Za-z0-9_.@-]+$'; then
+            echo "seren-systemctl: refusing '$unit' - not a plain unit name" >&2; exit 77
+        fi
+        case "$unit" in *.service|*.timer|*.socket) ;; *) unit="$unit.service" ;; esac
+        exec /bin/systemctl "$verb" "$unit"
+        ;;
+    *)
+        usage
+        ;;
+esac

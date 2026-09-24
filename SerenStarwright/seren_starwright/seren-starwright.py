@@ -281,7 +281,12 @@ def _ordered_groups(services: list["ServiceDef"]) -> list[tuple[str, str]]:
 # Flags that describe the MACHINE or the RUN, not the service. Setting --corp
 # per-service is meaningless: if the box is behind an intercepting proxy it's
 # behind it for all of them. Same for where packages come from.
-UNIVERSAL_FLAGS = {"corp", "pypi", "ref", "repo", "wheel", "venv"}
+UNIVERSAL_FLAGS = {"corp", "pypi", "ref", "repo", "wheel", "venv", "local"}
+
+# What a card that predates the `switches` key in --describe is assumed to
+# take without a value. Only consulted when the card reports no switches.
+LEGACY_SWITCHES = {"corp", "pypi", "mcp", "vector", "stagehand", "service", "gen-token",
+                   "no-updates", "local-system", "st", "trim-os", "wipe-nvme"}
 
 # Shown as inline checkboxes on the config row rather than buried in Advanced.
 #
@@ -418,7 +423,15 @@ class ServiceDef:
     flags: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
     params: dict[str, str] = field(default_factory=dict)   # canonical -> native (ps only)
+    # Flags that take no value, from --describe's `switches` (bash derives it
+    # from `shift ;;` branches, PowerShell from [switch] parameters). An older
+    # card that does not report it falls back to the switches every card in
+    # the family has always had, so the modal never turns one into a text box.
+    switches: list[str] = field(default_factory=list)
     script: Path = Path()
+
+    def is_switch(self, flag: str) -> bool:
+        return flag in self.switches or (not self.switches and flag in LEGACY_SWITCHES)
 
     @property
     def advanced_flags(self) -> list[str]:
@@ -453,6 +466,15 @@ class NodeDef:
     components: list[NodeComponent] = field(default_factory=list)
     modes: list[str] = field(default_factory=lambda: ["prebuilts", "build"])
     platforms: list[str] = field(default_factory=list)
+    # Has this MACHINE ever completed a prep run? Read from state kept on the
+    # node itself, so unlike the old per-checkout state file it is not reset by
+    # a fresh clone or a .pyz rebuild. Drives whether this screen OFFERS prep or
+    # merely permits it.
+    provisioned: bool = False
+    provisioned_at: str = ""
+    # The name seren itself set, if it ever did - so the screen can say who
+    # chose the current hostname instead of implying nobody did.
+    hostname_managed: str = ""
     # Derived from the dispatcher's own case branches. The screen renders an
     # option ONLY if it appears here, so it can never offer a flag the script
     # doesn't take - and a flag added to the script surfaces with no UI edit.
@@ -528,6 +550,9 @@ def discover_node(platform_override: Optional[str] = None
             cuda_arch=d.get("cuda_arch"), hostname=d.get("hostname", ""),
             components=comps, modes=list(d.get("modes", ["prebuilts", "build"])),
             platforms=list(d.get("platforms", [])),
+            provisioned=bool(d.get("provisioned", False)),
+            provisioned_at=str(d.get("provisioned_at") or ""),
+            hostname_managed=str(d.get("hostname_managed") or ""),
             flags=list(d.get("flags", [])), script=script), None
     except Exception as e:                                   # noqa: BLE001
         return None, f"{script.name}: {e}"
@@ -594,7 +619,8 @@ def discover() -> tuple[list[ServiceDef], list[str]]:
                 accent=str(d.get("accent", "") or ""),
                 extras=list(d.get("extras", [])), flags=list(d.get("flags", [])),
                 requires=list(d.get("requires", [])),
-                params=dict(d.get("params", {})), script=script))
+                params=dict(d.get("params", {})),
+                switches=list(d.get("switches", [])), script=script))
         except json.JSONDecodeError as e:
             problems.append(f"{script.name}: bad JSON from --describe ({e})")
         except subprocess.TimeoutExpired:
@@ -719,8 +745,24 @@ BANNER = r"""
 
 
 class SplashScreen(Screen):
-    """Mode selector. Prepare Node and Install Services share almost no config
-    surface, so they get separate doors rather than one overloaded grid."""
+    """Mode selector. Node work and Install Services share almost no config
+    surface, so they get separate doors rather than one overloaded grid.
+
+    NODE WORK IS TWO DOORS, NOT ONE. There used to be a single "Prepare Node",
+    and one door meant one screen that had to offer everything - foundation prep,
+    a hostname field, components - with nothing but a checkbox between "add
+    Ms.MoE to a working box" and "rebuild this machine and rename it".
+
+    The two paths are genuinely different acts on genuinely different machines:
+
+      INSTALL  a box that is not set up yet. Base prep runs, because that IS the
+               job; you may name the machine; you pick components.
+      MODIFY   a box that already works. Components only. Prep and rename are
+               not on the screen at all, so neither can happen by accident.
+
+    Choosing before any control renders is the point - a mode picked afterwards
+    still has to draw the dangerous widgets.
+    """
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -729,23 +771,45 @@ class SplashScreen(Screen):
                 yield Static(BANNER, id="banner")
                 yield Static("build the vessel · sail by the lodestar",
                              id="tagline")
-                yield Button("Prepare Node", id="prep", variant="default")
+                yield Static("", id="splash-note")
+                with Horizontal(id="splash-node-row"):
+                    yield Button("Install Node", id="install-node",
+                                 variant="default")
+                    yield Button("Modify Node", id="modify-node",
+                                 variant="default")
                 yield Button("Install Services", id="install", variant="primary")
                 yield Button("Exit", id="exit", variant="error")
-                yield Static("", id="splash-note")
         yield Footer()
 
     def on_mount(self) -> None:
-        # Honest about what isn't built: there are no node-prep scripts in this
-        # repo yet, so the button says so instead of failing when pressed.
-        self.query_one("#prep", Button).disabled = (
-            self.app.node is None)          # type: ignore[attr-defined]
+        node = self.app.node                            # type: ignore[attr-defined]
+        # Honest about what isn't available: node prep is bash-only, so on
+        # Windows both doors say so instead of failing when pressed.
+        self.query_one("#install-node", Button).disabled = node is None
+        # MODIFY IS GATED ON THE NODE ACTUALLY BEING PREPARED, because Modify
+        # cannot prep - it has no such control by design. Offering it on a bare
+        # box would hand someone a component install onto a machine with no CUDA,
+        # no Python and no NVMe, which fails somewhere far from the cause. The
+        # note below names Install as the way in.
+        self.query_one("#modify-node", Button).disabled = (
+            node is None or not node.provisioned)
+
         n = len(self.app.services)                      # type: ignore[attr-defined]
         # First token only. resolve_version() appends an explanatory tail
         # ("(from git)", "(no build stamp, not a git checkout)") which is right
         # for --version and far too long for a splash line. No "v" prefix -
         # tags already carry one and "vunknown" reads like a typo.
         note = f"{resolve_version().split(' ')[0]}  ·  {n} installer(s) discovered"
+        # The node's prep state belongs HERE, on the screen where you choose a
+        # door, not two screens later. It is the fact that decides which door.
+        if node is not None:
+            note += f" · {node.platform or 'platform?'}"
+            if node.provisioned:
+                note += " · prepared"
+                if node.provisioned_at:
+                    note += f" {node.provisioned_at.split('T')[0]}"
+            else:
+                note += " · never prepared - use Install"
         if self.app.problems:                           # type: ignore[attr-defined]
             note += f" · {len(self.app.problems)} problem(s) - see Install"
         self.query_one("#splash-note", Static).update(note)
@@ -756,8 +820,10 @@ class SplashScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "install":
             self.app.push_screen(SelectScreen())
-        elif event.button.id == "prep":
-            self.app.push_screen(PrepareNodeScreen())
+        elif event.button.id == "install-node":
+            self.app.push_screen(PrepareNodeScreen(mode="install"))
+        elif event.button.id == "modify-node":
+            self.app.push_screen(PrepareNodeScreen(mode="modify"))
         elif event.button.id == "exit":
             self.app.exit()
 
@@ -926,6 +992,14 @@ class AdvancedModal(ModalScreen[dict]):
                                        value=bool(self.current.get(flag)),
                                        id=f"adv-{flag}")
                         continue
+                    if self.svc.is_switch(flag):
+                        # A switch is a check box. As a text box it produced
+                        # `--no-updates yes`, which every card refuses: the
+                        # flag takes no value, and the card said so via
+                        # --describe's `switches`.
+                        yield Checkbox(flag, value=bool(self.current.get(flag)),
+                                       id=f"adv-{flag}")
+                        continue
                     default = ""
                     if flag == "port":
                         default = str(self.svc.default_port)
@@ -965,6 +1039,10 @@ class AdvancedModal(ModalScreen[dict]):
         if event.button.id == "cancel":
             self.dismiss(None)
             return
+        # Every rendered flag reports, a cleared one as None. The screen used to
+        # merge only what was set, so a value could be added but never taken
+        # back: an instance name typed once stuck for the rest of the session,
+        # and an unticked box changed nothing. None means "remove it".
         out: dict[str, Any] = {}
         for flag in self.svc.advanced_flags:
             try:
@@ -972,24 +1050,21 @@ class AdvancedModal(ModalScreen[dict]):
             except Exception:                            # noqa: BLE001
                 continue
             if isinstance(w, Checkbox):
-                if w.value:
-                    out[flag] = True
-            elif isinstance(w, Input) and w.value.strip():
-                out[flag] = w.value.strip()
+                out[flag] = True if w.value else None
+            elif isinstance(w, Input):
+                out[flag] = w.value.strip() or None
 
         # Identity, read explicitly - the widgets aren't uniform, so the loop
         # above can't collect them. Each lookup is guarded because a given
         # installer may not declare the flag at all, in which case the widget
         # was never composed.
         try:
-            if self.query_one("#adv-local-system", Checkbox).value:
-                out["local-system"] = True
+            out["local-system"] = True if self.query_one("#adv-local-system", Checkbox).value else None
         except Exception:                            # noqa: BLE001
             pass
         try:
             w = self.query_one("#adv-service-user", Input)
-            if w.value.strip():
-                out["service-user"] = w.value.strip()
+            out["service-user"] = w.value.strip() or None
         except Exception:                            # noqa: BLE001
             pass
         try:
@@ -1018,6 +1093,13 @@ class ConfigScreen(Screen):
             yield Checkbox("install from PyPI (--pypi)", value=True, id="u-pypi")
             yield Label("or pin a GitHub release tag (--ref, blank = PyPI)")
             yield Input(placeholder="v1.5.0", id="u-ref")
+            # The dev loop: seren-dev-publish builds every checkout into one
+            # wheelhouse; a card pointed at it installs the dev wheel and pins
+            # the other seren-* dev wheels alongside. A folder on this box, or
+            # the URL --serve prints on the dev box. Beats a tag and PyPI.
+            yield Label("or a dev wheelhouse from seren-dev-publish (--local: a folder, "
+                        "or http://devbox:8765 - beats a tag and PyPI)")
+            yield Input(placeholder="../.dev-wheelhouse", id="u-local")
 
             # -- service identity -------------------------------------------
             # Asked once here and inherited by every service; override one
@@ -1094,7 +1176,7 @@ class ConfigScreen(Screen):
                                   self.app.per_service)                      # type: ignore[attr-defined]
             if warn:
                 self.query_one("#cfg-warn", Static).update(
-                    "  ".join(warn) + "  — change a port under Configure")
+                    "  ".join(warn) + "  - change a port under Configure")
                 return
             self.app.jobs = [                                  # type: ignore[attr-defined]
                 Job(label=self.app.svc_map[n].display,         # type: ignore[attr-defined]
@@ -1142,8 +1224,8 @@ class ConfigScreen(Screen):
         return env
 
     def _save_adv(self, name: str, result: Optional[dict]) -> None:
-        if not result:
-            return
+        if result is None:
+            return                                       # Cancel / Escape: untouched
         # Pop the password out BEFORE anything reaches per_service. That dict is
         # handed straight to build_command, so a key left in it here becomes a
         # command-line argument - the one outcome this design exists to prevent.
@@ -1151,7 +1233,12 @@ class ConfigScreen(Screen):
         if pw is not None:
             self.app.service_passwords[name] = pw        # type: ignore[attr-defined]
             self.app.secrets.add(pw)                     # type: ignore[attr-defined]
-        self.app.per_service.setdefault(name, {}).update(result)  # type: ignore[attr-defined]
+        cfg = self.app.per_service.setdefault(name, {})  # type: ignore[attr-defined]
+        for k, v in result.items():
+            if v in (None, "", False):
+                cfg.pop(k, None)                         # cleared in the dialog: gone
+            else:
+                cfg[k] = v
 
     def _collect(self) -> None:
         u: dict[str, Any] = {}
@@ -1159,8 +1246,11 @@ class ConfigScreen(Screen):
             u["venv"] = self.query_one("#u-venv", Input).value.strip()
         if self.query_one("#u-corp", Checkbox).value:
             u["corp"] = True
+        local = self.query_one("#u-local", Input).value.strip()
         ref = self.query_one("#u-ref", Input).value.strip()
-        if ref:
+        if local:
+            u["local"] = local                   # the dev house beats everything
+        elif ref:
             u["ref"] = ref                       # a tag beats PyPI
         elif self.query_one("#u-pypi", Checkbox).value:
             u["pypi"] = True
@@ -1204,19 +1294,92 @@ class ConfigScreen(Screen):
                     cfg[flag] = self.query_one(f"#f-{name}-{flag}", Checkbox).value
 
 
+class ConfirmWipeModal(ModalScreen[bool]):
+    """Type the device name to allow a disk to be wiped.
+
+    A checkbox is one keystroke; a disk is not. The dialog names the device,
+    says what happens to it, and only returns True when the operator has typed
+    the device name back. Escape, Cancel, or a wrong word all mean no - and
+    the checkbox that opened this is put back to unchecked by the caller.
+    """
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, device: str = "nvme0n1") -> None:
+        super().__init__()
+        self.device = device
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal"):
+            yield Static("Wipe the NVMe?", classes="modal-title")
+            yield Static(
+                f"If /dev/{self.device} is not already an ext4 data disk, prep will "
+                f"wipe every signature on it, repartition it and format it. Everything "
+                f"on it is lost. An ext4 disk is left alone either way.",
+                classes="modal-sub")
+            yield Label(f"type  {self.device}  to allow it")
+            yield Input(placeholder=self.device, id="wipe-confirm")
+            with Horizontal(id="actions"):
+                yield Button("Cancel", id="cancel", variant="default")
+                yield Button("Allow wipe", id="ok", variant="error")
+
+    def _typed_ok(self) -> bool:
+        return self.query_one("#wipe-confirm", Input).value.strip() == self.device
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "ok":
+            self.dismiss(self._typed_ok())
+        else:
+            self.dismiss(False)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(self._typed_ok())
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 class PrepareNodeScreen(Screen):
     """Prepare THIS machine: OS prereqs, CUDA, llama/kokoro/comfy/chroma/coral.
 
     Deliberately not the service grid with different cards. The pieces here
     aren't peers:
-      - foundation is not optional; it's the prerequisite, always runs, and is
-        the thing the phase-state tracking exists for. It's a status line, not
-        a checkbox.
+      - base prep (OS trim, CUDA, NVMe, sudoers) is machine-wide and SLOW, and
+        it is a checkbox now rather than a status line - see below.
       - coral is hardware-gated and excluded from --all on purpose.
       - prebuilts/build is a MODE, not a component.
+
+    WHY PREP IS A CHECKBOX NOW. This docstring used to call foundation "not
+    optional; the prerequisite, always runs", and the screen told the operator as
+    much: "foundation phases run first and skip when already done". Both halves
+    were wrong, and the cost was real time and one real hostname:
+
+      - "skip when already done" leaned on phase state kept in a gitignored file
+        inside the CHECKOUT, so it was missing on every fresh clone and after
+        every .pyz rebuild. Foundation re-ran in full.
+      - the hostname rode along with it, derived from the ticked components, so
+        adding Ms.MoE to a working brain node renamed the box as a side effect.
+
+    Prep is its own act now, and so is renaming. The dispatcher picks the default
+    from state kept ON the node, which is what `provisioned` reports here.
     """
 
     BINDINGS = [("escape", "app.pop_screen", "Back")]
+
+    def __init__(self, mode: str = "install") -> None:
+        """mode is "install" or "modify" - see SplashScreen for what each means.
+
+        Defaulted to "install" rather than being required, because that is the
+        superset: it renders every control. A caller that forgets to say gets the
+        screen that can do everything, not one silently missing the prep it came
+        for.
+        """
+        super().__init__()
+        self.mode = "modify" if mode == "modify" else "install"
+
+    @property
+    def is_modify(self) -> bool:
+        return self.mode == "modify"
 
     def compose(self) -> ComposeResult:
         node: Optional[NodeDef] = self.app.node          # type: ignore[attr-defined]
@@ -1230,9 +1393,35 @@ class PrepareNodeScreen(Screen):
                 plat = node.platform or "not detected"
                 detail = f"{node.jp_family or '?'}, CUDA arch {node.cuda_arch or '?'}"
                 yield Static(f"Platform: {plat}   ({detail})", classes="section")
-                yield Static(f"hostname {node.hostname}  ·  foundation phases "
-                             "run first and skip when already done",
+                # The old line promised "foundation phases run first and skip
+                # when already done" - something the checkout-local state file
+                # could not deliver. Report what is true of THIS machine.
+                if node.provisioned:
+                    prep_state = "prepared"
+                    if node.provisioned_at:
+                        prep_state += f" {node.provisioned_at}"
+                else:
+                    prep_state = "never prepared"
+                who = ""
+                if node.hostname_managed and node.hostname_managed != node.hostname:
+                    who = f" (seren set {node.hostname_managed})"
+                yield Static(f"hostname {node.hostname}{who}  ·  {prep_state}",
                              classes="modal-sub")
+                if self.is_modify:
+                    yield Static("MODIFY - components only. This screen cannot "
+                                 "run base prep and cannot rename the node.",
+                                 classes="section")
+                else:
+                    yield Static("INSTALL - base prep will run, then the "
+                                 "components you pick.", classes="section")
+                    if node.provisioned:
+                        # Install on a box that is already built is a legitimate
+                        # thing to want and an expensive thing to do by accident,
+                        # so it says so and names the cheaper door.
+                        yield Static(
+                            "    this node is already prepared - Install re-runs "
+                            "every foundation phase. To just add a component, go "
+                            "back and choose Modify.", classes="card-req")
                 if node.platform is None:
                     yield Static("Could not identify this machine. Pick one:",
                                  classes="modal-sub")
@@ -1240,9 +1429,16 @@ class PrepareNodeScreen(Screen):
                         for p in (node.platforms or ["xavier", "nano", "spark"]):
                             yield RadioButton(p)
                 yield Rule()
+                # NO PREP CHECKBOX, and no section for one. An earlier pass put
+                # a checkbox here, defaulted from the prep history, and a checkbox
+                # is the wrong control for this: it left "rebuild the foundation of
+                # this machine" one keystroke from "add a component", on the same
+                # screen, under the same button. The door you came through decides
+                # it now, so Modify has no way to express prep at all - which is
+                # the whole point.
                 yield Static("Components", classes="section")
                 for c in node.components:
-                    cb = Checkbox(f"{c.display} — {c.description}",
+                    cb = Checkbox(f"{c.display} - {c.description}",
                                   id=f"nc-{c.name}", disabled=not c.available)
                     yield cb
                     if not c.available:
@@ -1267,28 +1463,57 @@ class PrepareNodeScreen(Screen):
                     yield Static("", id="mode-note", classes="card-req")
                 if node.supports("tag"):
                     yield Label("pin a prebuilt release tag (blank = latest)")
-                    yield Input(placeholder="2026.04.29-xavier", id="np-tag")
+                    yield Input(placeholder="20260916_xavier-jp5", id="np-tag")
 
                 yield Rule()
                 yield Static("Options", classes="section")
-                if node.supports("hostname"):
-                    yield Label("hostname override (blank = auto-derived)")
-                    yield Input(placeholder=node.hostname or "auto",
-                                id="np-hostname")
+                # INSTALL ONLY. Naming a machine belongs to building it, so a
+                # Modify run must not be able to touch the identity of the node.
+                # Not rendered, rather than rendered and ignored. Blank still
+                # means keep, for the Install case where you are re-running on a
+                # box that already has the name you want.
+                if node.supports("rename") and not self.is_modify:
+                    yield Label("rename this node (blank = keep the current name)")
+                    yield Input(placeholder=f"keep {node.hostname}" if node.hostname
+                                else "leave blank to keep the current name",
+                                id="np-rename")
                 if node.supports("user"):
                     yield Label("target user (blank = the invoking user)")
                     yield Input(placeholder=os.environ.get("USER", "") or "you",
                                 id="np-user")
-                if node.supports("no-max-power"):
+                # Install only, and not for tidiness: --no-max-power suppresses
+                # phase_max_power, which is a FOUNDATION phase. Under Modify no
+                # foundation phase runs, so the control would be a switch wired
+                # to nothing.
+                if node.supports("no-max-power") and not self.is_modify:
                     # Jetsons default to a power-capped profile; prep flips them
                     # to MAXN + jetson_clocks. Worth being able to decline on a
                     # box with marginal cooling or a small PSU.
                     yield Checkbox("skip max-power profile (Jetson only: MAXN + jetson_clocks)",
                                    id="np-nomaxpower")
+                # THE TWO THINGS PREP CANNOT UNDO, each its own box, Install only.
+                # Prep used to do both silently. The trim is what a dedicated
+                # node is for, so it is offered ticked - but it is ON SCREEN,
+                # named, and one click from off. The wipe is never pre-ticked
+                # and ticking it opens a dialog that wants the device name typed.
+                if not self.is_modify:
+                    if node.supports("trim-os"):
+                        yield Checkbox("trim the OS: remove the desktop, docker and snap "
+                                       "(this becomes a headless node)",
+                                       value=True, id="np-trimos")
+                    if node.supports("wipe-nvme"):
+                        yield Checkbox("wipe and format the NVMe if it is not already ext4 "
+                                       "(asks you to type the device name)",
+                                       value=False, id="np-wipenvme")
                 yield Static("", id="cfg-warn")
         with Horizontal(id="actions"):
             yield Button("Back", id="back", variant="default")
-            yield Button("Prepare", id="go", variant="primary")
+            # The button names the act, matching the door. "Prepare" was
+            # accurate when there was one path and is ambiguous now that there
+            # are two - the whole point is that the operator can tell which one
+            # they are about to run without reading the controls.
+            yield Button("Modify" if self.is_modify else "Install",
+                         id="go", variant="primary")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -1301,7 +1526,30 @@ class PrepareNodeScreen(Screen):
         if not sudo_ready():
             self.query_one("#cfg-warn", Static).update(
                 "sudo is not currently authorised. Run `sudo -v` in another "
-                "terminal first — prep cannot prompt from inside the TUI.")
+                "terminal first - prep cannot prompt from inside the TUI.")
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if (event.checkbox.id or "") != "np-wipenvme" or not event.value:
+            return
+        if getattr(self, "_wipe_confirmed", False):
+            return
+        # Untick immediately; the dialog's answer re-ticks it. A cancelled
+        # dialog therefore leaves the box exactly where a "no" should.
+        event.checkbox.value = False
+
+        def _answer(allowed: bool | None) -> None:
+            cb = self.query_one("#np-wipenvme", Checkbox)
+            self._wipe_confirmed = bool(allowed)
+            cb.value = bool(allowed)
+            if not allowed:
+                self.query_one("#cfg-warn", Static).update(
+                    "NVMe wipe not allowed - the device name was not typed. "
+                    "A non-ext4 NVMe will stop the run instead.")
+            else:
+                self.query_one("#cfg-warn", Static).update("")
+            self._wipe_confirmed = bool(allowed)
+
+        self.app.push_screen(ConfirmWipeModal("nvme0n1"), _answer)
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         """Choosing a platform has to RE-QUERY, not just remember a name.
@@ -1365,12 +1613,47 @@ class PrepareNodeScreen(Screen):
             return
         warn = self.query_one("#cfg-warn", Static)
 
+        def field(wid: str, kind: type):
+            """A control the screen did not render must contribute nothing.
+
+            Every option here is composed only if --describe advertised the flag,
+            so reading one has to tolerate its absence. A helper rather than a
+            pile of try/except, and defined before first use because the prep
+            checkbox is now read in the guard below, not just when building the
+            command.
+            """
+            try:
+                return self.query_one(wid, kind)
+            except Exception:                            # noqa: BLE001
+                return None
+
+        # THE DOOR IS THE DECISION. Install preps, Modify does not; there is no
+        # widget to read, which is what stops a Modify run from ever preparing or
+        # renaming regardless of what is on screen.
+        want_prep = not self.is_modify
+
+        # Modify must not be reachable on an unprepared box - the splash disables
+        # it - but the screen re-checks rather than trusting that. app.node is
+        # reassigned by the platform picker below, so the state this screen acts
+        # on is not necessarily the state the splash saw.
+        if self.is_modify and not node.provisioned:
+            warn.update("this node has no prep record - go back and choose "
+                        "Install. Modify cannot prepare a box.")
+            return
+
         chosen = [c for c in node.components
                   if c.available
                   and self.query_one(f"#nc-{c.name}", Checkbox).value]
         if not chosen:
-            warn.update("nothing selected - pick at least one component")
-            return
+            if self.is_modify:
+                # Modify with nothing ticked is genuinely nothing to do: it has
+                # no other act available to it.
+                warn.update("nothing selected - pick at least one component")
+                return
+            # Install with nothing ticked is "prepare the box, install nothing",
+            # which the dispatcher accepts as --prep on its own. A real request
+            # when commissioning hardware you have not chosen a role for yet.
+            warn.update("")
 
         cmd = ["bash", str(node.script)]
         # DERIVED, NOT MAPPED. This was a dict of five entries, every one of
@@ -1402,27 +1685,47 @@ class PrepareNodeScreen(Screen):
             warn.update("platform could not be detected - choose one above")
             return
 
-        # Each option is read only if the screen actually rendered it, which in
-        # turn only happened if --describe advertised the flag. A helper rather
-        # than a pile of try/except: an option that isn't on screen must
-        # contribute nothing, silently and without a traceback.
-        def field(wid: str, kind: type):
-            try:
-                return self.query_one(wid, kind)
-            except Exception:                            # noqa: BLE001
-                return None
-
         mode = field("#mode", RadioSet)
         if mode is not None and mode.pressed_index == 1:
             cmd.append("--build")
-        for wid, flag in (("#np-tag", "--tag"), ("#np-hostname", "--hostname"),
-                          ("#np-user", "--user")):
+
+        # ALWAYS SAY WHICH, never let the dispatcher's default decide. Given
+        # neither flag it infers prep from the node's own state, which is right
+        # for someone typing a command and wrong here: the operator picked a door,
+        # and that choice must survive into the command rather than being
+        # re-derived from state that may have changed since the splash read it.
+        # It also puts the intent in the command line InstallScreen echoes to the
+        # log, so the transcript says which door was used.
+        if node.supports("prep"):
+            cmd.append("--prep" if want_prep else "--no-prep")
+
+        for wid, flag in (("#np-tag", "--tag"), ("#np-user", "--user")):
             w = field(wid, Input)
             if w is not None and w.value.strip():
                 cmd += [flag, w.value.strip()]
+
+        # --rename is emitted from its own widget rather than the loop above, and
+        # that widget only exists under Install. Two independent things therefore
+        # have to be true before a rename can happen: the right door, and a name
+        # actually typed. It used to be "--hostname" fed from a field whose BLANK
+        # value meant "derive one from the components", which is how installing a
+        # component became a rename.
+        if not self.is_modify:
+            rename = field("#np-rename", Input)
+            if rename is not None and rename.value.strip():
+                cmd += ["--rename", rename.value.strip()]
         nmp = field("#np-nomaxpower", Checkbox)
         if nmp is not None and nmp.value:
             cmd.append("--no-max-power")
+        # Consent flags. Each is emitted only from its own box, which only
+        # exists under Install; the dispatcher refuses to do either without
+        # the flag, so a Modify run structurally cannot trim or wipe.
+        trim = field("#np-trimos", Checkbox)
+        if trim is not None and trim.value:
+            cmd.append("--trim-os")
+        wipe = field("#np-wipenvme", Checkbox)
+        if wipe is not None and wipe.value and getattr(self, "_wipe_confirmed", False):
+            cmd.append("--wipe-nvme")
 
         events = Path(tempfile.gettempdir()) / f"seren-prep-{os.getpid()}.jsonl"
         try:
@@ -1431,7 +1734,9 @@ class PrepareNodeScreen(Screen):
             pass
         cmd += ["--events", str(events)]
 
-        self.app.jobs = [Job(label=f"prepare node ({node.platform or 'forced'})",  # type: ignore[attr-defined]
+        what = ", ".join(c.name for c in chosen) if chosen else "base prep only"
+        verb = "modify" if self.is_modify else "install"
+        self.app.jobs = [Job(label=f"{verb} node ({node.platform or 'forced'}): {what}",  # type: ignore[attr-defined]
                              cmd=cmd, events_file=events)]
         self.app.push_screen(InstallScreen())
 
@@ -1629,11 +1934,19 @@ class StarwrightApp(App):
        button clean off screen on exactly the headless SSH session this TUI
        exists for. 100% with a max keeps the art roomy on a wide terminal and
        usable on a narrow one. */
-    #splash { width: 100%; max-width: 92; align: center middle; padding: 2; }
+    #splash { width: 100%; max-width: 92; align: center middle; padding: 1 2; }
     #banner { color: #997256; text-align: center; }
-    #tagline { color: #6c7086; text-align: center; padding-bottom: 2; }
-    #splash Button { width: 100%; margin: 1 0; }
-    #splash-note { color: #6c7086; text-align: center; padding-top: 1; }
+    #tagline { color: #6c7086; text-align: center; padding-bottom: 1; }
+    /* Bottom margin only. A symmetric vertical margin collapses to nothing
+       between siblings in some layouts and to double elsewhere; one side is
+       predictable, and it is the row that let Exit back onto an 80x24 screen. */
+    #splash Button { width: 100%; margin: 0 0 1 0; }
+    /* The node pair shares a row - see the note in SplashScreen.compose. The
+       height must be auto or the Horizontal stretches and eats the rows the
+       row was added to save. */
+    #splash-node-row { height: auto; width: 100%; }
+    #splash-node-row Button { width: 1fr; margin: 0 1 1 1; }
+    #splash-note { color: #6c7086; text-align: center; padding-bottom: 1; }
     #select-root { padding: 1 2; }
     /* Explicit height:auto all the way down. Without it on the GROUP and the
        CARDS row, the outer container fixed its height first and clipped the

@@ -17,6 +17,7 @@
 #    --token TOKEN    Set a bearer token
 #    --gen-token      Generate a random bearer token
 #    --wheel PATH     Install from a local .whl
+#    --local DIR|URL  Install from a dev wheelhouse (seren-dev-publish.sh)
 #    --ref TAG        Pin to a GitHub release tag
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via systemd/launchd
@@ -63,6 +64,7 @@ HOST="127.0.0.1"
 TOKEN=""
 GEN_TOKEN=false
 WHEEL=""
+LOCAL=""
 REF=""
 REPO=""
 INSTALL_SERVICE=false
@@ -103,6 +105,7 @@ while [[ $# -gt 0 ]]; do
     --token)     TOKEN="$2"; shift 2 ;;
     --gen-token) GEN_TOKEN=true; shift ;;
     --wheel)     WHEEL="$2"; shift 2 ;;
+    --local)     LOCAL="$2"; shift 2 ;;
     --ref)       REF="$2"; shift 2 ;;
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
@@ -124,13 +127,13 @@ APP_DIR="$APP_DIR$INSTANCE"
 CFG_PATH="$APP_DIR/seren-corpus-callosum.yaml"
 CONNECT_HOST="$HOST"
 [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
-[[ -n "$INSTANCE" && "$PORT" == "7423" ]] && warn "Instance '$INSTANCE' uses default port 7423 — may collide."
+[[ -n "$INSTANCE" && "$PORT" == "7423" ]] && warn "Instance '$INSTANCE' uses default port 7423 - may collide."
 
 echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenCorpusCallosum setup (macOS)${NC}" || echo -e "${G}  SerenCorpusCallosum setup (Linux)${NC}"
 echo -e "${G}==========================================${NC}"
 
-# -- 1. find Python (3.10+; no upper cap — SCC never pulls torch) -------------
+# -- 1. find Python (3.10+; no upper cap - SCC never pulls torch) -------------
 step "Finding a usable Python (3.10+)"
 PYBIN=""
 for cand in python3.13 python3.12 python3.11 python3.10 python3 python; do

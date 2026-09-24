@@ -48,9 +48,13 @@ PYBIN=""
 for c in python3.12 python3.11 python3.10 python3 python; do
   command -v "$c" >/dev/null 2>&1 || continue
   v="$("$c" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "")"
-  case "$v" in 3.10|3.11|3.12|3.13) PYBIN="$c"; break ;; esac
+  # 3.13 is NOT in this list, and it used to be: the TUI would bootstrap on a
+  # 3.13 while every installer it launches refuses one, so the first thing a
+  # 3.13-only box saw was an installer failing on Python after the TUI had
+  # happily started. Same window everywhere, or the window means nothing.
+  case "$v" in 3.10|3.11|3.12) PYBIN="$c"; break ;; esac
 done
-[[ -n "$PYBIN" ]] || die "No Python 3.10+ found.
+[[ -n "$PYBIN" ]] || die "No Python 3.10-3.12 found (3.13+ is not accepted by the installers yet).
   Debian/Ubuntu:  sudo apt install python3 python3-venv
   Fedora:         sudo dnf install python3"
 

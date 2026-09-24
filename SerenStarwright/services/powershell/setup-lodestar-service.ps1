@@ -2,7 +2,7 @@
 ══════════════════════════════════════════════════════════════════════════
   setup-lodestar-service.ps1  -  SerenLodestar pointed wrapper (Windows/NSSM)
 
-  Was setup-runtimehost-service.ps1 (.NET) — renamed when runtimehost → lodestar
+  Was setup-runtimehost-service.ps1 (.NET) - renamed when runtimehost → lodestar
   on PyPI. Now a Python service using the shared NSSM core.
 
   RUN IT: elevated PowerShell, as yourself.

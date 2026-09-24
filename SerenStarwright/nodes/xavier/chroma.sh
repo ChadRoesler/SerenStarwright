@@ -1,6 +1,6 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# xavier/chroma.sh — Install ChromaDB vector store (Xavier)
+# xavier/chroma.sh - Install ChromaDB vector store (Xavier)
 #
 # Sourced by seren-prepare-node.sh. Defines install_chroma().
 #
@@ -20,7 +20,7 @@ install_chroma() {
     local LOWEST; LOWEST=$(printf '%s\n%s\n' "$REQUIRED" "$SQLITE_VERSION" | sort -V | head -n1)
     if [ "$LOWEST" != "$REQUIRED" ]; then
         fail "SQLite $SQLITE_VERSION too old for ChromaDB (need >= $REQUIRED)"
-        fail "Foundation phase 02 should have built SQLite 3.45 — did it run?"
+        fail "Foundation phase 02 should have built SQLite 3.45 - did it run?"
         return 1
     fi
     log "SQLite $SQLITE_VERSION ✓"
@@ -42,7 +42,7 @@ install_chroma() {
     #   https://docs.trychroma.com/troubleshooting#sqlite
     log "Installing chromadb + pysqlite3-binary into venv..."
     venv_pip chroma install pysqlite3-binary || \
-        warn "pysqlite3-binary install failed — chromadb may reject the system sqlite3"
+        warn "pysqlite3-binary install failed - chromadb may reject the system sqlite3"
     venv_pip chroma install chromadb || {
         fail "ChromaDB install failed"
         return 1
@@ -56,7 +56,7 @@ install_chroma() {
     CHROMA_SITE=$(venv_python chroma -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
     if [ -n "$CHROMA_SITE" ] && [ -d "$CHROMA_SITE" ]; then
         sudo -u "$TARGET_USER" tee "$CHROMA_SITE/sitecustomize.py" > /dev/null << 'EOF'
-# Seren chroma venv — swap stdlib sqlite3 for pysqlite3 (which bundles a
+# Seren chroma venv - swap stdlib sqlite3 for pysqlite3 (which bundles a
 # modern libsqlite3 >= 3.45 that ChromaDB requires). This file is auto-
 # imported by Python at startup, so the swap happens before any import
 # of sqlite3 can return the stale system version.
@@ -65,11 +65,11 @@ try:
     __import__("pysqlite3")
     sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 except ImportError:
-    pass  # fall through to stdlib sqlite3 — chromadb will complain loudly if too old
+    pass  # fall through to stdlib sqlite3 - chromadb will complain loudly if too old
 EOF
         log "sqlite3 shim installed at $CHROMA_SITE/sitecustomize.py"
     else
-        warn "Could not locate venv site-packages — sqlite3 shim not installed"
+        warn "Could not locate venv site-packages - sqlite3 shim not installed"
     fi
 
     # ── Persistence dir ──
@@ -83,7 +83,7 @@ import chromadb
 client = chromadb.PersistentClient(path='$USER_HOME/seren-memory')
 print(f'  chromadb {chromadb.__version__} imports OK')
 print(f'  persistence dir: $USER_HOME/seren-memory')
-" 2>&1 || warn "chromadb import failed — check pip install above"
+" 2>&1 || warn "chromadb import failed - check pip install above"
 
     log "ChromaDB installed; persistence at $USER_HOME/seren-memory"
     log "Venv: ~/seren-venvs/chroma"

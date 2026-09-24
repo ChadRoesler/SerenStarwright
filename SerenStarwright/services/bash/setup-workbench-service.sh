@@ -2,7 +2,7 @@
 # ==========================================================================
 #  setup-workbench-service.sh  -  SerenWorkbench pointed wrapper
 #
-#  Was setup-mcp-service.sh (.NET) — renamed when mcp → workbench on PyPI.
+#  Was setup-mcp-service.sh (.NET) - renamed when mcp → workbench on PyPI.
 #  Now a Python service using the shared generic core (setup-seren-service.sh).
 #  Follows the Memory/Loci service-wrapper pattern.
 #

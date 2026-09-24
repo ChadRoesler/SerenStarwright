@@ -1,8 +1,8 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# nano/llama.sh — Install llama.cpp inference server (Nano)
+# nano/llama.sh - Install llama.cpp inference server (Nano)
 #
-# Same pattern as xavier/llama.sh — copies the staged binary into
+# Same pattern as xavier/llama.sh - copies the staged binary into
 # ~/llama.cpp/build/bin/. Only difference is the binary is the
 # orin-tagged variant (arch 87) and runtime LD_LIBRARY_PATH points
 # to CUDA 12.6 instead of 12.2.

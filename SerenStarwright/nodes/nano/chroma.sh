@@ -1,15 +1,15 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# nano/chroma.sh — Install ChromaDB vector store (Nano)
+# nano/chroma.sh - Install ChromaDB vector store (Nano)
 #
-# Simpler than xavier/chroma.sh — Ubuntu 22.04 ships SQLite 3.37+
+# Simpler than xavier/chroma.sh - Ubuntu 22.04 ships SQLite 3.37+
 # which already satisfies ChromaDB's requirement.
 # ══════════════════════════════════════════════════════════════
 
 install_chroma() {
     local USER_HOME="/home/$TARGET_USER"
 
-    # Sanity check — Ubuntu 22.04 should have 3.37+
+    # Sanity check - Ubuntu 22.04 should have 3.37+
     local SQLITE_VERSION; SQLITE_VERSION=$(sqlite3 --version 2>/dev/null | awk '{print $1}' || echo "0")
     local REQUIRED="3.35.0"
     local LOWEST; LOWEST=$(printf '%s\n%s\n' "$REQUIRED" "$SQLITE_VERSION" | sort -V | head -n1)

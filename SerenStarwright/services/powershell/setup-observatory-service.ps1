@@ -2,7 +2,7 @@
 ══════════════════════════════════════════════════════════════════════════
   setup-observatory-service.ps1  -  SerenObservatory pointed wrapper (Windows/NSSM)
 
-  Was setup-agent-service.ps1 — renamed when agent → observatory on PyPI.
+  Was setup-agent-service.ps1 - renamed when agent → observatory on PyPI.
   Follows the Memory/Loci service-wrapper pattern.
 
   RUN IT: elevated PowerShell, as yourself.

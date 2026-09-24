@@ -26,6 +26,33 @@ jobs:
           if [ -n "$bad" ]; then echo "$bad"; exit 1; fi
           echo "all .sh are LF"
 
+      # Windows PowerShell 5.1 reads a BOM-less .ps1 as the ANSI codepage. A
+      # multibyte character then ends a string early and the whole file fails
+      # to PARSE - nine installers were in that state while looking perfect in
+      # a diff. Non-ASCII requires a BOM; pure ASCII may go without.
+      - name: Every non-ASCII .ps1 carries a UTF-8 BOM
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+          bad = []
+          for p in pathlib.Path(".").rglob("*.ps1"):
+              if ".git" in p.parts: continue
+              b = p.read_bytes()
+              if any(x > 127 for x in b) and not b.startswith(b"\xef\xbb\xbf"):
+                  bad.append(str(p))
+          if bad:
+              print("non-ASCII without a BOM (5.1 will misparse):"); print("\n".join(bad)); sys.exit(1)
+          print("every non-ASCII .ps1 has a BOM")
+          PY
+
+      # The two things node prep cannot undo and the one place it downloads
+      # binaries from, exercised against a fake release served from a folder.
+      - name: prebuilt staging verifies against the release index
+        run: bash SerenStarwright/nodes/tests/test-prebuilts-fetch.sh
+
+      - name: --local installs from a dev wheelhouse (real pip, no network)
+        run: bash SerenStarwright/services/tests/test-local-wheelhouse.sh
+
       - name: bash -n every script
         run: |
           fail=0
@@ -52,7 +79,11 @@ jobs:
           assert rows, "no services described"
           req = {"schema_version", "name", "display", "description", "group",
                  "package", "default_host", "default_port", "extras", "flags",
-                 "requires", "accent"}
+                 "requires", "accent", "switches"}
+          for d in rows:
+              # a switch is a flag; --no-updates is one on every card
+              assert set(d["switches"]) <= set(d["flags"]), "%s: switches not in flags" % d["name"]
+              assert "no-updates" in d["switches"], "%s: no-updates missing from switches" % d["name"]
           for d in rows:
               missing = req - set(d)
               assert not missing, "%s: missing %s" % (d.get("name"), sorted(missing))
@@ -71,10 +102,68 @@ jobs:
           d = json.load(open("node.json"))
           assert d["flags"], "node describe advertises no flags"
           assert d["components"], "node describe lists no components"
-          print("%s: %d components, %d flags"
-                % (d["platform"], len(d["components"]), len(d["flags"])))
+          # Prep and rename are opt-in, and the TUI renders its prep checkbox and
+          # rename field ONLY if these are advertised. Losing them turns the
+          # screen back into one that always preps and derives a hostname.
+          for f in ("prep", "no-prep", "rename"):
+              assert f in d["flags"], "node describe lost '%s'" % f
+          # -H/--hostname is rejected from the catch-all precisely so it does NOT
+          # appear here. If it comes back, the TUI renders the auto-derive input
+          # whose blank default renamed a box mid-install.
+          assert "hostname" not in d["flags"], "retired 'hostname' is advertised again"
+          for k in ("provisioned", "provisioned_at", "hostname_managed"):
+              assert k in d, "node describe is missing '%s'" % k
+          print("%s: %d components, %d flags, provisioned=%s"
+                % (d["platform"], len(d["components"]), len(d["flags"]),
+                   d["provisioned"]))
           PY
           done
+
+      # A component install must not be able to rename the box. The dispatcher
+      # refuses the retired flag outright rather than quietly ignoring it, so
+      # any script or runbook still passing it FAILS LOUDLY instead of renaming.
+      - name: retired --hostname is refused, not ignored
+        run: |
+          cd SerenStarwright
+          if bash nodes/seren-prepare-node.sh --platform nano -l --hostname boom >out.txt 2>&1; then
+            echo "--hostname was ACCEPTED - a component install can still rename:"
+            cat out.txt
+            exit 1
+          fi
+          grep -q -- "--rename" out.txt || { echo "rejection does not point at --rename:"; cat out.txt; exit 1; }
+          echo "refused, and it names the replacement"
+
+      # Nothing-to-do must stay an error, and --prep alone must stay valid: the
+      # arg gate was "at least one component" back when a component was the only
+      # thing you could ask for.
+      - name: --prep alone is a valid request
+        run: |
+          cd SerenStarwright
+          bash nodes/seren-prepare-node.sh --describe --platform nano >/dev/null
+          if bash nodes/seren-prepare-node.sh --platform nano >out.txt 2>&1; then
+            echo "no arguments was accepted; it should be an error"; cat out.txt; exit 1
+          fi
+          grep -q "Nothing to do" out.txt || { echo "wrong error for no args:"; cat out.txt; exit 1; }
+          echo "no-args refused with the right message"
+
+  powershell:
+    # verify-powershell.ps1 existed and was never run by CI, so "the PowerShell
+    # side works" was a claim nobody had checked since it was written. This
+    # runs it under BOTH engines a Windows user might have: Windows PowerShell
+    # 5.1 (powershell.exe, the strict one) and PowerShell 7 (pwsh).
+    name: PowerShell installers (${{ matrix.shell }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify-powershell.ps1
+        shell: ${{ matrix.shell }}
+        run: |
+          & "$env:GITHUB_WORKSPACE\SerenStarwright\verify-powershell.ps1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   tui:
     name: TUI suite (py${{ matrix.python-version }})

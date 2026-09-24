@@ -1,13 +1,13 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════
-# spark/llama.sh — Install llama.cpp inference server (DGX Spark)
+# spark/llama.sh - Install llama.cpp inference server (DGX Spark)
 #
-# Blackwell GB10 GPU — CUDA arch 120 (tentative, adjust per NVIDIA docs).
-# Spark has 128GB unified memory — run with --parallel 2 or more,
+# Blackwell GB10 GPU - CUDA arch 120 (tentative, adjust per NVIDIA docs).
+# Spark has 128GB unified memory - run with --parallel 2 or more,
 # and cache types can be more generous than Jetson.
 #
 # The staged binary is Blackwell-tagged. LD_LIBRARY_PATH points to
-# the JP7 CUDA path (no compat shim needed — JP7 ships matching driver).
+# the JP7 CUDA path (no compat shim needed - JP7 ships matching driver).
 # ══════════════════════════════════════════════════════════════
 
 install_llama() {
@@ -40,7 +40,7 @@ install_llama() {
     # Generate a recommended launch config for the Spark
     sudo -u "$TARGET_USER" tee "$USER_HOME/start-llama-spark.sh" > /dev/null << 'STARTEOF'
 #!/bin/bash
-# start-llama-spark.sh — recommended launch for DGX Spark (128GB, Blackwell)
+# start-llama-spark.sh - recommended launch for DGX Spark (128GB, Blackwell)
 #
 # Blackwell GB10 has ~96GB usable VRAM via unified memory. Run larger
 # models (70B Q4, 120B Q3) with --parallel 2 for concurrent users.

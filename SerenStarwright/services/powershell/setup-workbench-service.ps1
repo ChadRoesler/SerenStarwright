@@ -2,7 +2,7 @@
 ══════════════════════════════════════════════════════════════════════════
   setup-workbench-service.ps1  -  SerenWorkbench pointed wrapper (Windows/NSSM)
 
-  Was setup-mcp-service.ps1 (.NET) — renamed when mcp → workbench on PyPI.
+  Was setup-mcp-service.ps1 (.NET) - renamed when mcp → workbench on PyPI.
   Now a Python service using the shared NSSM core (setup-seren-service.ps1).
 
   RUN IT: elevated PowerShell, as yourself.

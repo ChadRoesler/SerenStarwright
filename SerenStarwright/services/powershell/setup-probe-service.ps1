@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════════════════
 #  setup-probe-service.ps1  -  SerenProbe pointed wrapper (Windows/NSSM)
 #
-#  Local-only probe — no bearer token, no env vars. Follows the Margin
+#  Local-only probe - no bearer token, no env vars. Follows the Margin
 #  pattern (private, localhost-only).
 #
 #  INSTANCE CONVENTION (mirrors seren-probe-setup.ps1):
