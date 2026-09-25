@@ -112,7 +112,7 @@ STAGES=()
 # So: change a value here, and SerenTheatre's suite tells you about it.
 SVC_NAME="seren-theatre"
 SVC_DISPLAY="Seren Theatre"
-SVC_DESC="Watch a model being made. Read-only viewer over training logs and artifacts."
+SVC_DESC="Watch a MsMoe model being made"
 SVC_GROUP="auxiliary"
 SVC_PACKAGE="seren-theatre"
 # Every other service in the constellation gets a colour. The theatre gets the

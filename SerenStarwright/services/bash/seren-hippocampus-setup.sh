@@ -90,7 +90,7 @@ APP_DIR="$HOME/seren-hippocampus"
 # -- Starwright contract: identity + machine-readable metadata ----------------
 SVC_NAME="seren-hippocampus"
 SVC_DISPLAY="Seren Hippocampus"
-SVC_DESC="The sleep cycle for SerenMemory: drafts the docket, resubmits on critique, purges what was flagged"
+SVC_DESC="The sleep cycle for SerenMemory"
 SVC_GROUP="brain"
 SVC_PACKAGE="seren-hippocampus"
 SVC_REQUIRES="seren-memory"

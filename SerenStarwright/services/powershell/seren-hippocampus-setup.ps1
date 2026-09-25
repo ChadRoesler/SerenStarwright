@@ -66,7 +66,7 @@ if ($Describe) {
         ScriptPath  = $PSCommandPath
         Name        = 'seren-hippocampus'
         Display     = 'Seren Hippocampus'
-        Description = 'The sleep cycle for SerenMemory: drafts the docket, resubmits on critique, purges what was flagged'
+        Description = 'The sleep cycle for SerenMemory'
         Group       = 'brain'
         Package     = 'seren-hippocampus'
         Accent      = '#c9a0dc'

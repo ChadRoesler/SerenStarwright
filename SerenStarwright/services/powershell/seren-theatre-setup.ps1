@@ -96,7 +96,7 @@ if ($Describe) {
         ScriptPath  = $PSCommandPath
         Name        = 'seren-theatre'
         Display     = 'Seren Theatre'
-        Description = 'Watch a model being made. Read-only viewer over training logs and artifacts.'
+        Description = 'Watch a MsMoe model being made'
         Group       = 'auxiliary'
         Package     = 'seren-theatre'
         # Every other service in the constellation gets a colour. The theatre

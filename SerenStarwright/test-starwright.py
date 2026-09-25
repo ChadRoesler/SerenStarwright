@@ -113,8 +113,9 @@ async def test_dependencies() -> None:
             return ok("corpus-callosum absent, skipped")
         app.screen.query_one(f"#svc-{scc}", Checkbox).value = True
         await pilot.pause()
-        note = str(app.screen.query_one("#dep-note", Static).content)
-        check("memory" in note and "loci" in note, f"dep note names both: {note!r}")
+        note = widget_text(app.screen.query_one("#setup-note", Static))
+        check("pulled in as dependencies" in note and "memory" in note and "loci" in note,
+              f"the panel names both: {note!r}")
         await pilot.click("#next")
         await pilot.pause()
         order = app.selected
@@ -875,12 +876,77 @@ async def test_install_ledger() -> None:
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.click("#install")
         await pilot.pause()
-        note = app.screen.query_one("#installed-note", Static).content
-        check("memory@wren :7267" in str(note) and "loci :7422" in str(note), f"installed note: {note}")
-        if "seren-memory" in svcs:
-            card = app.screen.query_one("#inst-seren-memory", Static).content
-            check("v3.1.0 :7420" in str(card) and "@wren :7267" in str(card), f"memory card lists both: {card}")
+        note = widget_text(app.screen.query_one("#setup-note", Static))
+        check("memory @wren" in note and ":7267" in note and "loci" in note and ":7422" in note,
+              f"the Previous install data panel lists them: {note}")
+        check("v3.1.0 :7420" in note, f"...both memories, the default one too: {note}")
+        check(not app.screen.query("#installed-note") and not app.screen.query("#inst-seren-memory"),
+              "and nowhere else: no bottom note, nothing on the cards")
     shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_select_layout() -> None:
+    """Chad's drawing, 25 Sept: a Setup box; room between the continue row
+    and name / port; the port takes digits only; a new setup may not take an
+    existing name; groups at most three cards wide; every card one size with
+    a two-line description; 'X requires Y' under the group until it is met."""
+    print("\n== Select screen layout (the drawing)")
+    import tempfile
+    services, problems = sw.discover()
+    svcs = {x.name: x for x in services}
+    home = Path(tempfile.mkdtemp())
+    os.environ["SEREN_SETUPS_DIR"] = str(home / "setups")
+    try:
+        mem = sw.InstalledRecord(service="seren-memory", instance="wren", host="127.0.0.1", port=7267,
+                                 config=str(home / "m.yaml"), version="3.1.0", setup="wren")
+        sw.save_setup(sw.Setup(name="wren", instance="wren", base_port=7265, members=[mem.label]), home / "setups")
+        for cols, want in ((140, 3), (80, 2)):
+            app = sw.StarwrightApp(services, problems, installed=[mem])
+            async with app.run_test(size=(cols, 50)) as pilot:
+                await pilot.click("#install"); await pilot.pause(); await pilot.pause()
+                scr = app.screen
+                check(scr.query_one("#setup-box").border_title == "Setup", f"{cols}: the setup sits in a box titled Setup")
+                check(scr.query_one("#prev-box").border_title == "Previous install data", f"{cols}: with the install data inside it")
+                cont, fields = scr.query_one("#use-setup"), scr.query_one("#setup-fields")
+                check(fields.region.y - (cont.region.y + cont.region.height) >= 1,
+                      f"{cols}: a gap between the continue row and name / port")
+                cards = list(scr.query(sw.ServiceCard))
+                sizes = {(c.outer_size.width, c.outer_size.height) for c in cards}
+                check(len(sizes) == 1, f"{cols}: every card one size: {sizes}")
+                per_row: dict = {}
+                for c in cards:
+                    per_row.setdefault((c.parent.id, c.region.y), []).append(c)
+                widest = max(len(v) for v in per_row.values())
+                check(widest == want, f"{cols} columns: {want} cards across at most (got {widest})")
+                off = [c.svc.name for c in cards if c.region.right > cols]
+                check(not off, f"{cols}: no card off the right edge {off}")
+                clipped = [c.svc.name for c in cards if c.query_one(".card-desc").outer_size.height > 2]
+                check(not clipped, f"{cols}: descriptions at most two lines {clipped}")
+                if cols != 140:
+                    continue
+                req = widget_text(scr.query_one("#req-brain", Static))
+                check("requires" in req and "Hippocampus" not in req, f"memory is installed: the hippocampus line is gone: {req!r}")
+                check("Corpus Callosum requires" in req and "Loci" in req, f"the callosum still needs loci: {req!r}")
+                scr.query_one("#svc-seren-loci", Checkbox).value = True; await pilot.pause()
+                req = widget_text(scr.query_one("#req-brain", Static))
+                check("Corpus Callosum" not in req, f"ticking loci meets it: {req!r}")
+                base = scr.query_one("#setup-base", Input)
+                base.value = ""; base.focus(); await pilot.press("7", "x", "4", "0", "0"); await pilot.pause()
+                check(base.value == "7400", f"the port takes digits only: {base.value!r}")
+                scr.query_one("#setup-name", Input).value = "wren"; await pilot.pause()
+                check("already exists" in widget_text(scr.query_one("#setup-warn", Static)), "a clashing new name is called out")
+                await pilot.click("#next"); await pilot.pause()
+                check(isinstance(app.screen, sw.SelectScreen), "...and Next will not overwrite that setup")
+                scr.query_one("#setup-name", Input).value = "rhys"; await pilot.pause()
+                check(not widget_text(scr.query_one("#setup-warn", Static)), "another name clears it")
+                # continuing shows the setup and not the rest of the box
+                scr.query_one("#use-setup", Checkbox).value = True; await pilot.pause()
+                scr.query_one("#setup-pick", Select).value = "wren"; await pilot.pause(); await pilot.pause()
+                note = widget_text(scr.query_one("#setup-note", Static))
+                check(note.startswith("setup 'wren'") and "not in any setup" not in note, f"continuing shows that setup: {note!r}")
+    finally:
+        os.environ.pop("SEREN_SETUPS_DIR", None)
+        shutil.rmtree(home, ignore_errors=True)
 
 
 async def test_setups() -> None:
@@ -1039,7 +1105,7 @@ async def test_record_found_modal() -> None:
             st = sw.load_setups(home)
             check(len(st) == 1 and st[0].name == "everything but three" and len(st[0].members) == 9,
                   f"setup saved with its members: {st}")
-            note = widget_text(app.screen.query_one("#setup-note", Static))
+            note = widget_text(app.screen.query_one("#setup-warn", Static))
             check("recorded 9 install(s)" in note, f"selection screen says so: {note}")
             check(not app.screen.query_one("#use-setup", Checkbox).disabled, "the picker is offered now")
             check("record 1 found install" in str(app.screen.query_one("#record-found", Button).label), "one left to record")
@@ -1070,13 +1136,13 @@ async def test_installed_dependency_is_used_not_reinstalled() -> None:
             await pilot.click("#install"); await pilot.pause()
             app.screen.query_one("#svc-seren-hippocampus", Checkbox).value = True
             await pilot.pause(); await pilot.pause()
-            dep = widget_text(app.screen.query_one("#dep-note", Static))
+            dep = widget_text(app.screen.query_one("#setup-note", Static))
             await pilot.click("#next"); await pilot.pause(); await pilot.pause()
             note = widget_text(app.screen.query_one("#cfg-installed", Static))
             return app, dep, note
 
     app, dep, note = await pick_hippocampus(one)
-    check("already installed, will be used: memory" in dep, f"select screen says the installed memory will be used: {dep}")
+    check("will be used: memory" in dep, f"select screen says the installed memory will be used: {dep}")
     check(app.selected == ["seren-hippocampus"], f"only the hippocampus is installed: {app.selected}")
     hip = app.per_service.get("seren-hippocampus", {})
     check(hip.get("memory-config", "").endswith("seren-memory.yaml") and "memory-url" not in hip,
@@ -1273,6 +1339,7 @@ async def main() -> int:
     await test_command_building()
     await test_local_wheelhouse_option()
     await test_install_ledger()
+    await test_select_layout()
     await test_setups()
     await test_record_found_modal()
     await test_installed_dependency_is_used_not_reinstalled()

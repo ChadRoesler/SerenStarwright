@@ -97,7 +97,7 @@ if "--version" in sys.argv or "-V" in sys.argv:
 try:
     from rich.text import Text
     from textual.app import App, ComposeResult
-    from textual.containers import (Horizontal, Vertical, VerticalScroll, Center)
+    from textual.containers import (Horizontal, Vertical, VerticalScroll, Center, Grid)
     from textual.screen import ModalScreen, Screen
     from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label, Select,
                                  ProgressBar, RadioButton, RadioSet, RichLog,
@@ -1296,6 +1296,61 @@ def setup_status(setup: Setup, svcs: dict[str, ServiceDef], installed: list[Inst
             + (" - missing " + ", ".join(missing) if missing else ""))
 
 
+def previous_install_data(installed: list[InstalledRecord], setups: list["Setup"],
+                          picked: Optional["Setup"], svcs: dict[str, "ServiceDef"],
+                          chosen: set[str]) -> list[str]:
+    """Everything the box already has that bears on this run, in one place.
+
+    Chad, 25 Sept: this was split between the top of the screen, the bottom
+    and some of the cards. Continuing a setup shows that setup and nothing
+    else - other installs are not called out unless this run adds a service
+    that will be wired to one. Not continuing shows the whole box, by setup."""
+    def line(r: InstalledRecord) -> str:
+        return (f"  {r.service.replace('seren-', '', 1)} {installed_summary(r)}"
+                + ("  (found, not recorded)" if r.derived else ""))
+
+    out: list[str] = []
+    if picked is not None:
+        out.append(setup_status(picked, svcs, installed))
+        out += [line(r) for r in installed if r.label in picked.members]
+    elif installed:
+        in_setup = {m: st.name for st in setups for m in st.members}
+        groups: dict[str, list[InstalledRecord]] = {}
+        for r in installed:
+            groups.setdefault(in_setup.get(r.label, ""), []).append(r)
+        for name in sorted(groups, key=lambda k: (k == "", k)):
+            out.append(f"setup '{name}':" if name else "not in any setup:")
+            out += [line(r) for r in groups[name]]
+    else:
+        out.append("nothing installed by Starwright on this box yet")
+
+    pulled = resolve_dependencies(chosen, svcs) - chosen
+    sat = satisfied_dependencies(pulled, installed, picked)
+    for n, recs in sorted(sat.items()):
+        out.append(f"will be used: {n.replace('seren-', '', 1)} "
+                   f"({', '.join(installed_summary(r) for r in recs)})")
+    missing = sorted(x.replace("seren-", "", 1) for x in pulled if x not in sat)
+    if missing:
+        out.append("pulled in as dependencies: " + ", ".join(missing))
+    return out
+
+
+def requirement_lines(members: list["ServiceDef"], svcs: dict[str, "ServiceDef"],
+                      installed: list[InstalledRecord], picked: Optional["Setup"],
+                      chosen: set[str]) -> list[str]:
+    """'Hippocampus requires Memory to be installed', for each service in a
+    group whose requirements are not met yet. Met = installed (in the picked
+    setup, when there is one) or ticked in this run."""
+    have = {r.service for r in installed if picked is None or r.label in picked.members}
+    out = []
+    for s in members:
+        unmet = [r for r in s.requires if r not in have and r not in chosen]
+        if unmet:
+            names = [svcs[r].display if r in svcs else r.replace("seren-", "", 1) for r in unmet]
+            out.append(f"{s.display} requires {' and '.join(names)} to be installed")
+    return out
+
+
 def installed_for(service: str, installed: list[InstalledRecord]) -> list[InstalledRecord]:
     return [r for r in installed if r.service == service]
 
@@ -1322,9 +1377,11 @@ def prefill_from_installed(svc: ServiceDef, cfg: dict, installed: list[Installed
 
 
 def reinstall_notes(selected: list[str], overrides: dict[str, dict],
-                    installed: list[InstalledRecord]) -> list[str]:
+                    installed: list[InstalledRecord], beside: bool = True) -> list[str]:
     """Which of the chosen services are already here, and whether this run
-    lands on top of one (same instance) or beside it (a new instance)."""
+    lands on top of one (same instance) or beside it (a new instance).
+    beside=False (continuing a setup) leaves the other installs out: they are
+    not this setup's business."""
     out: list[str] = []
     for n in selected:
         recs = installed_for(n, installed)
@@ -1337,7 +1394,7 @@ def reinstall_notes(selected: list[str], overrides: dict[str, dict],
         if same:
             out.append(f"{short}: already installed here ({installed_summary(same[0])}) - this run re-installs it "
                        f"in place (the config is backed up); set an instance name under Advanced to install side by side")
-        elif others:
+        elif others and beside:
             out.append(f"{short}: installing instance '{inst}' beside " +
                        ", ".join(installed_summary(r) for r in others))
     return out
@@ -1527,7 +1584,9 @@ class SplashScreen(Screen):
 
 
 class ServiceCard(Vertical):
-    """One selectable service. Checkbox + description, as drawn."""
+    """One selectable service: a checkbox and a description, one size.
+    What is installed lives in the Previous install data panel and what a
+    service needs lives under its group - not on the card."""
 
     def __init__(self, svc: ServiceDef, installed: Optional[list[InstalledRecord]] = None) -> None:
         super().__init__(classes="card")
@@ -1544,18 +1603,9 @@ class ServiceCard(Vertical):
             cb.styles.color = self.svc.accent
             self.styles.border = ("round", self.svc.accent)
         yield cb
-        yield Static(self.svc.description, classes="card-desc")
-        if self.svc.requires:
-            yield Static("needs " + ", ".join(r.replace("seren-", "")
-                                              for r in self.svc.requires),
-                         classes="card-req")
-        if self.installed:
-            # What the ledger says is here: version, port, instance. A second
-            # instance reads as its own line, so side-by-side is visible before
-            # anyone picks a port.
-            lines = ["installed " + installed_summary(r) + (" (found, not recorded)" if r.derived else "")
-                     for r in self.installed]
-            yield Static("\n".join(lines), classes="card-inst", id=f"inst-{self.svc.name}")
+        desc = Static(self.svc.description, classes="card-desc")
+        desc.tooltip = self.svc.description          # clamped to two lines on the card
+        yield desc
 
 
 class SelectScreen(Screen):
@@ -1568,50 +1618,110 @@ class SelectScreen(Screen):
         with VerticalScroll(id="select-root"):
             # -- the setup: who or what this install is for ----------------
             app = self.app                                                  # type: ignore[assignment]
-            yield Static("Setup", classes="section")
             found = [r for r in app.installed if r.derived]                 # type: ignore[attr-defined]
-            with Horizontal(classes="setup-row"):
-                yield Checkbox("continue a previous setup", id="use-setup",
-                               disabled=not app.setups)                     # type: ignore[attr-defined]
-                yield Select([(f"{st.name}  (base :{st.base_port}, {len(st.members)} member{'s' if len(st.members) != 1 else ''})", st.name)
-                              for st in app.setups],                         # type: ignore[attr-defined]
-                             prompt="previous setup", id="setup-pick", disabled=True)
-            with Horizontal(classes="setup-row"):
-                yield Label("name")
-                yield Input(value=time.strftime("%Y-%m-%d"), id="setup-name")
-                yield Label("port base")
-                # The family's own band by default: adding a hippocampus to what is
-                # already here should not quietly become a side-by-side instance
-                # named after today. A new band is a choice, so it is a hint.
-                yield Input(value=str(FAMILY_BASE), id="setup-base")
-            if app.installed:                                                    # type: ignore[attr-defined]
-                yield Static(f"port base {FAMILY_BASE} = the default instance; for a separate set beside it, "
-                             f"the next free band is {suggest_base(app.installed, app.setups)}",   # type: ignore[attr-defined]
-                             classes="modal-sub")
-            if found:
-                yield Button(f"record {len(found)} found install{'s' if len(found) != 1 else ''}...", id="record-found",
-                             variant="default")
-            yield Static("", id="setup-note", classes="card-inst")
+            setup_box = Vertical(id="setup-box")
+            setup_box.border_title = "Setup"
+            with setup_box:
+                with Horizontal(classes="setup-row"):
+                    yield Checkbox("continue a previous setup", id="use-setup",
+                                   disabled=not app.setups)                 # type: ignore[attr-defined]
+                    yield Select([(f"{st.name}  (base :{st.base_port}, {len(st.members)} member{'s' if len(st.members) != 1 else ''})", st.name)
+                                  for st in app.setups],                     # type: ignore[attr-defined]
+                                 prompt="previous setup", id="setup-pick", disabled=True)
+                with Horizontal(classes="setup-row", id="setup-fields"):
+                    yield Label("name")
+                    yield Input(value=time.strftime("%Y-%m-%d"), id="setup-name")
+                    yield Label("port base")
+                    # The family's own band by default: adding a hippocampus to what is
+                    # already here should not quietly become a side-by-side instance
+                    # named after today. A new band is a choice, so it is a hint.
+                    # Digits only: a port is a number, and a stray letter used to
+                    # fall back to the default band without a word.
+                    yield Input(value=str(FAMILY_BASE), id="setup-base", restrict=r"[0-9]*", max_length=5)
+                yield Static("", id="setup-warn")
+                prev = Vertical(id="prev-box")
+                prev.border_title = "Previous install data"
+                with prev:
+                    yield Static("", id="setup-note", classes="card-inst")
+                    if app.installed:                                            # type: ignore[attr-defined]
+                        yield Static(f"port base {FAMILY_BASE} = the default instance; for a separate set beside it, "
+                                     f"the next free band is {suggest_base(app.installed, app.setups)}",   # type: ignore[attr-defined]
+                                     classes="modal-sub")
+                    if found:
+                        yield Button(f"record {len(found)} found install{'s' if len(found) != 1 else ''}...", id="record-found",
+                                     variant="default")
             for key, title in _ordered_groups(self.app.services):          # type: ignore[attr-defined]
                 members = [s for s in self.app.services if s.group == key]  # type: ignore[attr-defined]
                 if not members:
                     continue
-                with Vertical(classes="group"):
-                    yield Checkbox(title, id=f"grp-{key}", classes="group-head")
-                    with Horizontal(classes="cards"):
+                group = Vertical(classes="group")
+                group.border_title = title
+                with group:
+                    yield Checkbox("all of these", id=f"grp-{key}", classes="group-head")
+                    # A grid, not a row: a row never wraps, so the brain's five
+                    # cards ran off the right edge. At most three across; fewer
+                    # when the terminal is narrow (see _fit_columns).
+                    with Grid(classes="cards"):
                         for svc in members:
                             yield ServiceCard(svc, installed_for(svc.name, self.app.installed))  # type: ignore[attr-defined]
-            inst = self.app.installed                                    # type: ignore[attr-defined]
-            yield Static(("on this box already: " + ", ".join(
-                f"{r.service.replace('seren-', '', 1)}{'@' + r.instance if r.instance else ''}"
-                f"{' :' + str(r.port) if r.port else ''}" for r in inst)) if inst else "",
-                id="installed-note", classes="card-inst")
+                    yield Static("", id=f"req-{key}", classes="card-req")
             yield Static("", id="dep-note")
         with Horizontal(id="actions"):
             yield Button("Quit", id="quit", variant="error")
             yield Button("Back", id="back", variant="default")
             yield Button("Next", id="next", variant="primary")
         yield Footer()
+
+    CARD_CELL = 36                                   # card width 34 + a 2-column gutter
+
+    def on_mount(self) -> None:
+        self._refresh_panel()
+
+    def on_resize(self, event) -> None:              # noqa: ANN001 - textual's Resize
+        self._fit_columns(event.size.width)
+
+    def _fit_columns(self, width: int) -> None:
+        """At most three cards across, and never more than fit: 80 columns
+        takes two. The 8 is the screen's and the group's padding and borders;
+        the last card needs no gutter after it, hence + 2."""
+        n = max(1, min(3, (width - 8 + 2) // self.CARD_CELL))
+        for g in self.query(".cards"):
+            g.styles.grid_size_columns = n
+
+    def _refresh_panel(self) -> None:
+        """The Previous install data panel and each group's requirement lines,
+        from what is installed, the setup picked and what is ticked."""
+        app = self.app
+        picked, chosen = self._picked_setup(), self._selected()
+        try:
+            self.query_one("#setup-note", Static).update("\n".join(previous_install_data(
+                app.installed, app.setups, picked, app.svc_map, chosen)))   # type: ignore[attr-defined]
+        except Exception:                                # noqa: BLE001 - not composed yet
+            return
+        for key, _ in _ordered_groups(app.services):     # type: ignore[attr-defined]
+            members = [s for s in app.services if s.group == key]   # type: ignore[attr-defined]
+            try:
+                self.query_one(f"#req-{key}", Static).update("\n".join(requirement_lines(
+                    members, app.svc_map, app.installed, picked, chosen)))   # type: ignore[attr-defined]
+            except Exception:                            # noqa: BLE001 - a group with no members has no line
+                pass
+
+    def _name_clash(self) -> Optional[str]:
+        """A NEW setup may not take an existing setup's name: saving it would
+        overwrite that setup's record."""
+        if self._picked_setup() is not None:
+            return None
+        name = (self.query_one("#setup-name", Input).value or "").strip()
+        clash = next((st.name for st in self.app.setups if st.name.lower() == name.lower()), None)   # type: ignore[attr-defined]
+        return clash
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if (event.input.id or "") != "setup-name":
+            return
+        clash = self._name_clash()
+        self.query_one("#setup-warn", Static).update(
+            f"a setup named '{clash}' already exists - tick 'continue a previous setup' to add to it, "
+            f"or pick another name" if clash else "")
 
     # -- the setup picker ---------------------------------------------------
     def _picked_setup(self) -> Optional[Setup]:
@@ -1629,14 +1739,15 @@ class SelectScreen(Screen):
         if (event.select.id or "") != "setup-pick":
             return
         st = self._picked_setup()
-        name, base, note = self.query_one("#setup-name", Input), self.query_one("#setup-base", Input), self.query_one("#setup-note", Static)
+        name, base = self.query_one("#setup-name", Input), self.query_one("#setup-base", Input)
         if st is None:
             name.disabled = False; base.disabled = False
-            note.update("")
+            self._refresh_panel()
             return
         name.value, base.value = st.name, str(st.base_port)
         name.disabled = True; base.disabled = True
-        note.update(setup_status(st, self.app.svc_map, self.app.installed))   # type: ignore[attr-defined]
+        self.query_one("#setup-warn", Static).update("")
+        self._refresh_panel()
 
     def current_setup(self) -> Setup:
         """The setup this run installs into: the one picked, or a new one
@@ -1670,7 +1781,7 @@ class SelectScreen(Screen):
                     pass
                 self.query_one("#setup-name", Input).disabled = False
                 self.query_one("#setup-base", Input).disabled = False
-                self.query_one("#setup-note", Static).update("")
+            self._refresh_panel()
             return
         if cid.startswith("grp-"):
             key = cid[4:]
@@ -1692,27 +1803,16 @@ class SelectScreen(Screen):
         return out
 
     def _refresh_dep_note(self) -> None:
-        svcs = self.app.svc_map                          # type: ignore[attr-defined]
-        chosen = self._selected()
-        pulled = resolve_dependencies(chosen, svcs) - chosen
-        note = self.query_one("#dep-note", Static)
-        sat = satisfied_dependencies(pulled, self.app.installed, self._picked_setup())   # type: ignore[attr-defined]
-        parts = []
-        missing = sorted(x.replace("seren-", "") for x in pulled if x not in sat)
-        if missing:
-            parts.append("+ pulled in as dependencies: " + ", ".join(missing))
-        if sat:
-            parts.append("already installed, will be used: " + ", ".join(
-                f"{n.replace('seren-', '')} ({', '.join(installed_summary(r) for r in recs)})"
-                for n, recs in sorted(sat.items())))
-        note.update("\n".join(parts))
+        self.query_one("#dep-note", Static).update("")
+        self._refresh_panel()
 
     def _after_record(self, result: Optional[dict]) -> None:
         if not result:
             return
         self.app.setups = load_setups(installed=self.app.installed)      # type: ignore[attr-defined]
         try:
-            self.query_one("#setup-note", Static).update(
+            self._refresh_panel()
+            self.query_one("#setup-warn", Static).update(
                 f"recorded {result.get('count', 0)} install(s) into setup '{result.get('name', '')}'")
             self.query_one("#use-setup", Checkbox).disabled = not self.app.setups   # type: ignore[attr-defined]
             pick = self.query_one("#setup-pick", Select)
@@ -1740,9 +1840,15 @@ class SelectScreen(Screen):
                 self.query_one("#dep-note", Static).update(
                     "nothing selected - pick at least one service")
                 return
+            clash = self._name_clash()
+            if clash:
+                self.query_one("#dep-note", Static).update(
+                    f"a setup named '{clash}' already exists - continue it, or pick another name")
+                return
             full = resolve_dependencies(chosen, self.app.svc_map)   # type: ignore[attr-defined]
             st = self.current_setup()
             picked = self._picked_setup()
+            self.app.continuing = picked is not None                        # type: ignore[attr-defined]
             # A dependency the box already has is satisfied by it: wired, not
             # reinstalled. Only a missing one joins the run.
             sat = satisfied_dependencies(full - chosen, self.app.installed, picked)   # type: ignore[attr-defined]
@@ -2066,8 +2172,17 @@ class ConfigScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with VerticalScroll(id="config-root"):
+            prev = Vertical(id="cfg-prev-box")
+            prev.border_title = "Previous install data"
+            with prev:
+                yield Static("", id="cfg-inherited", classes="card-inst")
+                yield Static("\n".join(
+                    reinstall_notes(self.app.selected, self.app.per_service, self.app.installed,   # type: ignore[attr-defined]
+                                    beside=not getattr(self.app, "continuing", False))
+                    + dependency_notes(self.app.selected, self.app.svc_map, self.app.per_service,   # type: ignore[attr-defined]
+                                       self.app.installed)),                                        # type: ignore[attr-defined]
+                    id="cfg-installed", classes="card-inst")
             yield Static("Universal install options", classes="section")
-            yield Static("", id="cfg-inherited", classes="card-inst")
             yield Label("venv root")
             yield Input(placeholder="~/seren-venvs", id="u-venv")
             yield Checkbox("corporate TLS / intercepting proxy (--corp)", id="u-corp")
@@ -2134,11 +2249,6 @@ class ConfigScreen(Screen):
                         if svc.accent:
                             btn.styles.color = svc.accent
                         yield btn
-            yield Static("\n".join(
-                reinstall_notes(self.app.selected, self.app.per_service, self.app.installed)   # type: ignore[attr-defined]
-                + dependency_notes(self.app.selected, self.app.svc_map, self.app.per_service,   # type: ignore[attr-defined]
-                                   self.app.installed)),                                        # type: ignore[attr-defined]
-                id="cfg-installed", classes="card-inst")
             yield Static("", id="cfg-warn")
         with Horizontal(id="actions"):
             yield Button("Back", id="back", variant="default")
@@ -2959,15 +3069,25 @@ class StarwrightApp(App):
        CARDS row, the outer container fixed its height first and clipped the
        bottom line off every card whose description wrapped - the border landed
        mid-sentence ("The bridge between Loci and"). */
-    .group { border: round #45475a; padding: 0 1 1 1; margin: 1 0;
-             height: auto; width: auto; }
-    .group-head { color: #cba6f7; text-style: bold; }
-    .cards { height: auto; width: auto; }
-    .card { border: round #313244; width: 34; height: auto; min-height: 8;
-            padding: 0 1; margin: 0 1; }
-    .card-desc { color: #a6adc8; height: auto; }
-    .card-req { color: #f9e2af; height: auto; }
+    .group { border: round #45475a; border-title-color: #cba6f7; border-title-style: bold;
+             padding: 0 1; margin: 1 0; height: auto; width: auto; }
+    .group-head { color: #6c7086; }
+    /* Two columns until on_resize sets the real count (at most three). One
+       row height for every card: a checkbox and two lines of description. */
+    .cards { layout: grid; grid-size: 2; grid-columns: 34; grid-rows: 7;
+             grid-gutter: 0 2; height: auto; width: auto; }
+    .card { border: round #313244; width: 34; height: 7; padding: 0 1; margin: 0; }
+    .card-desc { color: #a6adc8; height: auto; max-height: 2; overflow: hidden; }
+    .card-req { color: #f9e2af; height: auto; padding: 0 0 0 1; }
     .card-inst { color: #a6e3a1; height: auto; }
+    #setup-box, #prev-box, #cfg-prev-box { border: round #45475a; border-title-color: #cba6f7;
+                                           border-title-style: bold; height: auto; padding: 0 1; }
+    #setup-box { margin: 1 0; }
+    #prev-box { margin: 1 0 0 0; }
+    #cfg-prev-box { margin: 1 0; }
+    /* the room Chad asked for between the continue row and name / port */
+    #setup-fields { margin: 1 0 0 0; }
+    #setup-warn { color: #f38ba8; height: auto; }
     .adv-folded { display: none; height: auto; }
     .setup-row { height: auto; }
     .setup-row Label { padding: 1 1 0 0; width: auto; }
@@ -3036,6 +3156,7 @@ class StarwrightApp(App):
         self.setup: Optional[Setup] = None           # the setup this run installs into
         self.inherited: dict = {}                    # install options taken from what the run builds on
         self.reinstalls: dict = {}                   # service -> the installed record this run reinstalls in place
+        self.continuing: bool = False                # a previous setup was picked on the select screen
         self.svc_map = {s.name: s for s in services}
         self.selected: list[str] = []
         self.per_service: dict[str, dict] = {}
