@@ -453,6 +453,28 @@ try {
     Remove-Item -Recurse -Force $sibTmp -ErrorAction SilentlyContinue
 }
 
+# -- 8. a reinstall keeps what the card does not write (Write-Launcher) ------
+Section "Keep the previous config (Write-Launcher -> seren-keep-config.py)"
+$keepTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-keep-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $keepTmp | Out-Null
+try {
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $py = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if (-not $py) { Note "no python on PATH - skipped" } else {
+        $cfg = Join-Path $keepTmp "seren-hippocampus.yaml"
+        [System.IO.File]::WriteAllText("$cfg.bak.1", "server:`n  port: 7269`nmodel:`n  url: x`n  lifecycle:`n    manage: true`n")
+        [System.IO.File]::WriteAllText($cfg, "server:`n  port: 7270`nmodel:`n  url: y`n")
+        $null = Write-Launcher -AppDir $keepTmp -ServiceName "seren-hippocampus" -Vpy $py -Module "seren_hippocampus" -CfgPath $cfg
+        $t = [System.IO.File]::ReadAllText($cfg)
+        if ($t -match "lifecycle:" -and $t -match "manage: true") { Good "the lifecycle block is carried forward" } else { Bad "lifecycle not kept: $t" }
+        if ($t -match "port: 7270" -and $t -notmatch "port: 7269") { Good "what the card wrote wins" } else { Bad "card values lost: $t" }
+    }
+} catch {
+    Bad "Write-Launcher keep threw: $($_.Exception.Message)"
+} finally {
+    Remove-Item -Recurse -Force $keepTmp -ErrorAction SilentlyContinue
+}
+
 # -- summary ------------------------------------------------------------------
 Write-Host ""
 Write-Host "=========================================="

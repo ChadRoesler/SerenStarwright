@@ -122,7 +122,7 @@ for pair in \
   mkdir -p "$dst"
   # Only the installer surface. Not seren-starwright.py (it IS the archive) and
   # not the TUI's own launcher/builder - nothing in here should re-bundle.
-  find "$src" -maxdepth 1 -type f \( -name "*.sh" -o -name "*.ps1" \) \
+  find "$src" -maxdepth 1 -type f \( -name "*.sh" -o -name "*.ps1" -o -name "*.py" \) \
        ! -name "seren-starwright.py" -exec cp {} "$dst/" \;
 done
 

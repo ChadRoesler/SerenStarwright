@@ -706,7 +706,7 @@ async def test_switches_are_check_boxes() -> None:
     --no-updates, and the Advanced modal rendered it as an Input: whatever the
     operator typed became `--no-updates <text>`, which the card refused as an
     unknown flag. --describe now says which flags are switches and the modal
-    draws those as check boxes; Memory's new --st rides on the same rail."""
+    draws those as check boxes."""
     print("\n== Switches render as check boxes")
     services, problems = sw.discover()
     mem = next((s for s in services if s.name == "seren-memory"), None)
@@ -734,15 +734,21 @@ async def test_switches_are_check_boxes() -> None:
         if modal is None:
             return
         check(isinstance(modal.query_one("#adv-no-updates"), Checkbox), "no-updates is a check box")
-        check(isinstance(modal.query_one("#adv-st"), Checkbox), "st is a check box")
         check(isinstance(modal.query_one("#adv-port"), Input), "port is still a text box")
-        modal.query_one("#adv-st", Checkbox).value = True
+        # Chad, 25 Sept: st "sitting as part of the advanced makes it a weird
+        # hidden thing" - it is a checkbox on Memory's row now, labelled with
+        # what it costs, and not in the dialog at all
+        check(not modal.query("#adv-st"), "st is not in the Advanced dialog")
+        modal.query_one("#adv-no-updates", Checkbox).value = True
         await pilot.pause()
         await pilot.click("#ok")
         await pilot.pause(); await pilot.pause()
         cfg = app.per_service.get("seren-memory", {})
-        check(cfg.get("st") is True, "a ticked switch collects as True: %r" % cfg.get("st"))
-        cmd = sw.build_command(mem, cfg, {})
+        check(cfg.get("no-updates") is True, "a ticked switch collects as True: %r" % cfg.get("no-updates"))
+        row = app.screen.query_one("#f-seren-memory-st", Checkbox)
+        check(str(row.label) == "st+torch" and not row.value, "st is an inline box, off, labelled st+torch: %r" % str(row.label))
+        check("torch" in str(row.tooltip or ""), "its tooltip says what it pulls in")
+        cmd = sw.build_command(mem, {**cfg, "st": True}, {})
         idx = next((i for i, c in enumerate(cmd) if c in ("--st", "-St")), -1)
         check(idx >= 0 and (idx == len(cmd) - 1 or cmd[idx + 1].startswith("-")),
               "the switch carries no value on the command line: %s" % cmd)

@@ -771,6 +771,15 @@ function Add-SerenTextFile {
 # -- write launcher script ----------------------------------------------------
 function Write-Launcher {
     param([string] $AppDir, [string] $ServiceName, [string] $Vpy, [string] $Module, [string] $CfgPath)
+    # The config is written by now and the service not yet started: put back
+    # whatever the previous config had that this card does not write. See
+    # seren-keep-config.py beside this library.
+    $keep = Join-Path $PSScriptRoot 'seren-keep-config.py'
+    if ((Test-Path $keep) -and $CfgPath) {
+        $said = (& $Vpy $keep $CfgPath 2>&1) -join ' '
+        if ($LASTEXITCODE -ne 0) { Warn "could not carry the previous config forward: $said" }
+        elseif ($said -like 'kept*') { Ok ("K" + $said.Substring(1)) }
+    }
     $launcher = "$AppDir\run-$ServiceName.ps1"
     "& `"$Vpy`" -m $Module --config `"$CfgPath`"" | Write-SerenTextFile -Path $launcher
     Ok "Launcher written: $launcher"

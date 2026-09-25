@@ -523,6 +523,14 @@ print('OK' if v.exists() else 'VIEWER_MISSING')
 # -- write_launcher - drop the run script --------------------------------------
 write_launcher() {
   local app_dir="$1" service="$2" vpy="$3" module="$4" config_path="$5"
+  # The config is written by now and the service not yet started: put back
+  # whatever the previous config had that this card does not write (a
+  # hippocampus's model.lifecycle, a callosum knob...). See seren-keep-config.py.
+  local keep; keep="$(dirname "${BASH_SOURCE[0]}")/seren-keep-config.py"
+  if [[ -f "$keep" && -n "$config_path" ]]; then
+    local said; said="$("$vpy" "$keep" "$config_path" 2>&1)" || warn "could not carry the previous config forward: $said"
+    [[ -n "$said" && "$said" == kept* ]] && ok "${said^}"
+  fi
   local launcher="$app_dir/run-${service}.sh"
   cat > "$launcher" <<LAUNCHEOF
 #!/usr/bin/env bash

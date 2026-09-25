@@ -300,10 +300,24 @@ LEGACY_SWITCHES = {"corp", "pypi", "mcp", "vector", "stagehand", "service", "gen
 # packaging detail. Burying a role behind Configure makes it look optional in
 # the sense of "obscure" rather than "opt-in".
 #
+# `st` is Memory's: sentence-transformers (and torch) for a named embedding
+# model. It sat in Advanced, where an opt-in that pulls in torch looked like an
+# obscure setting instead of the decision it is - leave it off on a Nano, the
+# default embedder is torch-free ONNX. Its label says what it costs.
+#
 # Width: rendering is `for flag in INLINE_FLAGS: if flag in svc.flags`, so a
-# service only widens by the flags it actually declares. Loci stays the widest
-# card at three (mcp + vector + service); Theatre draws two. No new worst case.
-INLINE_FLAGS = ["mcp", "vector", "stagehand", "service"]
+# service only widens by the flags it actually declares. Loci and Memory are
+# the widest cards at three (mcp + vector + service, mcp + st + service);
+# Theatre draws two.
+INLINE_FLAGS = ["mcp", "vector", "st", "stagehand", "service"]
+
+# What an inline checkbox reads as, where the flag name alone is jargon, and
+# the tooltip that says why you would tick it.
+INLINE_LABELS = {"st": "st+torch"}
+INLINE_TIPS = {
+    "st": "sentence-transformers and torch, for a storage.embedding_model you name. "
+          "Not needed for the default embedder (ONNX, no torch); heavy on a Nano.",
+}
 
 # Service IDENTITY - who the installed service logs on as.
 #
@@ -2109,8 +2123,12 @@ class ConfigScreen(Screen):
                             yield RadioButton("Advanced")
                         for flag in INLINE_FLAGS:
                             if flag in svc.flags:
-                                yield Checkbox(flag, value=bool(self.app.per_service.get(name, {}).get(flag)),  # type: ignore[attr-defined]
+                                box = Checkbox(INLINE_LABELS.get(flag, flag),
+                                               value=bool(self.app.per_service.get(name, {}).get(flag)),  # type: ignore[attr-defined]
                                                id=f"f-{name}-{flag}")
+                                if flag in INLINE_TIPS:
+                                    box.tooltip = INLINE_TIPS[flag]
+                                yield box
                         btn = Button("Configure", id=f"adv-{name}",
                                      classes="cfg-adv", variant="default")
                         if svc.accent:
