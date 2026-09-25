@@ -154,7 +154,7 @@ try {
         New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
         # Only the installer surface, and only the top level of each dir.
         Get-ChildItem $srcDir -File | Where-Object {
-            ($_.Extension -eq ".sh" -or $_.Extension -eq ".ps1")
+            ($_.Extension -eq ".sh" -or $_.Extension -eq ".ps1" -or $_.Extension -eq ".py")
         } | ForEach-Object {
             Copy-Item $_.FullName $dstDir -Force
             $bundled++

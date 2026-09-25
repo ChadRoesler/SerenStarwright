@@ -59,6 +59,9 @@ jobs:
       - name: a card reads a sibling's config for its url and bearer (no token on argv)
         run: bash SerenStarwright/services/tests/test-sibling-config.sh
 
+      - name: a reinstall keeps what the card does not write
+        run: bash SerenStarwright/services/tests/test-keep-config.sh
+
       - name: bash -n every script
         run: |
           fail=0
