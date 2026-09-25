@@ -31,6 +31,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Folder Include="nodes\tests\" />
     <Folder Include="seren_starwright\" />
     <Folder Include="services\" />
     <Folder Include="services\bash\" />
@@ -43,6 +44,7 @@
     <Folder Include="nodes\xavier\" />
     <Folder Include=".github\" />
     <Folder Include=".github\workflows\" />
+    <Folder Include="services\tests\" />
   </ItemGroup>
   <!-- ONLY the Python is enumerated, on purpose.
        The 48 shell scripts and 22 PowerShell scripts are NOT listed as
@@ -79,6 +81,7 @@
     <Content Include="nodes\spark\kokoro.sh" />
     <Content Include="nodes\spark\llama.sh" />
     <Content Include="nodes\spark\msmoe.sh" />
+    <Content Include="nodes\tests\test-prebuilts-fetch.sh" />
     <Content Include="nodes\xavier\build.sh" />
     <Content Include="nodes\xavier\chroma.sh" />
     <Content Include="nodes\xavier\comfy.sh" />
@@ -89,6 +92,7 @@
     <Content Include="nodes\xavier\msmoe.sh" />
     <Content Include="nodes\xavier\prebuilts.sh" />
     <Content Include="services\bash\seren-corpus-callosum-setup.sh" />
+    <Content Include="services\bash\seren-hippocampus-setup.sh" />
     <Content Include="services\bash\seren-loci-setup.sh" />
     <Content Include="services\bash\seren-lodestar-setup.sh" />
     <Content Include="services\bash\seren-margin-setup.sh" />
@@ -98,6 +102,7 @@
     <Content Include="services\bash\seren-theatre-setup.sh" />
     <Content Include="services\bash\seren-workbench-setup.sh" />
     <Content Include="services\bash\setup-corpus-callosum-service.sh" />
+    <Content Include="services\bash\setup-hippocampus-service.sh" />
     <Content Include="services\bash\setup-loci-service.sh" />
     <Content Include="services\bash\setup-lodestar-service.sh" />
     <Content Include="services\bash\setup-margin-service.sh" />
@@ -115,6 +120,7 @@
     <Content Include="services\lib\setup-seren-service.ps1" />
     <Content Include="services\lib\setup-seren-service.sh" />
     <Content Include="services\powershell\seren-corpus-callosum-setup.ps1" />
+    <Content Include="services\powershell\seren-hippocampus-setup.ps1" />
     <Content Include="services\powershell\seren-loci-setup.ps1" />
     <Content Include="services\powershell\seren-lodestar-setup.ps1" />
     <Content Include="services\powershell\seren-margin-setup.ps1" />
@@ -124,6 +130,7 @@
     <Content Include="services\powershell\seren-theatre-setup.ps1" />
     <Content Include="services\powershell\seren-workbench-setup.ps1" />
     <Content Include="services\powershell\setup-corpus-callosum-service.ps1" />
+    <Content Include="services\powershell\setup-hippocampus-service.ps1" />
     <Content Include="services\powershell\setup-loci-service.ps1" />
     <Content Include="services\powershell\setup-lodestar-service.ps1" />
     <Content Include="services\powershell\setup-margin-service.ps1" />
@@ -132,6 +139,10 @@
     <Content Include="services\powershell\setup-probe-service.ps1" />
     <Content Include="services\powershell\setup-theatre-service.ps1" />
     <Content Include="services\powershell\setup-workbench-service.ps1" />
+    <Content Include="services\tests\test-install-record.sh" />
+    <Content Include="services\tests\test-keep-config.sh" />
+    <Content Include="services\tests\test-local-wheelhouse.sh" />
+    <Content Include="services\tests\test-sibling-config.sh" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Build is intentionally NOT wired up. The deliverable is
