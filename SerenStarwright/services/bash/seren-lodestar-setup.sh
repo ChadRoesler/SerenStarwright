@@ -165,6 +165,8 @@ sanity_check "$VPY" "seren_lodestar" ""
 step "Writing config at $CFG_PATH"
 mkdir -p "$APP_DIR"
 $GEN_TOKEN && TOKEN="$("$VPY" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# A reinstall keeps the existing bearer unless --token / --gen-token say otherwise.
+if [[ -z "$TOKEN" ]] && ! $GEN_TOKEN; then seren_reuse_token "$CFG_PATH" || true; fi
 if [[ -f "$CFG_PATH" ]]; then
   bak="$CFG_PATH.bak.$(date +%s)"; cp "$CFG_PATH" "$bak"; warn "Existing config backed up"
 fi

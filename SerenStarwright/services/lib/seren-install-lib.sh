@@ -476,6 +476,15 @@ pip_install() {
   # and empty otherwise, so every card gets the dev wheelhouse for free.
   # shellcheck disable=SC2086
   "$vpy" -m pip install -q --upgrade $corp_flag ${EXTRA_PIP_ARGS:-} "${src}${extras}" || die "pip install failed"
+  # A wheel FILE (--wheel, --local, a built checkout) can carry the same version
+  # as the one already installed: a dirty tree is stamped with its commit and
+  # the day only, so two dev builds on one day look identical and --upgrade
+  # installs nothing while reporting success. Reinstall the package itself from
+  # the file, dependencies untouched.
+  if [[ "$src" == *.whl && -f "$src" ]]; then
+    # shellcheck disable=SC2086
+    "$vpy" -m pip install -q --force-reinstall --no-deps $corp_flag "$src"       || die "pip could not reinstall $src over the installed build"
+  fi
   ok "Installed"
 }
 
@@ -598,12 +607,140 @@ print_done() {
   seren_emit_done "$service" "$connect_host" "$port" "$install_service" "$token"
 }
 
+# -- seren_read_sibling_config - a card reads another service's config --------
+# WHY: wiring a callosum to a Memory means presenting Memory's bearer, and a
+# token must not cross a command line to get there. So a card is handed the
+# PATH of the sibling's config (--memory-config) and reads the server block
+# itself: host, port, and either the inline bearer_token or the name of the
+# env var / keyring ref that holds it. Pure grep - no yaml parser, no python.
+# Sets SIB_URL, SIB_TOKEN, SIB_TOKEN_ENV, SIB_TOKEN_KEYRING (empty when absent).
+seren_read_sibling_config() {
+  local path="$1"
+  SIB_URL=""; SIB_TOKEN=""; SIB_TOKEN_ENV=""; SIB_TOKEN_KEYRING=""
+  [[ -r "$path" ]] || { warn "sibling config not readable: $path"; return 1; }
+  # The SERVER block only. A hippocampus or callosum config also carries the
+  # bearer it presents to Memory; reading the first bearer_token in the file
+  # took that one for the service's own.
+  local block
+  block="$(awk '/^server:[[:space:]]*(#.*)?$/{f=1; next} /^[^[:space:]#]/{f=0} f' "$path")"
+  _sib_val() { grep -m1 -E "^[[:space:]]+$1:" <<<"$block" | sed -E 's/^[^:]*:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^["'"'"']//; s/["'"'"']$//'; }
+  local host port
+  host="$(_sib_val host)"
+  port="$(_sib_val port)"
+  [[ "$host" == "0.0.0.0" || -z "$host" ]] && host="127.0.0.1"
+  [[ -n "$port" ]] && SIB_URL="http://${host}:${port}"
+  SIB_TOKEN="$(_sib_val bearer_token)"
+  SIB_TOKEN_ENV="$(_sib_val bearer_token_env)"
+  SIB_TOKEN_KEYRING="$(_sib_val bearer_token_keyring)"
+  return 0
+}
+
+# -- seren_reuse_token - keep the bearer a reinstall would otherwise wipe -----
+# WHY: every card writes bearer_token from --token or --gen-token, and with
+# neither it wrote an empty string - so re-installing a service in place
+# silently removed its bearer, and everything that presented it (a callosum,
+# a hippocampus, an MCP client) was refused. With neither flag given, the
+# existing config's own bearer is kept. --gen-token rotates it on purpose;
+# --token sets it. Sets TOKEN; never fails the install.
+seren_reuse_token() {
+  local cfg="$1"
+  [[ -r "$cfg" ]] || return 0
+  seren_read_sibling_config "$cfg" >/dev/null 2>&1 || return 0
+  if [[ -n "$SIB_TOKEN" ]]; then
+    TOKEN="$SIB_TOKEN"
+    ok "Keeping the existing bearer token (--gen-token rotates it, --token sets one)"
+  elif [[ -n "$SIB_TOKEN_ENV$SIB_TOKEN_KEYRING" ]]; then
+    warn "The existing config presents its bearer through ${SIB_TOKEN_ENV:+bearer_token_env $SIB_TOKEN_ENV}${SIB_TOKEN_KEYRING:+bearer_token_keyring $SIB_TOKEN_KEYRING}; the new config does not carry that line - add it back (the old file is kept as a .bak)"
+  fi
+  return 0
+}
+
+# -- seren_sibling_token_lines - the yaml lines that present a sibling's bearer
+# Whatever the sibling's config used (inline, env, keyring) is what we write,
+# indented by $1. Inline stays inline: the file it came from is already 600.
+seren_sibling_token_lines() {
+  local indent="$1"
+  [[ -n "$SIB_TOKEN" ]]         && printf '%sbearer_token: "%s"\n' "$indent" "$SIB_TOKEN"
+  [[ -n "$SIB_TOKEN_ENV" ]]     && printf '%sbearer_token_env: %s\n' "$indent" "$SIB_TOKEN_ENV"
+  [[ -n "$SIB_TOKEN_KEYRING" ]] && printf '%sbearer_token_keyring: "%s"\n' "$indent" "$SIB_TOKEN_KEYRING"
+  return 0
+}
+
+# -- seren_record_install - the install ledger ---------------------------------
+# WHY: nothing on a box said what Starwright had already put there. Installing
+# the hippocampus next to an existing Memory, the front-end could not tell you
+# Memory was at :7420 with instance "wren" on :7267, could not warn that a port
+# was taken by something it installed last month, and could not tell a
+# reinstall from a side-by-side. Every card now leaves one record per install
+# in ~/.seren/installed/<service>[@<instance>].json (SEREN_INSTALLED_DIR
+# overrides, for tests). Derived from what was actually installed - the venv,
+# the config, the port the config says - never declared a second time. NEVER
+# the token: has_token only. Starwright reads the ledger, and scans the
+# ~/seren-* directories for installs that predate it.
+seren_record_install() {
+  local service="$1" connect_host="$2" port="$3" install_service="$4" token="$5"
+  local dir="${SEREN_INSTALLED_DIR:-$HOME/.seren/installed}"
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    warn "Couldn't write $dir - this install is not in the ledger"
+    return 0
+  fi
+  local inst="${INSTANCE:-}" name="$service"
+  [[ -n "$inst" ]] && name="${service}@${inst}"
+  local path="$dir/${name}.json"
+  local venv="${VENV_DIR:-}" cfg="${CFG_PATH:-}" app="${APP_DIR:-}"
+  [[ -z "$app" && -n "$cfg" ]] && app="$(dirname "$cfg")"
+  local pkg="${PACKAGE:-${SVC_PACKAGE:-$service}}"
+  local version="" vpy=""
+  [[ -n "$venv" && -x "$venv/bin/python" ]] && vpy="$venv/bin/python"
+  [[ -z "$vpy" && -n "$venv" && -x "$venv/Scripts/python.exe" ]] && vpy="$venv/Scripts/python.exe"
+  if [[ -n "$vpy" ]]; then
+    version="$("$vpy" -c 'import importlib.metadata as m, sys; print(m.version(sys.argv[1]))' "$pkg" 2>/dev/null || true)"
+  fi
+  local source="pypi" source_ref=""
+  [[ -n "${REF:-}" ]]   && { source="release"; source_ref="$REF"; }
+  [[ -n "${LOCAL:-}" ]] && { source="local";   source_ref="$LOCAL"; }
+  [[ -n "${WHEEL:-}" ]] && { source="wheel";   source_ref="$WHEEL"; }
+  local has_token=false; [[ -n "$token" ]] && has_token=true
+  local when; when="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
+  cat > "$path" <<JSON
+{
+  "schema_version": 1,
+  "service": "$(_json_esc "$service")",
+  "instance": "$(_json_esc "$inst")",
+  "package": "$(_json_esc "$pkg")",
+  "version": "$(_json_esc "$version")",
+  "host": "$(_json_esc "$connect_host")",
+  "port": ${port:-0},
+  "url": "http://$(_json_esc "$connect_host"):${port:-0}",
+  "venv": "$(_json_esc "$venv")",
+  "config": "$(_json_esc "$cfg")",
+  "app_dir": "$(_json_esc "$app")",
+  "launcher": "$(_json_esc "${app:+$app/run-$service.sh}")",
+  "autostart": ${install_service:-false},
+  "service_user": "$(_json_esc "${SERVICE_USER:-}")",
+  "has_token": ${has_token},
+  "extras": {"mcp": ${MCP:-false}, "corp": ${CORP:-false}, "vector": ${VECTOR:-false}, "st": ${ST:-false}},
+  "source": "$(_json_esc "$source")",
+  "source_ref": "$(_json_esc "$source_ref")",
+  "installed_at": "$(_json_esc "$when")",
+  "setup": "$(_json_esc "${SEREN_SETUP:-}")",
+  "installer": "$(_json_esc "$(basename "${BASH_SOURCE[-1]:-$0}")")",
+  "platform": "$(_json_esc "$(uname -s 2>/dev/null || echo unknown)")",
+  "derived": false
+}
+JSON
+  ok "Recorded in the install ledger: $path"
+  emit installed path "$path" service "$service" instance "$inst" version "$version"
+}
+
 # -- seren_emit_done - the structured completion event -------------------------
 # The one event a front-end actually needs: did it work, and where is the thing
 # now. Called at the end of each installer next to its own banner (and by
 # print_done, for any future caller). No-op without --json.
 seren_emit_done() {
   local service="$1" connect_host="$2" port="$3" install_service="$4" token="$5"
+  # The ledger first: it is written whether or not anyone asked for --json.
+  seren_record_install "$service" "$connect_host" "$port" "$install_service" "$token"
   emit done \
     ok        true \
     service   "$service" \

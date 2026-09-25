@@ -121,6 +121,8 @@ Sanity-Check -Vpy $vpy -Module "seren_lodestar" -AssetRelPath "viewer/ui/body.ht
 Step "Writing config at $CfgPath"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 if ($GenToken) { $Token = & $vpy -c "import secrets; print(secrets.token_urlsafe(32))" }
+# A reinstall keeps the existing bearer unless -Token / -GenToken say otherwise.
+if (-not $Token -and -not $GenToken) { $Token = Get-SerenReusedToken -Path $CfgPath }
 if (Test-Path $CfgPath) {
   $bak = "$CfgPath.bak.$([int][double]::Parse((Get-Date -UFormat %s)))"
   Copy-Item $CfgPath $bak; Warn "Backed up to $(Split-Path $bak -Leaf)"

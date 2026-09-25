@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -24,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 TUI = HERE / "seren_starwright" / "seren-starwright.py"
 
 try:
-    from textual.widgets import Button, Checkbox, Input, Static
+    from textual.widgets import Button, Checkbox, Input, Static, Select
 except ImportError:
     sys.exit("ERROR: textual is required.  pip install textual")
 
@@ -797,6 +800,424 @@ async def test_advanced_values_can_be_changed_and_cleared() -> None:
         check("instance" not in app.per_service.get(target, {}), "cancel leaves the config untouched")
 
 
+async def test_install_ledger() -> None:
+    """The box knows what Starwright already put on it: ledger records, plus
+    installs found by scanning the launchers older cards wrote."""
+    print("\n== Install ledger")
+    import tempfile
+    home = Path(tempfile.mkdtemp(prefix="sw-ledger-"))
+    # (1) a recorded install, with a fake dist-info so the version can be read off the venv
+    (home / ".seren" / "installed").mkdir(parents=True)
+    venv = home / "seren-venvs" / "memory"
+    (venv / "Lib" / "site-packages" / "seren_memory-3.1.0.dist-info").mkdir(parents=True)
+    (home / ".seren" / "installed" / "seren-memory.json").write_text(json.dumps({
+        "schema_version": 1, "service": "seren-memory", "instance": "", "package": "seren-memory",
+        "version": "", "host": "127.0.0.1", "port": 7420, "venv": str(venv),
+        "config": str(home / "seren-memory" / "seren-memory.yaml"), "app_dir": str(home / "seren-memory"),
+        "has_token": True, "source": "local", "installed_at": "2026-09-25T09:00:00Z", "derived": False}))
+    (home / "seren-memory").mkdir()
+    # (2) an older install nobody recorded: a launcher and a config, instance in the directory name
+    d = home / "seren-memorywren"
+    d.mkdir()
+    (d / "run-seren-memory.ps1").write_text(
+        f'& "{home / "seren-venvs" / "memorywren" / "Scripts" / "python.exe"}" -m seren_memory '
+        f'--config "{d / "seren-memory.yaml"}"')
+    (d / "seren-memory.yaml").write_text("server:\n  host: 0.0.0.0\n  port: 7267\n  bearer_token: nope\nstorage:\n  x: 1\n")
+    # (3) a bash launcher for another service, and a directory that is not an install
+    d2 = home / "seren-loci"
+    d2.mkdir()
+    (d2 / "run-seren-loci.sh").write_text(f'#!/usr/bin/env bash\nexec "{home}/seren-venvs/loci/bin/python" -m seren_loci --config "{d2}/seren-loci.yaml"\n')
+    (d2 / "seren-loci.yaml").write_text("server:\n  port: 7422\n")
+    (home / "seren-logs").mkdir()
+    (home / "seren-notes").mkdir()
+
+    recs = sw.installed_ledger(home)
+    check([r.label for r in recs] == ["seren-loci", "seren-memory", "seren-memory@wren"], f"three installs: {[r.label for r in recs]}")
+    mem = next(r for r in recs if r.label == "seren-memory")
+    check(mem.version == "3.1.0" and not mem.derived and mem.port == 7420, f"recorded memory: v{mem.version} :{mem.port}")
+    wren = next(r for r in recs if r.label == "seren-memory@wren")
+    check(wren.derived and wren.port == 7267 and wren.host == "0.0.0.0" and wren.url == "http://127.0.0.1:7267",
+          f"scanned instance: port {wren.port}, url {wren.url}")
+    check(wren.venv.endswith("memorywren") and wren.config.endswith("seren-memory.yaml"), "venv and config come from the launcher")
+    loci = next(r for r in recs if r.label == "seren-loci")
+    check(loci.derived and loci.port == 7422 and "loci/bin/python" in loci.venv.replace("\\", "/") + "/bin/python",
+          f"bash launcher parsed: {loci.venv}")
+
+    # ports already held on the box are conflicts, unless it is the same instance re-installing
+    services, problems = sw.discover()
+    svcs = {x.name: x for x in services}
+    if "seren-hippocampus" in svcs and "seren-memory" in svcs:
+        warn = sw.port_conflicts(["seren-hippocampus"], svcs, {"seren-hippocampus": {"port": 7420}}, recs)
+        check(any("installed seren-memory" in w for w in warn), f"hippocampus on 7420 collides with the installed memory: {warn}")
+        warn = sw.port_conflicts(["seren-memory"], svcs, {}, recs)
+        check(warn == [], f"memory re-installing on its own 7420 is not a collision: {warn}")
+        warn = sw.port_conflicts(["seren-memory"], svcs, {"seren-memory": {"instance": "rhys"}}, recs)
+        check(any("7420" in w for w in warn), f"a NEW memory instance on 7420 is: {warn}")
+        # a dependency's address is filled in only when exactly one instance is installed
+        hip = svcs["seren-hippocampus"]
+        cfg = sw.prefill_from_installed(hip, {}, recs)
+        check("memory-url" not in cfg, f"two memories installed: nothing guessed ({cfg})")
+        cfg = sw.prefill_from_installed(hip, {}, [wren])
+        check(cfg.get("memory-url") == "http://127.0.0.1:7267", f"one memory installed: memory-url prefilled ({cfg})")
+        notes = sw.reinstall_notes(["seren-memory", "seren-hippocampus"], {"seren-memory": {"instance": "rhys"}}, recs)
+        check(len(notes) == 1 and "beside" in notes[0], f"a new instance is 'beside': {notes}")
+        notes = sw.reinstall_notes(["seren-memory"], {}, recs)
+        check(len(notes) == 1 and "re-installs it in place" in notes[0], f"same instance is 'in place': {notes}")
+
+    # the select screen shows it
+    app = sw.StarwrightApp(services, problems, installed=recs)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.click("#install")
+        await pilot.pause()
+        note = app.screen.query_one("#installed-note", Static).content
+        check("memory@wren :7267" in str(note) and "loci :7422" in str(note), f"installed note: {note}")
+        if "seren-memory" in svcs:
+            card = app.screen.query_one("#inst-seren-memory", Static).content
+            check("v3.1.0 :7420" in str(card) and "@wren :7267" in str(card), f"memory card lists both: {card}")
+    shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_setups() -> None:
+    """A setup is who the installs are for: name, instance, port base, wiring.
+    Choosing one alters it in place; found installs can be recorded into one."""
+    print("\n== Setups")
+    import tempfile
+    home = Path(tempfile.mkdtemp(prefix="sw-setups-"))
+    os.environ["SEREN_INSTALLED_DIR"] = str(home / ".seren" / "installed")
+    os.environ["SEREN_SETUPS_DIR"] = str(home / ".seren" / "setups")
+    try:
+        services, problems = sw.discover()
+        svcs = {x.name: x for x in services}
+        if not {"seren-memory", "seren-loci", "seren-corpus-callosum", "seren-hippocampus"} <= set(svcs):
+            check(False, "brain cards present"); return
+        # two found installs (a wren memory and loci), unrecorded
+        for svc, port, inst in (("seren-memory", 7267, "wren-memory"), ("seren-loci", 7266, "wren-loci")):
+            d = home / f"{svc}{inst}"; d.mkdir(parents=True)
+            (d / f"run-{svc}.ps1").write_text(f'& "{home}/seren-venvs/x/Scripts/python.exe" -m {svc.replace("-", "_")} --config "{d / (svc + ".yaml")}"')
+            (d / f"{svc}.yaml").write_text(f"server:\n  host: 127.0.0.1\n  port: {port}\n  bearer_token: \"tok-{svc}\"\n")
+        recs = sw.installed_ledger(home)
+        check([r.label for r in recs] == ["seren-loci@wren-loci", "seren-memory@wren-memory"] and all(r.derived for r in recs),
+              f"two found installs: {[r.label for r in recs]}")
+        check(sw.load_setups(home, recs) == [], "no setups yet")
+
+        # record them into a setup called wren: the ledger gets two records, the setup its members
+        written = sw.record_found(recs, "wren", home)
+        check(len(written) == 2 and all(f.is_file() for f in written) and not any(r.derived for r in recs),
+              "recorded: two ledger files, no longer 'found'")
+        st = sw.Setup(name="wren", base_port=7265, members=[r.label for r in recs]); sw.save_setup(st, home)
+        again = sw.installed_ledger(home)
+        check([r.setup for r in again] == ["wren", "wren"] and not any(r.derived for r in again), "re-read: recorded, in setup wren")
+        setups = sw.load_setups(home, again)
+        check([x.name for x in setups] == ["wren"] and setups[0].members == sorted(st.members), f"setup loaded: {setups}")
+        check("has loci, memory" in sw.setup_status(setups[0], svcs, again) and "missing" in sw.setup_status(setups[0], svcs, again),
+              sw.setup_status(setups[0], svcs, again))
+
+        # add the callosum and the hippocampus to wren: instance from the setup, port from the base, wiring by config path
+        per = {}
+        sel = ["seren-corpus-callosum", "seren-hippocampus"]
+        sw.apply_setup(setups[0], sel, svcs, per, again)
+        sw.wire_dependencies(sel, svcs, per, again, setups[0], home)
+        cc, hip = per["seren-corpus-callosum"], per["seren-hippocampus"]
+        check(cc.get("instance") == "" or "instance" not in cc, f"a grouped setup has no instance of its own: {cc}")
+        check(cc.get("port") == 7265 + 3 and hip.get("port") == 7265 + 4, f"ports = base + family offset: {cc.get('port')}, {hip.get('port')}")
+        check(cc.get("memory-config", "").endswith("seren-memory.yaml") and cc.get("loci-config", "").endswith("seren-loci.yaml"),
+              f"callosum wired to wren's memory and loci by CONFIG PATH: {cc}")
+        check(hip.get("memory-config", "").endswith("seren-memory.yaml") and "memory-url" not in hip and "memory-token" not in hip,
+              f"hippocampus wired by config path, no token on argv: {hip}")
+
+        # a fresh named setup on its own band: instance = the name, everything in this run wired to each other's planned configs
+        new = sw.Setup(name="local llama", instance=sw.sanitize_instance("local llama"), base_port=7440)
+        per = {}
+        sel = ["seren-memory", "seren-loci", "seren-corpus-callosum"]
+        sw.apply_setup(new, sel, svcs, per, again)
+        sw.wire_dependencies(sel, svcs, per, again, new, home)
+        check(per["seren-memory"] == {"instance": "local-llama", "port": 7440} and per["seren-loci"]["port"] == 7442,
+              f"new members: instance and base+offset: {per['seren-memory']}, {per['seren-loci']}")
+        check(per["seren-corpus-callosum"]["memory-config"] == str(home / "seren-memorylocal-llama" / "seren-memory.yaml"),
+              f"wired to THIS run's planned memory config: {per['seren-corpus-callosum']}")
+        # the default band keeps the default instance and default ports
+        dflt = sw.Setup(name="2026-09-25"); per = {}
+        sw.apply_setup(dflt, ["seren-memory"], svcs, per, [])
+        check(per["seren-memory"] == {}, f"default setup changes nothing: {per}")
+        # altering a member: its extras come back ticked
+        vec = sw.InstalledRecord(service="seren-loci", instance="", port=7422, extras={"vector": True, "mcp": False},
+                                 config=str(home / "seren-loci" / "seren-loci.yaml"))
+        alter = sw.Setup(name="default", members=["seren-loci"]); per = {}
+        sw.apply_setup(alter, ["seren-loci"], svcs, per, [vec])
+        check(per["seren-loci"].get("vector") is True and per["seren-loci"].get("port") == 7422, f"alter prefills the member's flags: {per}")
+        check(sw.suggest_base(again, setups) == 7440, f"next free band: {sw.suggest_base(again, setups)}")
+
+        # the screen: tick the box, pick wren, the note says what it is missing, Next prefills the config
+        app = sw.StarwrightApp(services, problems, installed=again)
+        async with app.run_test(size=(120, 50)) as pilot:
+            await pilot.click("#install"); await pilot.pause()
+            cb = app.screen.query_one("#use-setup", Checkbox)
+            check(not cb.disabled, "a setup exists: the picker is offered")
+            cb.value = True; await pilot.pause()
+            pick = app.screen.query_one("#setup-pick", Select)
+            check(not pick.disabled, "ticking enables the drop-down")
+            pick.value = "wren"; await pilot.pause(); await pilot.pause()
+            check("missing" in widget_text(app.screen.query_one("#setup-note", Static)), "the note names what the setup lacks")
+            check(app.screen.query_one("#setup-name", Input).value == "wren", "name follows the pick")
+            app.screen.query_one("#svc-seren-hippocampus", Checkbox).value = True; await pilot.pause()
+            await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+            hip = app.per_service.get("seren-hippocampus", {})
+            check(app.setup is not None and app.setup.name == "wren" and hip.get("port") == 7269 and hip.get("memory-config", "").endswith("seren-memory.yaml"),
+                  f"Next carried the setup into the config: {hip}")
+            check("seren-memory" not in app.selected, "the setup's memory is USED, not pulled into the run")
+            # back on the select screen: unticking the box must clear the pick without raising
+            app.pop_screen(); await pilot.pause()
+            cb = app.screen.query_one("#use-setup", Checkbox)
+            cb.value = False; await pilot.pause(); await pilot.pause()
+            check(app.screen.query_one("#setup-pick", Select).disabled and app.screen._picked_setup() is None,
+                  "unticking clears the pick and disables the drop-down")
+            check(not app.screen.query_one("#setup-name", Input).disabled, "name is editable again")
+    finally:
+        os.environ.pop("SEREN_INSTALLED_DIR", None); os.environ.pop("SEREN_SETUPS_DIR", None)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_record_found_modal() -> None:
+    """Ten found installs, an 80x24-ish box: the list scrolls, the name field
+    and the Record button stay on screen, tick-all ticks all, Record writes
+    the ledger and the setup, and the selection screen updates."""
+    print("\n== Record found installs modal")
+    import tempfile
+    home = Path(tempfile.mkdtemp(prefix="sw-recmodal-"))
+    os.environ["SEREN_INSTALLED_DIR"] = str(home / ".seren" / "installed")
+    os.environ["SEREN_SETUPS_DIR"] = str(home / ".seren" / "setups")
+    try:
+        found = [sw.InstalledRecord(service=f"seren-svc{i}", instance="", port=7500 + i, derived=True,
+                                    app_dir=str(home / f"seren-svc{i}"), config=str(home / f"seren-svc{i}" / "x.yaml"))
+                 for i in range(10)]
+        services, problems = sw.discover()
+        app = sw.StarwrightApp(services, problems, installed=found)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.click("#install"); await pilot.pause()
+            btn = app.screen.query_one("#record-found", Button)
+            check("record 10 found installs" in str(btn.label), f"button offered: {btn.label}")
+            btn.press()
+            modal = None
+            for _ in range(40):
+                await pilot.pause()
+                for scr in reversed(app.screen_stack):
+                    if isinstance(scr, sw.RecordFoundModal):
+                        try:
+                            if scr.query_one("#ok").region.height > 0:
+                                modal = scr
+                        except Exception:  # noqa: BLE001
+                            pass
+                if modal:
+                    break
+            check(modal is not None, "modal opened and laid out")
+            if modal is None:
+                return
+            ok_btn = modal.query_one("#ok", Button)
+            name_in = modal.query_one("#rec-name", Input)
+            h = app.size.height
+            check(0 <= ok_btn.region.y < h and ok_btn.region.y + ok_btn.region.height <= h,
+                  f"Record button on screen (y={ok_btn.region.y}, screen h={h})")
+            check(0 <= name_in.region.y < h, f"name field on screen (y={name_in.region.y})")
+            body = modal.query_one("#modal-body")
+            check(body.region.height < 10 * 3, f"the list scrolls instead of growing (body h={body.region.height})")
+            modal.query_one("#rec-all", Checkbox).value = True
+            await pilot.pause(); await pilot.pause()
+            check(all(modal.query_one(f"#rec-{i}", Checkbox).value for i in range(10)), "tick all ticks all")
+            modal.query_one("#rec-3", Checkbox).value = False
+            name_in.value = "everything but three"
+            await pilot.pause(); await pilot.pause()
+            ok_btn.press()
+            await pilot.pause(); await pilot.pause(); await pilot.pause()
+            recs = sorted(p.name for p in (home / ".seren" / "installed").glob("*.json"))
+            check(len(recs) == 9 and "seren-svc3.json" not in recs, f"nine recorded, the unticked one ignored: {len(recs)}")
+            st = sw.load_setups(home)
+            check(len(st) == 1 and st[0].name == "everything but three" and len(st[0].members) == 9,
+                  f"setup saved with its members: {st}")
+            note = widget_text(app.screen.query_one("#setup-note", Static))
+            check("recorded 9 install(s)" in note, f"selection screen says so: {note}")
+            check(not app.screen.query_one("#use-setup", Checkbox).disabled, "the picker is offered now")
+            check("record 1 found install" in str(app.screen.query_one("#record-found", Button).label), "one left to record")
+    finally:
+        os.environ.pop("SEREN_INSTALLED_DIR", None); os.environ.pop("SEREN_SETUPS_DIR", None)
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_installed_dependency_is_used_not_reinstalled() -> None:
+    """Chad, 25 Sept: ticking the hippocampus loaded a default Memory install
+    rather than the one already installed. An installed dependency satisfies
+    the requirement and is wired; only a missing one is pulled in."""
+    print("\
+== Installed dependency is used, not reinstalled")
+    services, problems = sw.discover()
+    svcs = {x.name: x for x in services}
+    if not {"seren-memory", "seren-hippocampus"} <= set(svcs):
+        check(False, "cards present")
+        return
+    one = [sw.InstalledRecord(service="seren-memory", instance="wren-memory", host="127.0.0.1", port=7267,
+                              config="C:/u/seren-memorywren-memory/seren-memory.yaml", version="3.1.0")]
+    two = one + [sw.InstalledRecord(service="seren-memory", instance="", host="127.0.0.1", port=7420,
+                                    config="C:/u/seren-memory/seren-memory.yaml", version="3.0.0")]
+
+    async def pick_hippocampus(installed):
+        app = sw.StarwrightApp(services, problems, installed=installed)
+        async with app.run_test(size=(120, 50)) as pilot:
+            await pilot.click("#install"); await pilot.pause()
+            app.screen.query_one("#svc-seren-hippocampus", Checkbox).value = True
+            await pilot.pause(); await pilot.pause()
+            dep = widget_text(app.screen.query_one("#dep-note", Static))
+            await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+            note = widget_text(app.screen.query_one("#cfg-installed", Static))
+            return app, dep, note
+
+    app, dep, note = await pick_hippocampus(one)
+    check("already installed, will be used: memory" in dep, f"select screen says the installed memory will be used: {dep}")
+    check(app.selected == ["seren-hippocampus"], f"only the hippocampus is installed: {app.selected}")
+    hip = app.per_service.get("seren-hippocampus", {})
+    check(hip.get("memory-config", "").endswith("seren-memory.yaml") and "memory-url" not in hip,
+          f"wired to the installed memory by config path: {hip}")
+    check("instance" not in hip and "port" not in hip,
+          f"no setup picked: the default instance on its default port, not a dated side-by-side: {hip}")
+    check("wired to the installed memory" in note, f"config screen says so: {note}")
+
+    app, dep, note = await pick_hippocampus(two)
+    check(app.selected == ["seren-hippocampus"], f"two memories: still not reinstalled: {app.selected}")
+    check("memory-config" not in app.per_service.get("seren-hippocampus", {}), "two memories: nothing guessed")
+    check("2 memory instances installed" in note and "continue a setup" in note, f"config screen asks the person to choose: {note}")
+
+    app, dep, note = await pick_hippocampus([])
+    check("pulled in as dependencies: memory" in dep and "seren-memory" in app.selected,
+          f"no memory on the box: pulled in as before ({app.selected})")
+    hip = app.per_service.get("seren-hippocampus", {})
+    check(hip.get("memory-config", "").endswith("seren-memory.yaml"), f"...and wired to the one this run will write: {hip}")
+
+
+
+async def test_nothing_asked_that_the_box_knows() -> None:
+    """Chad, 25 Sept: 'for you have memory loci and corpus installed, just
+    adding the hippocampus, it shouldnt prompt or want all the values.' The
+    wired memory folds to one line in Configure; the install options come
+    from the installs the run builds on."""
+    print("\n== Nothing asked that the box knows")
+    services, problems = sw.discover()
+    svcs = {x.name: x for x in services}
+    if "seren-hippocampus" not in svcs:
+        check(False, "hippocampus card present")
+        return
+    mem = sw.InstalledRecord(service="seren-memory", instance="wren-memory", host="127.0.0.1", port=7267,
+                             config="C:/u/seren-memorywren-memory/seren-memory.yaml", version="3.1.0",
+                             source="local", source_ref="D:/serenDaemon/SerenCore/.dev-wheelhouse",
+                             autostart=True, extras={"corp": False})
+    opts = sw.inherited_options([mem])
+    check(opts == {"local": "D:/serenDaemon/SerenCore/.dev-wheelhouse", "service": True},
+          f"options inherited from the memory: {opts}")
+    scanned = sw.InstalledRecord(service="seren-memory", instance="", port=7420, derived=True, source="")
+    check(sw.inherited_options([scanned]) == {}, "a scanned record says nothing about how it was installed")
+    mixed = sw.InstalledRecord(service="seren-loci", port=7266, source="pypi", autostart=True)
+    check("local" not in sw.inherited_options([mem, mixed]), "records that disagree on source: nothing inherited")
+
+    app = sw.StarwrightApp(services, problems, installed=[mem])
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.click("#install"); await pilot.pause()
+        app.screen.query_one("#svc-seren-hippocampus", Checkbox).value = True
+        await pilot.pause()
+        await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+        check(app.screen.query_one("#u-local", Input).value == "D:/serenDaemon/SerenCore/.dev-wheelhouse",
+              "the dev wheelhouse is filled in from the memory's install")
+        check(app.screen.query_one("#u-pypi", Checkbox).value is False, "PyPI unticked")
+        check("dev wheelhouse" in widget_text(app.screen.query_one("#cfg-inherited", Static)),
+              "the screen says where the defaults came from")
+        check(app.per_service["seren-hippocampus"].get("service") is True, "autostart inherited")
+        check(app.screen.query_one("#f-seren-hippocampus-service", Checkbox).value is True, "...and the box shows it ticked")
+        app.screen.query_one("#adv-seren-hippocampus", Button).press()
+        m = await settled_modal(pilot, app)
+        check(m is not None, "Configure opened")
+        if m is None:
+            return
+        grp = m.query_one("#adv-grp-memory")
+        check(grp.display is False, "memory url / token / config are folded away")
+        check(m.query_one("#adv-memory-config", Input).value.endswith("seren-memory.yaml"), "the folded config holds the wiring")
+        line = " ".join(widget_text(w) for w in m.query(Static))
+        check("memory: wired to the installed memory" in line, "one line says where memory points")
+        m.query_one("#adv-manual-memory", Checkbox).value = True
+        await pilot.pause(); await pilot.pause()
+        check(m.query_one("#adv-grp-memory").display is True, "set memory by hand unfolds the boxes")
+        await pilot.pause(); await pilot.pause()
+        await pilot.click("#ok"); await pilot.pause(); await pilot.pause()
+        check(app.per_service["seren-hippocampus"].get("memory-config", "").endswith("seren-memory.yaml"),
+              "Okay keeps the wiring")
+
+
+async def test_reinstall_starts_from_what_is_installed() -> None:
+    """Chad, 25 Sept: continuing an install, the venv root, LocalSystem, the
+    service box and the hippocampus's model url were blank, and nothing
+    stopped a reinstall wiping a bearer token. A reinstall starts from the
+    installed service; the card keeps the token."""
+    print("\n== Reinstall starts from what is installed")
+    import tempfile
+    home = Path(tempfile.mkdtemp(prefix="sw-reinstall-"))
+    try:
+        services, problems = sw.discover()
+        svcs = {x.name: x for x in services}
+        if "seren-hippocampus" not in svcs:
+            check(False, "hippocampus card present")
+            return
+        d = home / "seren-hippocampuswren-hippocampus"
+        d.mkdir()
+        cfgp = d / "seren-hippocampus.yaml"
+        cfgp.write_text("server:\n  host: 127.0.0.1\n  port: 7269\n  bearer_token: \"keep-me\"\n"
+                        "memory:\n  url: http://127.0.0.1:7267\n  bearer_token: \"memorys\"\n"
+                        "model:\n  url: \"http://localhost:7200/v1\"   # llama\n\nsleep:\n  mode: thread\n")
+        rec = sw.InstalledRecord(service="seren-hippocampus", instance="wren-hippocampus", host="127.0.0.1", port=7269,
+                                 venv=str(home / "wren-seren-venvs-wren-hippocampus"), config=str(cfgp),
+                                 app_dir=str(d), derived=True)
+        # the OS says it autostarts as LocalSystem
+        sw.apply_os_services([rec], {sw.os_service_name(rec): {"autostart": True, "account": "LocalSystem"}})
+        check(rec.autostart and rec.local_system is True and rec.os_service, f"OS view applied: {rec.os_service}")
+        check(sw.config_value(str(cfgp), "model", "url") == "http://localhost:7200/v1", "model url read, comment stripped")
+        check(sw.config_value(str(cfgp), "server", "bearer_token") == "keep-me", "server block scoped")
+        per = {"seren-hippocampus": {"instance": "wren-hippocampus"}}
+        re_ = sw.prefill_reinstall(["seren-hippocampus"], svcs, per, [rec])
+        cfg = per["seren-hippocampus"]
+        check(list(re_) == ["seren-hippocampus"], "recognised as a reinstall")
+        check(cfg.get("port") == 7269, f"port kept: {cfg}")
+        check(cfg.get("venv") == str(home / "wren-seren-venvs-"), f"venv prefix derived: {cfg.get('venv')}")
+        check(cfg.get("service") is True and cfg.get("local-system") is True, "autostart and LocalSystem from the OS")
+        check(cfg.get("model-url") == "http://localhost:7200/v1", f"model url from its config: {cfg.get('model-url')}")
+        check("memory-url" not in cfg, "a dependency's url is wired, not copied")
+        check("token" not in cfg and "gen-token" not in cfg, "the bearer is left to the card to keep")
+        cmd = sw.build_command(svcs["seren-hippocampus"], cfg, {"service-user": "caesar"})
+        joined = " ".join(cmd)
+        check(("LocalSystem" in joined or "--local-system" in joined) and "caesar" not in joined,
+              f"LocalSystem beats the universal account: {cmd[-8:]}")
+        inh = sw.inherited_options([rec])
+        check(inh.get("venv") == str(home / "wren-seren-venvs-") and inh.get("local-system") is True
+              and inh.get("service") is True, f"universal defaults from the record: {inh}")
+        # the screens: the universal inputs and the Configure note
+        app = sw.StarwrightApp(services, problems, installed=[rec])
+        async with app.run_test(size=(120, 50)) as pilot:
+            await pilot.click("#install"); await pilot.pause()
+            app.screen.query_one("#svc-seren-hippocampus", Checkbox).value = True
+            await pilot.pause()
+            app.per_service["seren-hippocampus"] = {"instance": "wren-hippocampus"}
+            # Next re-runs the prefill with the instance the person set
+            await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+            if "seren-hippocampus" not in app.reinstalls:
+                check(False, f"Next did not see the reinstall: {app.reinstalls}")
+                return
+            check(app.screen.query_one("#u-venv", Input).value == str(home / "wren-seren-venvs-"), "venv root filled")
+            note = widget_text(app.screen.query_one("#cfg-inherited", Static))
+            check("reinstalling in place: hippocampus" in note and "bearer tokens are kept" in note, f"screen says so: {note}")
+            check(app.screen.query_one("#f-seren-hippocampus-service", Checkbox).value is True, "service box ticked")
+            app.screen.query_one("#adv-seren-hippocampus", Button).press()
+            m = await settled_modal(pilot, app)
+            if m is not None:
+                txt = " ".join(widget_text(w) for w in m.query(Static))
+                check("existing bearer token is kept" in txt, "Configure says the token is kept")
+                check(m.query_one("#adv-model-url", Input).value == "http://localhost:7200/v1", "model url shown in Configure")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 async def test_local_wheelhouse_option() -> None:
     """The universal options screen offers the dev wheelhouse once, and it
     beats both the release tag and the PyPI box when filled in."""
@@ -845,6 +1266,12 @@ async def main() -> int:
     await test_version()
     await test_command_building()
     await test_local_wheelhouse_option()
+    await test_install_ledger()
+    await test_setups()
+    await test_record_found_modal()
+    await test_installed_dependency_is_used_not_reinstalled()
+    await test_nothing_asked_that_the_box_knows()
+    await test_reinstall_starts_from_what_is_installed()
     await test_switches_are_check_boxes()
     await test_advanced_values_can_be_changed_and_cleared()
 

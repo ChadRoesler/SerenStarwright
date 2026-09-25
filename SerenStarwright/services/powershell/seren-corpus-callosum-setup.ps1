@@ -33,8 +33,14 @@ param(
   # readable by any other process.
   [string] $ServiceUser = "",
   [switch] $LocalSystem,
+  # The stores it fans. A URL says where; a CONFIG PATH says where AND presents
+  # that service's bearer, read from its own file - a token never crosses argv.
+  [string] $MemoryUrl    = "http://127.0.0.1:7420",
+  [string] $MemoryConfig = "",
+  [string] $LociUrl      = "http://127.0.0.1:7422",
+  [string] $LociConfig   = "",
   [string] $Instance  = "",
-  [string] $VenvDir   = "",
+  [string] $VenvDir   = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
   [switch] $Json        # stream JSON Lines events on stdout; humans go to stderr
 )
@@ -143,10 +149,25 @@ switch -Wildcard ($check) {
 Step "Writing config at $CfgPath"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 if ($GenToken) { $Token = & $vpy -c "import secrets; print(secrets.token_urlsafe(32))" }
+# A reinstall keeps the existing bearer unless -Token / -GenToken say otherwise.
+if (-not $Token -and -not $GenToken) { $Token = Get-SerenReusedToken -Path $CfgPath }
 if (Test-Path $CfgPath) {
   $bak = "$CfgPath.bak.$([int][double]::Parse((Get-Date -UFormat %s)))"
   Copy-Item $CfgPath $bak
   Warn "Existing config backed up to $(Split-Path $bak -Leaf)"
+}
+$memoryTokenLines = ""; $lociTokenLines = ""
+if ($MemoryConfig) {
+    $sib = Read-SerenSiblingConfig -Path $MemoryConfig
+    if ($sib.Url) { $MemoryUrl = $sib.Url }
+    $memoryTokenLines = Get-SerenSiblingTokenLines -Sib $sib -Indent "      "
+    Ok "Memory: $MemoryUrl (from $MemoryConfig$(if ($memoryTokenLines) { ', with its bearer' } else { '' }))"
+}
+if ($LociConfig) {
+    $sib = Read-SerenSiblingConfig -Path $LociConfig
+    if ($sib.Url) { $LociUrl = $sib.Url }
+    $lociTokenLines = Get-SerenSiblingTokenLines -Sib $sib -Indent "      "
+    Ok "Loci: $LociUrl (from $LociConfig$(if ($lociTokenLines) { ', with its bearer' } else { '' }))"
 }
 $tlsBlock = if ($Corp) {
   "`ntls:`n  trust_system_store: true"
@@ -163,12 +184,13 @@ federation:
   stores:
     - name: memory
       type: seren_memory
-      url: http://127.0.0.1:7420
-    - name: loci
+      url: $MemoryUrl
+$memoryTokenLines    - name: loci
       type: seren_loci
-      url: http://127.0.0.1:7422$tlsBlock
+      url: $LociUrl
+$lociTokenLines$tlsBlock
 "@ | Write-SerenTextFile -Path $CfgPath
-Ok "Config written (pre-wired to fan memory:7420 + loci:7422)"
+Ok "Config written (fanning $MemoryUrl + $LociUrl)"
 
 if ($NoUpdates) {
     # Update checking is ON by default across the Seren family: it asks the
