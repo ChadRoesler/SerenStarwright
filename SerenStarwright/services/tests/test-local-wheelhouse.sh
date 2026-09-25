@@ -105,6 +105,30 @@ check "seren-memory installed at the dev version" 'grep -qi "^seren[-_]memory==3
 check "its seren-meninges dependency resolved to the DEV pre-release" 'grep -qi "^seren[-_]meninges==2.4.1.dev3+gabc1234$" <<<"$res"'
 check "loci was pinned but not installed (a pin is not a request)" '! grep -qi "loci" <<<"$res"'
 
+echo "── a rebuild with the SAME version still lands ──"
+# A dirty tree is stamped with its commit and the day only, so two dev builds
+# on one day share a version; --upgrade alone installed nothing and said ok.
+"$PY" - "$HOUSE" <<'PYW'
+import base64, hashlib, sys, zipfile, pathlib
+house = pathlib.Path(sys.argv[1]); dist, ver = "seren_memory", "3.0.1.dev2+gdef5678"
+info = f"{dist}-{ver}.dist-info"
+files = {f"{dist}/__init__.py": f'__version__ = "{ver}"\nREBUILT = True\n',
+         f"{info}/METADATA": f"Metadata-Version: 2.1\nName: seren-memory\nVersion: {ver}\nRequires-Dist: seren-meninges>=2.4.0,<3\n",
+         f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+         f"{info}/top_level.txt": dist + "\n"}
+rec = "".join(f"{k},sha256={base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).rstrip(b'=').decode()},{len(v.encode())}\n" for k, v in files.items()) + f"{info}/RECORD,,\n"
+with zipfile.ZipFile(house / f"{dist}-{ver}-py3-none-any.whl", "w") as z:
+    for k, v in files.items():
+        z.writestr(k, v)
+    z.writestr(f"{info}/RECORD", rec)
+PYW
+( cd "$HOUSE" && sha256sum *.whl > SHA256SUMS )
+res="$(scenario seren-memory "$HOUSE_W" "" '
+  resolve_wheel >/dev/null 2>&1 || exit 1
+  pip_install "'"$VPY"'" "$WHEEL_SRC" "" "--no-index" "" >/dev/null 2>&1 || exit 1
+  "'"$VPY"'" -c "import seren_memory as m; print(\"REBUILT\" if getattr(m, \"REBUILT\", False) else \"STALE\")"')"
+check "the same-version rebuild replaced the installed code" 'grep -q "^REBUILT$" <<<"$res"'
+
 echo "── a file:// house behaves like a folder ──"
 out="$(scenario seren-loci "file://$HOUSE_W" "" '
   resolve_wheel >/dev/null 2>&1 || exit 1; echo "SRC=$(basename "$WHEEL_SRC")"')"

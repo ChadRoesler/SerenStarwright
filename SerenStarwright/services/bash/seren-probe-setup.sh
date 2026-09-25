@@ -156,6 +156,8 @@ sanity_check "$VPY" "seren_probe" "viewer/ui/body.html"
 step "Writing config at $CFG_PATH"
 mkdir -p "$APP_DIR"
 $GEN_TOKEN && TOKEN="$("$VPY" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# A reinstall keeps the existing bearer unless --token / --gen-token say otherwise.
+if [[ -z "$TOKEN" ]] && ! $GEN_TOKEN; then seren_reuse_token "$CFG_PATH" || true; fi
 [[ -f "$CFG_PATH" ]] && cp "$CFG_PATH" "$CFG_PATH.bak.$(date +%s)" && warn "Existing config backed up"
 # No storage block: SerenProbe keeps its topology state and results under
 # ~/.seren-probe/ on its own and reads no db_path.

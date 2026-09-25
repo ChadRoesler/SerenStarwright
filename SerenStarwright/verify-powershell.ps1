@@ -390,6 +390,69 @@ try {
     Remove-Item -Recurse -Force $house -ErrorAction SilentlyContinue
 }
 
+# -- 6. the install ledger (Write-SerenInstallRecord) -------------------------
+Section "Install ledger (Write-SerenInstallRecord)"
+$ledgerTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-ledger-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $ledgerTmp | Out-Null
+$env:SEREN_INSTALLED_DIR = $ledgerTmp
+try {
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $global:Instance = "wren"
+    $Wheel = "C:\wheels\seren_memory-3.1.0-py3-none-any.whl"
+    Write-SerenInstallRecord -Service "seren-memory" -ConnectHost "127.0.0.1" -Port 7267 -Autostart $false `
+        -Token "s3cret-do-not-write-me" -Mcp $true -Venv "C:\nope\venv" -Config "C:\nope\seren-memory\seren-memory.yaml"
+    $recPath = Join-Path $ledgerTmp "seren-memory@wren.json"
+    if (Test-Path $recPath) { Good "record written as <service>@<instance>.json" } else { Bad "no record at $recPath" }
+    $raw = Get-Content $recPath -Raw
+    $rec = $raw | ConvertFrom-Json
+    if ($rec.service -eq "seren-memory" -and $rec.instance -eq "wren" -and $rec.port -eq 7267) { Good "service / instance / port recorded" } else { Bad "fields wrong: $raw" }
+    if ($rec.url -eq "http://127.0.0.1:7267" -and $rec.app_dir -eq "C:\nope\seren-memory") { Good "url and app_dir derived" } else { Bad "url/app_dir wrong: $($rec.url) $($rec.app_dir)" }
+    if ($rec.source -eq "wheel" -and $rec.source_ref -like "*seren_memory-3.1.0*") { Good "source is the wheel" } else { Bad "source wrong: $($rec.source) $($rec.source_ref)" }
+    if ($rec.has_token -eq $true -and $raw -notmatch "s3cret") { Good "has_token true, token itself never written" } else { Bad "token leaked or has_token wrong" }
+    if ($rec.extras.mcp -eq $true -and $rec.derived -eq $false) { Good "extras and derived flag" } else { Bad "extras/derived wrong" }
+} catch {
+    Bad "Write-SerenInstallRecord threw: $($_.Exception.Message)"
+} finally {
+    Remove-Item Env:SEREN_INSTALLED_DIR -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $ledgerTmp -ErrorAction SilentlyContinue
+    Remove-Variable -Name Instance -Scope Global -ErrorAction SilentlyContinue
+}
+
+# -- 7. a card reads a sibling's config (Read-SerenSiblingConfig) -------------
+Section "Sibling config (Read-SerenSiblingConfig)"
+$sibTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-sib-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $sibTmp | Out-Null
+try {
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $memYaml = Join-Path $sibTmp "memory.yaml"
+    [System.IO.File]::WriteAllText($memYaml, "server:`n  host: 0.0.0.0   # LAN`n  port: 7267`n  bearer_token: `"s3cret-inline`"   # the token`nstorage:`n  x: 1`n")
+    $sib = Read-SerenSiblingConfig -Path $memYaml
+    if ($sib.Url -eq "http://127.0.0.1:7267") { Good "url from host/port (0.0.0.0 -> 127.0.0.1)" } else { Bad "url wrong: $($sib.Url)" }
+    if ($sib.Token -eq "s3cret-inline") { Good "inline token, quotes and comment stripped" } else { Bad "token wrong: $($sib.Token)" }
+    $lines = Get-SerenSiblingTokenLines -Sib $sib -Indent "      "
+    if ($lines -eq "      bearer_token: `"s3cret-inline`"`n") { Good "token line indented as asked" } else { Bad "token line wrong: [$lines]" }
+    $lociYaml = Join-Path $sibTmp "loci.yaml"
+    [System.IO.File]::WriteAllText($lociYaml, "server:`n  host: '127.0.0.1'`n  port: '7266'`n  bearer_token_env: SEREN_LOCI_TOKEN`n")
+    $sib2 = Read-SerenSiblingConfig -Path $lociYaml
+    if ($sib2.Url -eq "http://127.0.0.1:7266" -and $sib2.TokenEnv -eq "SEREN_LOCI_TOKEN" -and -not $sib2.Token) { Good "quoted values and an env pointer" } else { Bad "env pointer wrong: $($sib2.Url) $($sib2.TokenEnv)" }
+    $hipYaml = Join-Path $sibTmp "hippo.yaml"
+    [System.IO.File]::WriteAllText($hipYaml, "server:`n  host: 127.0.0.1`n  port: 7269`nmemory:`n  url: http://127.0.0.1:7267`n  bearer_token: `"memorys-token-not-mine`"`n")
+    $sibH = Read-SerenSiblingConfig -Path $hipYaml
+    if ($sibH.Url -eq "http://127.0.0.1:7269" -and -not $sibH.Token) { Good "only the server block counts (Memory's bearer is not its own)" } else { Bad "server scoping wrong: $($sibH.Url) [$($sibH.Token)]" }
+    $reused = Get-SerenReusedToken -Path $memYaml
+    if ($reused -eq "s3cret-inline") { Good "a reinstall keeps the existing bearer" } else { Bad "reuse wrong: [$reused]" }
+    $none = Get-SerenReusedToken -Path $hipYaml
+    if (-not $none) { Good "no server token: nothing reused" } else { Bad "reused a token that is not the server's: [$none]" }
+    $fresh = Get-SerenReusedToken -Path (Join-Path $sibTmp "nope.yaml")
+    if (-not $fresh) { Good "fresh install: nothing reused" } else { Bad "fresh install reused [$fresh]" }
+    $sib3 = Read-SerenSiblingConfig -Path (Join-Path $sibTmp "nope.yaml") 3>$null
+    if (-not $sib3.Url -and -not $sib3.Token) { Good "missing file: nothing set" } else { Bad "missing file set something" }
+} catch {
+    Bad "Read-SerenSiblingConfig threw: $($_.Exception.Message)"
+} finally {
+    Remove-Item -Recurse -Force $sibTmp -ErrorAction SilentlyContinue
+}
+
 # -- summary ------------------------------------------------------------------
 Write-Host ""
 Write-Host "=========================================="

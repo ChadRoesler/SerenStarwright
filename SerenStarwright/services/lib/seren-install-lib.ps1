@@ -267,6 +267,145 @@ function Get-SerenDescribe {
     Write-Output ($obj | ConvertTo-Json -Compress -Depth 5)
 }
 
+# -- Read-SerenSiblingConfig - a card reads another service's config ----------
+# Twin of seren_read_sibling_config. A token never crosses a command line: the
+# card is handed the sibling's config PATH and reads host, port and the bearer
+# (inline, env var name, or keyring ref) itself.
+function Read-SerenSiblingConfig {
+    param([Parameter(Mandatory)] [string] $Path)
+    $out = @{ Url = ""; Token = ""; TokenEnv = ""; TokenKeyring = "" }
+    if (-not (Test-Path $Path)) { Warn "sibling config not readable: $Path"; return $out }
+    # The SERVER block only: a hippocampus or callosum config also carries the
+    # bearer it presents to Memory, which is not its own.
+    $lines = @()
+    $inServer = $false
+    foreach ($l in (Get-Content $Path)) {
+        if ($l -match '^server:\s*(#.*)?$') { $inServer = $true; continue }
+        if ($l -match '^[^\s#]') { $inServer = $false }
+        if ($inServer) { $lines += $l }
+    }
+    function _first($pattern) {
+        foreach ($l in $lines) {
+            if ($l -match $pattern) {
+                $v = $Matches[1].Trim()
+                $v = ($v -replace '\s*#.*$', '')
+                return $v.Trim('"').Trim("'")
+            }
+        }
+        return ""
+    }
+    $sHost = _first '^\s+host:\s*(.*)$'
+    $sPort = _first '^\s+port:\s*(.*)$'
+    if (-not $sHost -or $sHost -eq "0.0.0.0") { $sHost = "127.0.0.1" }
+    if ($sPort) { $out.Url = "http://${sHost}:${sPort}" }
+    $out.Token        = _first '^\s+bearer_token:\s*(.*)$'
+    $out.TokenEnv     = _first '^\s+bearer_token_env:\s*(.*)$'
+    $out.TokenKeyring = _first '^\s+bearer_token_keyring:\s*(.*)$'
+    return $out
+}
+
+# -- Get-SerenReusedToken - keep the bearer a reinstall would otherwise wipe ----
+# Twin of seren_reuse_token: with neither -Token nor -GenToken, the existing
+# config's own bearer is kept instead of being overwritten with nothing.
+function Get-SerenReusedToken {
+    param([string] $Path)
+    if (-not $Path -or -not (Test-Path $Path)) { return "" }
+    $sib = Read-SerenSiblingConfig -Path $Path
+    if ($sib.Token) {
+        Ok "Keeping the existing bearer token (-GenToken rotates it, -Token sets one)"
+        return $sib.Token
+    }
+    if ($sib.TokenEnv -or $sib.TokenKeyring) {
+        Warn "The existing config presents its bearer through a pointer ($($sib.TokenEnv)$($sib.TokenKeyring)); the new config does not carry that line - add it back (the old file is kept as a .bak)"
+    }
+    return ""
+}
+
+# -- Get-SerenSiblingTokenLines - the yaml lines that present a sibling's bearer
+function Get-SerenSiblingTokenLines {
+    param([hashtable] $Sib, [string] $Indent = "  ")
+    $t = ""
+    if ($Sib.Token)        { $t += "${Indent}bearer_token: `"$($Sib.Token)`"`n" }
+    if ($Sib.TokenEnv)     { $t += "${Indent}bearer_token_env: $($Sib.TokenEnv)`n" }
+    if ($Sib.TokenKeyring) { $t += "${Indent}bearer_token_keyring: `"$($Sib.TokenKeyring)`"`n" }
+    return $t
+}
+
+# -- Write-SerenInstallRecord - the install ledger -----------------------------
+# Twin of seren_record_install in the bash library. One record per install in
+# $env:USERPROFILE\.seren\installed\<service>[@<instance>].json (or
+# $env:SEREN_INSTALLED_DIR), derived from what was installed. Never the token.
+function Write-SerenInstallRecord {
+    param(
+        [string] $Service, [string] $ConnectHost, [int] $Port,
+        [bool] $Autostart, [string] $Token,
+        [bool] $Mcp = $false, [bool] $Corp = $false, [bool] $Vector = $false,
+        [string] $Venv = "", [string] $Config = "", [string] $Package = ""
+    )
+    $dir = $env:SEREN_INSTALLED_DIR
+    if (-not $dir) { $dir = Join-Path $env:USERPROFILE ".seren\installed" }
+    try { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    catch { Warn "Couldn't write $dir - this install is not in the ledger"; return }
+    $inst = ""
+    $iv = Get-Variable -Name Instance -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+    if ($iv) { $inst = [string] $iv }
+    $name = $Service
+    if ($inst) { $name = "$Service@$inst" }
+    $path = Join-Path $dir "$name.json"
+    if (-not $Package) { $Package = $Service }
+    $appDir = ""
+    if ($Config) { $appDir = Split-Path -Parent $Config }
+    $version = ""
+    $vpy = ""
+    if ($Venv -and (Test-Path (Join-Path $Venv "Scripts\python.exe"))) { $vpy = Join-Path $Venv "Scripts\python.exe" }
+    if ($vpy) {
+        try { $version = [string] (& $vpy -c "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))" $Package 2>$null) } catch { $version = "" }
+        if (-not $version) { $version = "" }
+        $version = $version.Trim()
+    }
+    $source = "pypi"; $sourceRef = ""
+    $rv = Get-Variable -Name Ref   -ValueOnly -ErrorAction SilentlyContinue
+    $lv = Get-Variable -Name Local -ValueOnly -ErrorAction SilentlyContinue
+    $wv = Get-Variable -Name Wheel -ValueOnly -ErrorAction SilentlyContinue
+    if ($rv) { $source = "release"; $sourceRef = [string] $rv }
+    if ($lv) { $source = "local";   $sourceRef = [string] $lv }
+    if ($wv) { $source = "wheel";   $sourceRef = [string] $wv }
+    $hasToken = $false
+    if ($Token) { $hasToken = $true }
+    $launcher = ""
+    if ($appDir) { $launcher = Join-Path $appDir "run-$Service.ps1" }
+    $rec = [ordered] @{
+        schema_version = 1
+        service        = $Service
+        instance       = $inst
+        package        = $Package
+        version        = $version
+        host           = $ConnectHost
+        port           = $Port
+        url            = "http://${ConnectHost}:${Port}"
+        venv           = $Venv
+        config         = $Config
+        app_dir        = $appDir
+        launcher       = $launcher
+        autostart      = $Autostart
+        service_user   = [string] (Get-Variable -Name ServiceUser -ValueOnly -ErrorAction SilentlyContinue)
+        local_system   = [bool] (Get-Variable -Name LocalSystem -ValueOnly -ErrorAction SilentlyContinue)
+        has_token      = $hasToken
+        extras         = [ordered] @{ mcp = $Mcp; corp = $Corp; vector = $Vector; st = $false }
+        source         = $source
+        source_ref     = $sourceRef
+        installed_at   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+        setup          = [string] $env:SEREN_SETUP
+        installer      = (Split-Path -Leaf $MyInvocation.PSCommandPath)
+        platform       = "Windows"
+        derived        = $false
+    }
+    $json = ($rec | ConvertTo-Json -Depth 4)
+    [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding $false))
+    Ok "Recorded in the install ledger: $path"
+    Send-SerenEvent -EventName "installed" -Data @{ path = $path; service = $Service; instance = $inst; version = $version }
+}
+
 # -- Send-SerenDone - the structured completion event --------------------------
 function Send-SerenDone {
     param(
@@ -277,6 +416,9 @@ function Send-SerenDone {
     )
     $hasToken = $false
     if ($Token) { $hasToken = $true }
+    # The ledger first: written whether or not anyone asked for -Json.
+    Write-SerenInstallRecord -Service $Service -ConnectHost $ConnectHost -Port $Port -Autostart $Autostart `
+        -Token $Token -Mcp $Mcp -Corp $Corp -Vector $Vector -Venv $Venv -Config $Config
     Send-SerenEvent -EventName "done" -Data @{
         ok        = $true
         service   = $Service
@@ -536,6 +678,14 @@ function Install-Package {
     # constraints) and empty otherwise, so every card gets the house for free.
     & $Vpy -m pip install -q --upgrade $corpArgs $global:serenPipArgs $installSpec
     if ($LASTEXITCODE -ne 0) { Die "pip install failed - see output above" }
+    # A wheel FILE can carry the same version as the installed build (a dirty
+    # tree is stamped with its commit and the day only), and --upgrade then
+    # installs nothing while reporting success. Reinstall the package itself
+    # from the file, dependencies untouched.
+    if ($WheelSrc -like "*.whl" -and (Test-Path $WheelSrc)) {
+        & $Vpy -m pip install -q --force-reinstall --no-deps $corpArgs $WheelSrc
+        if ($LASTEXITCODE -ne 0) { Die "pip could not reinstall $WheelSrc over the installed build" }
+    }
     Ok "Installed"
 }
 

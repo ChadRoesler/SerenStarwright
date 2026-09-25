@@ -53,6 +53,12 @@ jobs:
       - name: --local installs from a dev wheelhouse (real pip, no network)
         run: bash SerenStarwright/services/tests/test-local-wheelhouse.sh
 
+      - name: every install is recorded in the ledger (no token in it)
+        run: bash SerenStarwright/services/tests/test-install-record.sh
+
+      - name: a card reads a sibling's config for its url and bearer (no token on argv)
+        run: bash SerenStarwright/services/tests/test-sibling-config.sh
+
       - name: bash -n every script
         run: |
           fail=0

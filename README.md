@@ -240,3 +240,44 @@ them. `verify-powershell.ps1` catches it.
 GPL-3.0. Same as the rest of the Seren stack.
 
 Rip it and win. 🌭🔧
+
+## What is already on this box
+
+Every card records what it installed in `~/.seren/installed/<service>[@<instance>].json`:
+version, port, venv, config, where it came from (PyPI, a release tag, a wheel, the dev
+wheelhouse), never the token. Starwright reads that ledger and also scans `~/seren-*/`
+for installs that predate it, deriving the same facts from the launcher every card has
+always written. On the select screen each card says what is here (`installed v3.1.0 :7420`,
+a second line per instance); the configure step warns when a port is held by something
+already installed, says whether this run lands on top of an existing instance or beside it,
+and fills in a dependency's address (the hippocampus gets the one installed Memory's url).
+
+```bash
+python seren-starwright.py --installed          # the ledger as a table
+python seren-starwright.py --installed --json
+```
+
+## Setups
+
+A setup is who or what a group of installs is for: your own brain, a local model's, a
+project's. It has a name (the date when nobody gives one), an instance name its new
+members take, a port base (each service sits at base plus its family offset, so two
+setups never share a port), and its members. Setups live in `~/.seren/setups/<name>.json`
+and every ledger record names the setup it belongs to.
+
+On the select screen, tick **continue a previous setup** and pick one: the run becomes
+"alter this setup". Members already installed reinstall in place with their flags
+prefilled (tick vector on Loci to add sqlite-vec), new members get the instance, the port
+and their wiring filled in. Leave the box unticked and name a new setup; on the family's
+own band it is the default instance, on any other band the name becomes the instance so
+it lives beside.
+
+**Wiring feeds a dependent what it needs.** A card that depends on another is handed that
+service's config path (`--memory-config`, `--loci-config`): the card reads the sibling's
+url and bearer from the file itself, so no token ever crosses a command line. The sibling
+is the one installed in the same run, else the setup's member, else the one installed
+instance on the box. The callosum and the hippocampus cards take these on both engines.
+
+**Recording what was found.** Installs the scan found under `~/seren-*/` but no installer
+recorded show a **record N found installs** button: tick the ones that belong together,
+name the setup, and they enter the ledger under it. The rest stay found and ignored.

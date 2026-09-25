@@ -202,6 +202,8 @@ step "Writing config at $CFG_PATH"
 mkdir -p "$APP_DIR"
 [[ -f "$CFG_PATH" ]] && cp "$CFG_PATH" "$CFG_PATH.bak.$(date +%s)" && warn "Existing config backed up"
 $GEN_TOKEN && TOKEN="$("$VPY" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# A reinstall keeps the existing bearer unless --token / --gen-token say otherwise.
+if [[ -z "$TOKEN" ]] && ! $GEN_TOKEN; then seren_reuse_token "$CFG_PATH" || true; fi
 # A lock you can add, never one you must: the token line is written only when
 # one was asked for, so the default config reads exactly as it always has.
 cat > "$CFG_PATH" <<YAML
