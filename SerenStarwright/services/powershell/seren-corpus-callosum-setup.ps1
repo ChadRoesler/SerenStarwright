@@ -40,6 +40,9 @@ param(
   [string] $LociUrl      = "http://127.0.0.1:7422",
   [string] $LociConfig   = "",
   [string] $Instance  = "",
+  # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
+  # under one folder, absolute paths. Empty = the old layout.
+  [string] $Root      = "",
   [string] $VenvDir   = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
   [switch] $Json        # stream JSON Lines events on stdout; humans go to stderr
@@ -92,8 +95,9 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\callosum" }
-$VenvDir = "$VenvDir$Instance"
-$AppDir  = "$env:USERPROFILE\seren-corpus-callosum$Instance"
+$layout  = Get-SerenLayout -Root $Root -Short "corpus-callosum" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-corpus-callosum"
+$VenvDir = $layout.Venv
+$AppDir  = $layout.App
 $CfgPath = "$AppDir\seren-corpus-callosum.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7423) {

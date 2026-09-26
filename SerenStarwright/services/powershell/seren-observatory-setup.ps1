@@ -32,6 +32,9 @@ param(
   [string] $ServiceUser = "",
   [switch] $LocalSystem,
   [string] $Instance  = "",
+  # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
+  # under one folder, absolute paths. Empty = the old layout.
+  [string] $Root      = "",
   [string] $VenvDir   = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
   [switch] $Json        # stream JSON Lines events on stdout; humans go to stderr
@@ -79,8 +82,9 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\observatory" }
-$VenvDir = "$VenvDir$Instance"
-$AppDir  = "$env:USERPROFILE\seren-observatory$Instance"
+$layout  = Get-SerenLayout -Root $Root -Short "observatory" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-observatory"
+$VenvDir = $layout.Venv
+$AppDir  = $layout.App
 $CfgPath = "$AppDir\seren-observatory.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7777) {
@@ -123,7 +127,7 @@ if ($GenToken) { $Token = & $vpy -c "import secrets; print(secrets.token_urlsafe
 # installer when -Token / -GenToken is given.
 server:
   host: $ObsHost
-  port: $Port
+  port: $Port$(if ($layout.Data) { "`n  secrets_path: '$($layout.Data)\secrets.json'" })
 "@ | Write-SerenTextFile -Path $CfgPath
 Ok "Config written"
 
@@ -132,6 +136,10 @@ Ok "Config written"
 # exists, so a Windows observatory always failed closed on its management
 # endpoints. Merged into the file if one is already there.
 $SecretsFile = Join-Path $env:USERPROFILE ".seren\secrets.json"
+# Under an install root the token lives in the root's store and the config
+# names it (server.secrets_path): a second cluster's observatory on this box
+# has its own, and nothing depends on whose profile the service runs in.
+if ($layout.Data) { $SecretsFile = Join-Path $layout.Data "secrets.json" }
 if ($Token) {
   $secretsDir = Split-Path $SecretsFile -Parent
   New-Item -ItemType Directory -Force -Path $secretsDir | Out-Null
@@ -147,8 +155,13 @@ if ($Token) {
   # Lock the file to the current user: the NTFS equivalent of chmod 600.
   try {
     icacls $SecretsFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
+    # ...and to the account the SERVICE runs as. Locking it to the installer
+    # alone also locked out SYSTEM, so an observatory running as LocalSystem
+    # could not read its own token and failed closed (26 Sept 2026).
+    if ($LocalSystem) { icacls $SecretsFile /grant:r "SYSTEM:(R)" | Out-Null }
+    elseif ($ServiceUser -and $ServiceUser -ne $env:USERNAME) { icacls $SecretsFile /grant:r "${ServiceUser}:(R)" | Out-Null }
   } catch { Warn "could not restrict ACLs on $SecretsFile - do it by hand" }
-  if ($ServiceUser -and $ServiceUser -ne $env:USERNAME) {
+  if (-not $layout.Data -and -not $LocalSystem -and $ServiceUser -and $ServiceUser -ne $env:USERNAME) {
     Warn "The service runs as $ServiceUser; copy $SecretsFile into that account's profile (.seren\secrets.json)"
   }
   Ok "Token written to $SecretsFile - the management endpoints are armed"

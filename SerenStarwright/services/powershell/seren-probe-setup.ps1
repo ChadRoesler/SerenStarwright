@@ -36,6 +36,9 @@ param(
   [string] $ServiceUser = "",
   [switch] $LocalSystem,
   [string] $Instance  = "",
+  # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
+  # under one folder, absolute paths. Empty = the old layout.
+  [string] $Root      = "",
   [string] $VenvDir   = "",
   [switch] $Describe,
   [switch] $Json
@@ -81,8 +84,9 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\probe" }
-$VenvDir = "$VenvDir$Instance"
-$AppDir  = "$env:USERPROFILE\seren-probe$Instance"
+$layout  = Get-SerenLayout -Root $Root -Short "probe" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-probe"
+$VenvDir = $layout.Venv
+$AppDir  = $layout.App
 $CfgPath = "$AppDir\seren-probe.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7430) {
@@ -134,7 +138,17 @@ server:
   bearer_token: "$Token"
 $(if ($Corp) { "tls:`n  trust_system_store: true`n" })
 "@ | Write-SerenTextFile -Path $CfgPath
-# No storage block: SerenProbe keeps its topology state and results under
+# Under an install root: topology state, eval results and corpus captures
+# live in the root's store (storage.state_dir), so two clusters' probes on one
+# host never share results.
+if ($layout.Data) {
+    @"
+
+storage:
+  state_dir: '$($layout.Data)'
+"@ | Add-SerenTextFile -Path $CfgPath
+}
+# Without a root there is no storage block: SerenProbe keeps its topology state and results under
 # ~/.seren-probe/ on its own and reads no db_path.
 if ($Token) { & $vpy -c "import os,stat; os.chmod('$CfgPath', 0o600)" 2>$null }
 Ok "Config written"

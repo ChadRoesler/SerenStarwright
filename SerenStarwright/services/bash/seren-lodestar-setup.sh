@@ -26,6 +26,7 @@
 #    --mcp            Install the [mcp] extra
 #    --corp           Route TLS through the OS trust store
 #    --instance NAME  Instance name
+#    --root DIR  Install root: venvs, apps, stores, logs in one folder
 #    --venv PATH      Override venv location
 #    --no-updates     Turn update checking OFF in the generated config
 #                     (it is ON by default; this never blocks install)
@@ -76,6 +77,9 @@ MCP=false
 UPDATES_OFF=false
 CORP=false
 INSTANCE=""
+# Starwright's install root (~/seren/<install>): venvs, apps, stores and
+# logs under one folder, absolute paths. Empty = the old layout.
+ROOT=""
 VENV_DIR="$HOME/seren-venvs/lodestar"
 APP_DIR="$HOME/seren-lodestar"
 
@@ -116,6 +120,7 @@ while [[ $# -gt 0 ]]; do
     --no-updates) UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
+    --root)     ROOT="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
     --describe) seren_describe; exit 0 ;;
@@ -124,8 +129,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-VENV_DIR="$VENV_DIR$INSTANCE"
-APP_DIR="$APP_DIR$INSTANCE"
+seren_layout "lodestar"
 CFG_PATH="$APP_DIR/seren-lodestar.yaml"
 CONNECT_HOST="$HOST"; [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
 [[ -n "$INSTANCE" && "$PORT" == "6361" ]] && warn "Instance '$INSTANCE' using default port 6361 - may collide."
@@ -231,7 +235,7 @@ write_launcher "$APP_DIR" "seren-lodestar" "$VPY" "seren_lodestar" "$CFG_PATH"
 
 # -- 6. optional autostart ------------------------------------------------------
 if $INSTALL_SERVICE; then
-  setup_autostart "$SCRIPT_DIR" "seren-lodestar" "$APP_DIR" "$TOKEN" "$INSTANCE" "$VENV_DIR" "$SERVICE_USER"
+  setup_autostart "$SCRIPT_DIR" "seren-lodestar" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
 fi
 
 # -- done -----------------------------------------------------------------------

@@ -949,6 +949,109 @@ async def test_select_layout() -> None:
         shutil.rmtree(home, ignore_errors=True)
 
 
+async def test_config_boxes() -> None:
+    """Chad's drawing, 26 Sept: every section a titled box, all one width, on
+    both screens; the group's install-all box has a line of air under the
+    border it cannot sit in."""
+    print("\n== Boxes, one width")
+    services, problems = sw.discover()
+    app = sw.StarwrightApp(services, problems)
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.click("#install"); await pilot.pause(); await pilot.pause()
+        scr = app.screen
+        widths = {scr.query_one("#setup-box").outer_size.width} | {g.outer_size.width for g in scr.query(".group")}
+        check(len(widths) == 1, f"select screen: the setup box and every group one width: {widths}")
+        grp, head = scr.query_one(".group"), scr.query_one("#grp-brain")
+        check(head.region.y - grp.region.y >= 2, "install all sits a line below the group's border")
+        check(str(head.label) == "install all", f"and says what it does: {head.label}")
+        for n in ("seren-memory", "seren-lodestar"):
+            if n in app.svc_map:
+                scr.query_one(f"#svc-{n}", Checkbox).value = True
+        await pilot.pause()
+        await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+        scr = app.screen
+        boxes = list(scr.query(".cfg-box"))
+        titles = [b.border_title for b in boxes]
+        check("Universal install options" in titles and "Service account" in titles,
+              f"config screen: universal options and the account are boxes: {titles}")
+        check(any("Brain" in (x or "") for x in titles) and any("Core" in (x or "") for x in titles),
+              f"...and each group of services has its own: {titles}")
+        widths = {b.outer_size.width for b in boxes} | {scr.query_one("#cfg-prev-box").outer_size.width}
+        check(len(widths) == 1, f"...all one width: {widths}")
+
+
+async def test_install_root() -> None:
+    """Chad, 26 Sept: one folder per named install - venvs, apps, stores and
+    logs - so two clusters on one host share nothing and you can see what is
+    whose. An install from before roots is reinstalled in place, not moved."""
+    print("\n== Install roots")
+    import tempfile
+    services, problems = sw.discover()
+    svcs = {x.name: x for x in services}
+    home = Path(tempfile.mkdtemp())
+    os.environ["SEREN_SETUPS_DIR"] = str(home / "setups")
+    try:
+        check(sw.setup_root("wren", home) == str(home / "seren" / "wren"), "a named install lives in ~/seren/<name>")
+        check(sw.setup_root("", home) == str(home / "seren" / "default"), "an unnamed one is 'default'")
+        check(sw.setup_root("Rhys's box", home) == str(home / "seren" / "rhys-s-box"), "the name is made safe for a folder")
+
+        rooted = sw.InstalledRecord(service="seren-memory", instance="wren", root=str(home / "seren" / "wren"))
+        old = sw.InstalledRecord(service="seren-memory", instance="wren-memory")
+        want_new = "SerenMemory-wren" if sw.IS_WINDOWS else "seren-memory-wren.service"
+        want_old = "SerenMemorywren-memory" if sw.IS_WINDOWS else "seren-memorywren-memory.service"
+        check(sw.os_service_name(rooted) == want_new, f"under a root the service is {want_new}")
+        check(sw.os_service_name(old) == want_old, f"the old layout keeps {want_old}")
+        default = sw.InstalledRecord(service="seren-loci", instance="", root=str(home / "seren" / "default"))
+        check(sw.os_service_name(default) == ("SerenLoci" if sw.IS_WINDOWS else "seren-loci.service"),
+              "the default install keeps the plain name")
+
+        if "seren-memory" in svcs:
+            path = sw.planned_config(svcs["seren-memory"], {"root": str(home / "seren" / "wren")})
+            check(path == str(home / "seren" / "wren" / "apps" / "memory" / "seren-memory.yaml"),
+                  f"a planned config lands in <root>/apps/<svc>: {path}")
+
+        # apply_setup: new members take the root; an old-layout member does not
+        st = sw.Setup(name="wren", instance="wren", base_port=7265, root=str(home / "seren" / "wren"),
+                      members=["seren-memory@wren-memory"])
+        per: dict = {}
+        sel = [n for n in ("seren-memory", "seren-loci") if n in svcs]
+        sw.apply_setup(st, sel, svcs, per, [old])
+        check("root" not in per.get("seren-memory", {}), "an install from before roots is reinstalled in place, not moved")
+        if "seren-loci" in svcs:
+            check(per["seren-loci"].get("root") == st.root, "a new member goes into the setup's root")
+            cmd = sw.build_command(svcs["seren-loci"], per["seren-loci"], {})
+            flag = "-Root" if sw.IS_WINDOWS else "--root"
+            check(flag in cmd and cmd[cmd.index(flag) + 1] == st.root, f"the card is told the root: {cmd}")
+
+        # the setup file names its root, and the root holds a copy
+        sw.save_setup(st)
+        again = [x for x in sw.load_setups() if x.name == "wren"]
+        check(again and again[0].root == st.root, "the setup file carries its root")
+        check((Path(st.root) / "starwright-setup.json").is_file(), "the root holds a copy of the setup")
+
+        # the screens: a new install is called default, lives in ~/seren/default, venv root hidden
+        app = sw.StarwrightApp(services, problems, installed=[])
+        async with app.run_test(size=(120, 60)) as pilot:
+            await pilot.click("#install"); await pilot.pause(); await pilot.pause()
+            check(app.screen.query_one("#setup-name", Input).value == "default", "the first install is called 'default'")
+            if "seren-loci" in svcs:
+                app.screen.query_one("#svc-seren-loci", Checkbox).value = True
+                await pilot.pause()
+                await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+                scr = app.screen
+                root_in = scr.query_one("#u-root", Input).value
+                check(root_in == str(Path.home() / "seren" / "default"), f"install root prefilled: {root_in}")
+                check(scr.query_one("#u-venv").display is False, "the old venv root is hidden under a root")
+                scr.query_one("#u-root", Input).value = ""; await pilot.pause()
+                check(scr.query_one("#u-venv").display is True, "clearing the root brings the venv root back")
+                scr._collect()
+                check("root" not in app.per_service.get("seren-loci", {}), "and the services lose the root")
+                scr.query_one("#u-root", Input).value = str(home / "elsewhere"); await pilot.pause()
+    finally:
+        os.environ.pop("SEREN_SETUPS_DIR", None)
+        shutil.rmtree(home, ignore_errors=True)
+
+
 async def test_setups() -> None:
     """A setup is who the installs are for: name, instance, port base, wiring.
     Choosing one alters it in place; found installs can be recorded into one."""
@@ -1187,6 +1290,19 @@ async def test_nothing_asked_that_the_box_knows() -> None:
     mixed = sw.InstalledRecord(service="seren-loci", port=7266, source="pypi", autostart=True)
     check("local" not in sw.inherited_options([mem, mixed]), "records that disagree on source: nothing inherited")
 
+    # Chad's wren set, 26 Sept: four venvs <root><instance>, Margin <root>-<instance>.
+    # Unanimity left the venv root blank; the majority fills it and names Margin.
+    root = "C:\\Users\\Caesar\\wren-seren-venvs"
+    wren = [sw.InstalledRecord(service=f"seren-{s}", instance=f"wren-{s}", venv=root + f"wren-{s}")
+            for s in ("memory", "loci", "corpuscallosum", "hippocampus")]
+    wren.append(sw.InstalledRecord(service="seren-margin", instance="wren-margin", venv=root + "-wren-margin"))
+    opts = sw.inherited_options(wren)
+    check(opts.get("venv") == root, f"the root most of them share is inherited: {opts.get('venv')!r}")
+    check(opts.get("venv-odd") == [("margin", root + "-")], f"...and the odd one is named: {opts.get('venv-odd')}")
+    split = wren[:2] + [sw.InstalledRecord(service="seren-margin", instance="wren-margin", venv=root + "-wren-margin"),
+                        sw.InstalledRecord(service="seren-probe", instance="wren-probe", venv=root + "-wren-probe")]
+    check("venv" not in sw.inherited_options(split), "a two-two split is no majority: nothing guessed")
+
     app = sw.StarwrightApp(services, problems, installed=[mem])
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.click("#install"); await pilot.pause()
@@ -1340,6 +1456,8 @@ async def main() -> int:
     await test_local_wheelhouse_option()
     await test_install_ledger()
     await test_select_layout()
+    await test_config_boxes()
+    await test_install_root()
     await test_setups()
     await test_record_found_modal()
     await test_installed_dependency_is_used_not_reinstalled()

@@ -331,6 +331,51 @@ function Get-SerenSiblingTokenLines {
     return $t
 }
 
+# -- Get-SerenLayout - where an install lives ------------------------------------
+# With --root (Starwright's install root, ~/seren/<install name>) everything the
+# install owns sits under one folder, so one folder is the whole install - to
+# back up, to move, to know which cluster a thing belongs to:
+#
+#     <root>/venvs/<svc>    the venv (rebuildable; a backup can skip it)
+#     <root>/apps/<svc>     config, launcher, token env file
+#     <root>/stores/<svc>   the service's data
+#     <root>/logs           service logs
+#
+# Every path is ABSOLUTE. A service running as another account resolves ~ to
+# THAT account's home: the wren set's configs said ~/.seren-memory..., the
+# services ran as LocalSystem, and the whole of Wren's memory lived in the
+# Windows system profile, outside every backup (found 26 Sept 2026).
+#
+# The instance is the install's name; the OS service joins it with a dash
+# (seren-memory-wren, SerenMemory-wren). Without --root: the old layout,
+# unchanged, and the old concatenated names.
+function Get-SerenLayout {
+    param([string] $Root, [string] $Short, [string] $Instance, [string] $VenvDir, [string] $AppDir)
+    if ($Root) {
+        if ($Root -like "~*") { $Root = $env:USERPROFILE + $Root.Substring(1) }
+        $Root = [System.IO.Path]::GetFullPath($Root)
+        New-Item -ItemType Directory -Force -Path $Root | Out-Null
+        $suffix = ""
+        if ($Instance) { $suffix = "-$Instance" }
+        $out = @{
+            Root   = $Root
+            Venv   = Join-Path $Root "venvs\$Short"
+            App    = Join-Path $Root "apps\$Short"
+            Data   = Join-Path $Root "stores\$Short"
+            Logs   = Join-Path $Root "logs"
+            Suffix = $suffix
+        }
+    } else {
+        $out = @{ Root = ""; Venv = "$VenvDir$Instance"; App = "$AppDir$Instance"; Data = ""; Logs = ""; Suffix = $Instance }
+    }
+    # Setup-Autostart and Write-SerenInstallRecord read these, the way they
+    # already read $Instance: the cards call them from their own scope.
+    $global:SerenRoot      = $out.Root
+    $global:SerenSvcSuffix = $out.Suffix
+    $global:SerenLogDir    = $out.Logs
+    return $out
+}
+
 # -- Write-SerenInstallRecord - the install ledger -----------------------------
 # Twin of seren_record_install in the bash library. One record per install in
 # $env:USERPROFILE\.seren\installed\<service>[@<instance>].json (or
@@ -386,6 +431,7 @@ function Write-SerenInstallRecord {
         venv           = $Venv
         config         = $Config
         app_dir        = $appDir
+        root           = [string] (Get-Variable -Name SerenRoot -Scope Global -ValueOnly -ErrorAction SilentlyContinue)
         launcher       = $launcher
         autostart      = $Autostart
         service_user   = [string] (Get-Variable -Name ServiceUser -ValueOnly -ErrorAction SilentlyContinue)
@@ -808,7 +854,17 @@ function Setup-Autostart {
         $idArg = @{}
         if ($ServiceUser) { $idArg["ServiceUser"] = $ServiceUser }
         if ($LocalSystem) { $idArg["RunAsLocalSystem"] = $true }
-        & $wrapper -Instance $Instance @venvArg @idArg
+        # The NAME SUFFIX, not the bare instance: under an install root the OS
+        # service is SerenMemory-wren (Get-SerenLayout). Without one it is the
+        # instance as it always was. -AppDir always: under a root the app dir is
+        # not the wrapper's USERPROFILE\seren-<svc><instance> guess; -LogDir
+        # when the root has a logs folder.
+        $suffix = Get-Variable -Name SerenSvcSuffix -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -eq $suffix) { $suffix = $Instance }
+        $logArg = @{}
+        $logDir = Get-Variable -Name SerenLogDir -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+        if ($logDir) { $logArg["LogDir"] = $logDir }
+        & $wrapper -Instance $suffix -AppDir $AppDir @venvArg @idArg @logArg
     } else {
         Warn "setup-$shortName-service.ps1 + setup-seren-service.ps1 not found."
         Warn "Keep the shared setup scripts together and run (elevated):"

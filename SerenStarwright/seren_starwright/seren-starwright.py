@@ -283,7 +283,7 @@ def _ordered_groups(services: list["ServiceDef"]) -> list[tuple[str, str]]:
 # Flags that describe the MACHINE or the RUN, not the service. Setting --corp
 # per-service is meaningless: if the box is behind an intercepting proxy it's
 # behind it for all of them. Same for where packages come from.
-UNIVERSAL_FLAGS = {"corp", "pypi", "ref", "repo", "wheel", "venv", "local"}
+UNIVERSAL_FLAGS = {"corp", "pypi", "ref", "repo", "wheel", "venv", "local", "root"}
 
 # What a card that predates the `switches` key in --describe is assumed to
 # take without a value. Only consulted when the card reports no switches.
@@ -713,6 +713,7 @@ class InstalledRecord:
     os_service: str = ""            # the systemd unit / Windows service it is
     extras: dict = field(default_factory=dict)   # mcp / corp / vector / st, as installed
     setup: str = ""                # the setup this install belongs to ("" = none named)
+    root: str = ""                 # the install root it lives under ("" = the old layout)
 
     @property
     def label(self) -> str:
@@ -806,12 +807,14 @@ def derive_install(app_dir: Path) -> Optional[InstalledRecord]:
 
 
 def os_service_name(rec: "InstalledRecord") -> str:
-    """The unit / service the service wrappers create: seren-memory<instance>
-    on systemd, SerenMemory<instance> on Windows (NSSM)."""
+    """The unit / service the service wrappers create. Under an install root
+    the instance joins with a dash (seren-memory-wren, SerenMemory-wren);
+    the old layout concatenated it (seren-memorywren-memory)."""
+    suffix = (f"-{rec.instance}" if rec.instance else "") if rec.root else rec.instance
     if IS_WINDOWS:
         short = rec.service.replace("seren-", "", 1)
-        return "Seren" + "".join(w.capitalize() for w in short.split("-")) + rec.instance
-    return f"{rec.service}{rec.instance}.service"
+        return "Seren" + "".join(w.capitalize() for w in short.split("-")) + suffix
+    return f"{rec.service}{suffix}.service"
 
 
 def os_services() -> dict[str, dict]:
@@ -888,7 +891,7 @@ def installed_ledger(home: Optional[Path] = None, probe_os: Optional[bool] = Non
                     service_user=str(d.get("service_user") or ""),
                     local_system=(bool(d["local_system"]) if "local_system" in d else None),
                     autostart=bool(d.get("autostart", False)),
-                    setup=str(d.get("setup") or ""))
+                    setup=str(d.get("setup") or ""), root=str(d.get("root") or ""))
             except (OSError, ValueError, TypeError):
                 continue
             if not rec.service:
@@ -936,10 +939,19 @@ class Setup:
     created_at: str = ""
     members: list = field(default_factory=list)      # record labels: service or service@instance
     path: str = ""
+    # The folder the whole install lives in: venvs, apps, stores, logs, and a
+    # copy of this file. "" = a setup from before roots (the old layout).
+    root: str = ""
 
     @property
     def is_default(self) -> bool:
         return self.base_port == FAMILY_BASE and not self.instance
+
+
+def setup_root(name: str, home: Optional[Path] = None) -> str:
+    """Where a named install lives by default: ~/seren/<name>, absolute. The
+    name is made safe for a folder; an empty one is 'default'."""
+    return str((home or Path.home()) / "seren" / (sanitize_instance(name) or "default"))
 
 
 def setups_dir(home: Optional[Path] = None) -> Path:
@@ -983,7 +995,8 @@ def load_setups(home: Optional[Path] = None, installed: Optional[list[InstalledR
                 j = json.loads(f.read_text(encoding="utf-8-sig"))
                 st = Setup(name=str(j.get("name") or f.stem), instance=str(j.get("instance") or ""),
                            base_port=int(j.get("base_port") or FAMILY_BASE), created_at=str(j.get("created_at") or ""),
-                           members=[str(m) for m in (j.get("members") or [])], path=str(f))
+                           members=[str(m) for m in (j.get("members") or [])], path=str(f),
+                           root=str(j.get("root") or ""))
             except (OSError, ValueError, TypeError):
                 continue
             if st.name:
@@ -1003,9 +1016,18 @@ def save_setup(setup: Setup, home: Optional[Path] = None) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"{setup.name}.json"
     setup.created_at = setup.created_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    f.write_text(json.dumps({"schema_version": 1, "name": setup.name, "instance": setup.instance,
-                             "base_port": setup.base_port, "created_at": setup.created_at,
-                             "members": sorted(set(setup.members))}, indent=2), encoding="utf-8")
+    body = json.dumps({"schema_version": 1, "name": setup.name, "instance": setup.instance,
+                       "base_port": setup.base_port, "created_at": setup.created_at,
+                       "members": sorted(set(setup.members)), "root": setup.root}, indent=2)
+    f.write_text(body, encoding="utf-8")
+    # ...and a copy in the root itself: the folder says what it is, and a
+    # root copied to another box can be registered again from it.
+    if setup.root:
+        try:
+            Path(setup.root).mkdir(parents=True, exist_ok=True)
+            (Path(setup.root) / "starwright-setup.json").write_text(body, encoding="utf-8")
+        except OSError:
+            pass
     setup.path = str(f)
     return f
 
@@ -1036,7 +1058,7 @@ def record_found(records: list[InstalledRecord], setup_name: str, home: Optional
             "installed_at": body.get("installed_at") or "", "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "installer": body.get("installer") or "seren-starwright (recorded from scan)",
             "platform": body.get("platform") or ("Windows" if IS_WINDOWS else "unix"),
-            "derived": False, "setup": setup_name,
+            "derived": False, "setup": setup_name, "root": r.root,
         })
         f.write_text(json.dumps(body, indent=2), encoding="utf-8")
         r.derived = False
@@ -1048,7 +1070,10 @@ def record_found(records: list[InstalledRecord], setup_name: str, home: Optional
 
 def planned_config(svc: ServiceDef, cfg: dict, home: Optional[Path] = None) -> str:
     """Where THIS run will write the service's config, by the convention
-    every card follows: ~/seren-<name><instance>/<name>.yaml."""
+    every card follows: <root>/apps/<svc>/<name>.yaml under an install root,
+    ~/seren-<name><instance>/<name>.yaml without one."""
+    if cfg.get("root"):
+        return str(Path(str(cfg["root"])) / "apps" / svc.name.replace("seren-", "", 1) / f"{svc.name}.yaml")
     inst = str(cfg.get("instance") or "")
     return str((home or Path.home()) / f"{svc.name}{inst}" / f"{svc.name}.yaml")
 
@@ -1064,6 +1089,13 @@ def apply_setup(setup: Setup, selected: list[str], svcs: dict[str, ServiceDef],
         cfg = per_service.setdefault(n, {})
         svc = svcs[n]
         member = next((by_label[m] for m in setup.members if m in by_label and by_label[m].service == n), None)
+        # The root goes on per service, not as a universal flag: a member
+        # installed before roots is reinstalled IN PLACE (the old layout), and
+        # an empty universal value could not take a root back off it.
+        if member is not None and member.root:
+            cfg.setdefault("root", member.root)
+        elif member is None and setup.root:
+            cfg.setdefault("root", setup.root)
         if member is not None:
             if member.instance:
                 cfg.setdefault("instance", member.instance)
@@ -1240,9 +1272,24 @@ def inherited_options(records: list[InstalledRecord]) -> dict:
     known = [r for r in records if r.os_service or not r.derived]
     if known and all(r.autostart for r in known):
         out["service"] = True
-    prefixes = {venv_prefix(r) for r in records if r.instance}
-    if len(prefixes) == 1 and "" not in prefixes:
-        out["venv"] = prefixes.pop()
+    # The prefix MOST of them share, not only one they all share. Chad's wren
+    # set, 26 Sept: four venvs were <root><instance> and Margin, installed
+    # earlier with a trailing dash typed on the root, was <root>-<instance>.
+    # Requiring unanimity left the field blank for the whole set. A reinstall
+    # keeps each service's own venv anyway (prefill_reinstall), so the root
+    # only decides where NEW services go; the odd ones are named, not moved.
+    prefixes = [(r.service.replace("seren-", "", 1), venv_prefix(r)) for r in records if r.instance]
+    counts: dict[str, int] = {}
+    for _, pre in prefixes:
+        if pre:
+            counts[pre] = counts.get(pre, 0) + 1
+    if counts:
+        top = max(counts, key=lambda k: counts[k])
+        if counts[top] * 2 > len(prefixes):
+            out["venv"] = top
+            odd = sorted({(s, pre) for s, pre in prefixes if pre and pre != top})
+            if odd:
+                out["venv-odd"] = odd
     ids = [r for r in records if r.local_system is not None]
     if ids and all(r.local_system for r in ids):
         out["local-system"] = True
@@ -1287,6 +1334,11 @@ def dependency_notes(selected: list[str], svcs: dict[str, ServiceDef], per_servi
 
 
 def setup_status(setup: Setup, svcs: dict[str, ServiceDef], installed: list[InstalledRecord]) -> str:
+    return _setup_status(setup, svcs, installed) + (f"\n  in {setup.root}" if setup.root else
+                                                    "\n  in the old layout (no install root)")
+
+
+def _setup_status(setup: Setup, svcs: dict[str, ServiceDef], installed: list[InstalledRecord]) -> str:
     have = sorted({r.service.replace("seren-", "", 1) for r in installed if r.label in setup.members})
     brain = [n for n, x in svcs.items() if x.group == "brain"]
     missing = sorted(x.replace("seren-", "", 1) for x in brain
@@ -1393,7 +1445,8 @@ def reinstall_notes(selected: list[str], overrides: dict[str, dict],
         short = n.replace("seren-", "", 1)
         if same:
             out.append(f"{short}: already installed here ({installed_summary(same[0])}) - this run re-installs it "
-                       f"in place (the config is backed up); set an instance name under Advanced to install side by side")
+                       f"in place (the config is backed up)"
+                       + ("; set an instance name under Advanced to install side by side" if beside else ""))
         elif others and beside:
             out.append(f"{short}: installing instance '{inst}' beside " +
                        ", ".join(installed_summary(r) for r in others))
@@ -1630,7 +1683,10 @@ class SelectScreen(Screen):
                                  prompt="previous setup", id="setup-pick", disabled=True)
                 with Horizontal(classes="setup-row", id="setup-fields"):
                     yield Label("name")
-                    yield Input(value=time.strftime("%Y-%m-%d"), id="setup-name")
+                    # 'default' for the family's own install until one exists;
+                    # after that the date, so a second one never collides.
+                    yield Input(value=("default" if not any(st.name == "default" for st in app.setups)   # type: ignore[attr-defined]
+                                       else time.strftime("%Y-%m-%d")), id="setup-name")
                     yield Label("port base")
                     # The family's own band by default: adding a hippocampus to what is
                     # already here should not quietly become a side-by-side instance
@@ -1657,7 +1713,9 @@ class SelectScreen(Screen):
                 group = Vertical(classes="group")
                 group.border_title = title
                 with group:
-                    yield Checkbox("all of these", id=f"grp-{key}", classes="group-head")
+                    # A checkbox cannot sit in the border title (Textual draws a
+                    # title, not a widget), so it gets a line of air under it.
+                    yield Checkbox("install all", id=f"grp-{key}", classes="group-head")
                     # A grid, not a row: a row never wraps, so the brain's five
                     # cards ran off the right edge. At most three across; fewer
                     # when the terminal is narrow (see _fit_columns).
@@ -1763,7 +1821,7 @@ class SelectScreen(Screen):
         except ValueError:
             base = FAMILY_BASE
         inst = "" if base == FAMILY_BASE else sanitize_instance(name)
-        return Setup(name=name, instance=inst, base_port=base)
+        return Setup(name=name, instance=inst, base_port=base, root=setup_root(name))
 
     # -- group checkbox toggles its children ------------------------------
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -2131,6 +2189,10 @@ class ConfigScreen(Screen):
         """Start from how the installs this run builds on were done: their
         wheel source, their TLS, and say so - rather than PyPI and defaults,
         which would quietly install the new piece from somewhere else."""
+        try:
+            self._show_venv(not self.query_one("#u-root", Input).value.strip())
+        except Exception:                                # noqa: BLE001
+            pass
         inh = getattr(self.app, "inherited", {}) or {}
         said = []
         try:
@@ -2149,7 +2211,9 @@ class ConfigScreen(Screen):
                 said.append("autostart")
             if inh.get("venv"):
                 self.query_one("#u-venv", Input).value = inh["venv"]
-                said.append(f"venv {inh['venv']}")
+                said.append(f"venv {inh['venv']}" + (
+                    " (" + ", ".join(f"{s} keeps its own {pre}" for s, pre in inh["venv-odd"]) + ")"
+                    if inh.get("venv-odd") else ""))
             if inh.get("local-system"):
                 try:
                     self.query_one("#u-local-system", Checkbox).value = True
@@ -2182,20 +2246,28 @@ class ConfigScreen(Screen):
                     + dependency_notes(self.app.selected, self.app.svc_map, self.app.per_service,   # type: ignore[attr-defined]
                                        self.app.installed)),                                        # type: ignore[attr-defined]
                     id="cfg-installed", classes="card-inst")
-            yield Static("Universal install options", classes="section")
-            yield Label("venv root")
-            yield Input(placeholder="~/seren-venvs", id="u-venv")
-            yield Checkbox("corporate TLS / intercepting proxy (--corp)", id="u-corp")
-            yield Checkbox("install from PyPI (--pypi)", value=True, id="u-pypi")
-            yield Label("or pin a GitHub release tag (--ref, blank = PyPI)")
-            yield Input(placeholder="v1.5.0", id="u-ref")
-            # The dev loop: seren-dev-publish builds every checkout into one
-            # wheelhouse; a card pointed at it installs the dev wheel and pins
-            # the other seren-* dev wheels alongside. A folder on this box, or
-            # the URL --serve prints on the dev box. Beats a tag and PyPI.
-            yield Label("or a dev wheelhouse from seren-dev-publish (--local: a folder, "
-                        "or http://devbox:8765 - beats a tag and PyPI)")
-            yield Input(placeholder="../.dev-wheelhouse", id="u-local")
+            universal = Vertical(classes="cfg-box", id="cfg-universal")
+            universal.border_title = "Universal install options"
+            with universal:
+                # The whole install in one folder (venvs, apps, stores, logs).
+                # Blank = the old layout, where the venv root below applies.
+                st = getattr(self.app, "setup", None)
+                yield Label("install root")
+                yield Input(value=(st.root if st is not None else ""),
+                            placeholder="~/seren/<install name>", id="u-root")
+                yield Label("venv root (the old layout only)", id="u-venv-label")
+                yield Input(placeholder="~/seren-venvs", id="u-venv")
+                yield Checkbox("corporate TLS / intercepting proxy (--corp)", id="u-corp")
+                yield Checkbox("install from PyPI (--pypi)", value=True, id="u-pypi")
+                yield Label("or pin a GitHub release tag (--ref, blank = PyPI)")
+                yield Input(placeholder="v1.5.0", id="u-ref")
+                # The dev loop: seren-dev-publish builds every checkout into one
+                # wheelhouse; a card pointed at it installs the dev wheel and pins
+                # the other seren-* dev wheels alongside. A folder on this box, or
+                # the URL --serve prints on the dev box. Beats a tag and PyPI.
+                yield Label("or a dev wheelhouse from seren-dev-publish (--local: a folder, "
+                            "or http://devbox:8765 - beats a tag and PyPI)")
+                yield Input(placeholder="../.dev-wheelhouse", id="u-local")
 
             # -- service identity -------------------------------------------
             # Asked once here and inherited by every service; override one
@@ -2206,49 +2278,57 @@ class ConfigScreen(Screen):
             # unit's User= is just a name, there is no credential to collect,
             # and LocalSystem has no counterpart (running as root is simply
             # --service-user root).
-            yield Static("Service account", classes="section")
-            yield Static(
-                "Used by any service installed with 'service' ticked. A service "
-                "running as the wrong account resolves ~ to a different profile - "
-                "it comes up healthy and its data store looks empty.",
-                classes="modal-sub")
-            if IS_WINDOWS:
-                yield Checkbox("run services as LocalSystem (no password)",
-                               id="u-local-system")
-            yield Label("service account")
-            yield Input(value=default_service_account(), id="u-service-user")
-            if IS_WINDOWS:
-                yield Label("password (never logged, never on a command line)")
-                yield Input(password=True, id="u-service-password")
-            yield Rule()
+            account = Vertical(classes="cfg-box", id="cfg-account")
+            account.border_title = "Service account"
+            with account:
+                yield Static(
+                    "Used by any service installed with 'service' ticked. A service "
+                    "running as the wrong account resolves ~ to a different profile - "
+                    "it comes up healthy and its data store looks empty.",
+                    classes="modal-sub")
+                if IS_WINDOWS:
+                    yield Checkbox("run services as LocalSystem (no password)",
+                                   id="u-local-system")
+                yield Label("service account")
+                yield Input(value=default_service_account(), id="u-service-user")
+                if IS_WINDOWS:
+                    yield Label("password (never logged, never on a command line)")
+                    yield Input(password=True, id="u-service-password")
             # Name on its own line, controls beneath. A single horizontal row
             # needed 107 columns for Loci (it has the extra 'vector' extra) and
             # pushed Configure clean off the screen. Headless boxes over SSH are
             # routinely 80 wide, which is the whole audience for a TUI installer.
-            for name in self.app.selected:               # type: ignore[attr-defined]
-                svc = self.app.svc_map[name]             # type: ignore[attr-defined]
-                with Vertical(classes="cfg-row"):
-                    nm = Static(svc.display, classes="cfg-name")
-                    if svc.accent:
-                        nm.styles.color = svc.accent
-                    yield nm
-                    with Horizontal(classes="cfg-controls"):
-                        with RadioSet(id=f"mode-{name}"):
-                            yield RadioButton("Default", value=True)
-                            yield RadioButton("Advanced")
-                        for flag in INLINE_FLAGS:
-                            if flag in svc.flags:
-                                box = Checkbox(INLINE_LABELS.get(flag, flag),
-                                               value=bool(self.app.per_service.get(name, {}).get(flag)),  # type: ignore[attr-defined]
-                                               id=f"f-{name}-{flag}")
-                                if flag in INLINE_TIPS:
-                                    box.tooltip = INLINE_TIPS[flag]
-                                yield box
-                        btn = Button("Configure", id=f"adv-{name}",
-                                     classes="cfg-adv", variant="default")
-                        if svc.accent:
-                            btn.styles.color = svc.accent
-                        yield btn
+            for key, title in _ordered_groups(self.app.services):          # type: ignore[attr-defined]
+                names = [n for n in self.app.selected if self.app.svc_map[n].group == key]   # type: ignore[attr-defined]
+                if not names:
+                    continue
+                group_box = Vertical(classes="cfg-box")
+                group_box.border_title = title
+                with group_box:
+                    for name in names:
+                        svc = self.app.svc_map[name]             # type: ignore[attr-defined]
+                        with Vertical(classes="cfg-row"):
+                            nm = Static(svc.display, classes="cfg-name")
+                            if svc.accent:
+                                nm.styles.color = svc.accent
+                            yield nm
+                            with Horizontal(classes="cfg-controls"):
+                                with RadioSet(id=f"mode-{name}"):
+                                    yield RadioButton("Default", value=True)
+                                    yield RadioButton("Advanced")
+                                for flag in INLINE_FLAGS:
+                                    if flag in svc.flags:
+                                        box = Checkbox(INLINE_LABELS.get(flag, flag),
+                                                       value=bool(self.app.per_service.get(name, {}).get(flag)),  # type: ignore[attr-defined]
+                                                       id=f"f-{name}-{flag}")
+                                        if flag in INLINE_TIPS:
+                                            box.tooltip = INLINE_TIPS[flag]
+                                        yield box
+                                btn = Button("Configure", id=f"adv-{name}",
+                                             classes="cfg-adv", variant="default")
+                                if svc.accent:
+                                    btn.styles.color = svc.accent
+                                yield btn
             yield Static("", id="cfg-warn")
         with Horizontal(id="actions"):
             yield Button("Back", id="back", variant="default")
@@ -2357,7 +2437,32 @@ class ConfigScreen(Screen):
             else:
                 cfg[k] = v
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if (event.input.id or "") == "u-root":
+            self._show_venv(not event.value.strip())
+
+    def _show_venv(self, show: bool) -> None:
+        for wid in ("#u-venv-label", "#u-venv"):
+            try:
+                self.query_one(wid).display = show
+            except Exception:                            # noqa: BLE001 - not composed yet
+                pass
+
     def _collect(self) -> None:
+        # The install root rides on each service that took one from the setup
+        # (apply_setup); an in-place reinstall of an old-layout service has
+        # none and keeps it. Edited here, it moves all of them together.
+        root = os.path.expanduser(self.query_one("#u-root", Input).value.strip())
+        st = getattr(self.app, "setup", None)
+        if st is not None:
+            st.root = root
+        for n in self.app.selected:                      # type: ignore[attr-defined]
+            cfg = self.app.per_service.setdefault(n, {})  # type: ignore[attr-defined]
+            if "root" in cfg:
+                if root:
+                    cfg["root"] = root
+                else:
+                    cfg.pop("root", None)
         u: dict[str, Any] = {}
         if self.query_one("#u-venv", Input).value.strip():
             u["venv"] = self.query_one("#u-venv", Input).value.strip()
@@ -3069,9 +3174,11 @@ class StarwrightApp(App):
        CARDS row, the outer container fixed its height first and clipped the
        bottom line off every card whose description wrapped - the border landed
        mid-sentence ("The bridge between Loci and"). */
+    /* Every box on a screen is the same width (Chad, 26 Sept: 'same sized as
+       the other groups... makes it look purtty'). */
     .group { border: round #45475a; border-title-color: #cba6f7; border-title-style: bold;
-             padding: 0 1; margin: 1 0; height: auto; width: auto; }
-    .group-head { color: #6c7086; }
+             padding: 0 1; margin: 1 0; height: auto; width: 100%; }
+    .group-head { color: #6c7086; margin: 1 0 0 0; }
     /* Two columns until on_resize sets the real count (at most three). One
        row height for every card: a checkbox and two lines of description. */
     .cards { layout: grid; grid-size: 2; grid-columns: 34; grid-rows: 7;
@@ -3080,8 +3187,9 @@ class StarwrightApp(App):
     .card-desc { color: #a6adc8; height: auto; max-height: 2; overflow: hidden; }
     .card-req { color: #f9e2af; height: auto; padding: 0 0 0 1; }
     .card-inst { color: #a6e3a1; height: auto; }
-    #setup-box, #prev-box, #cfg-prev-box { border: round #45475a; border-title-color: #cba6f7;
-                                           border-title-style: bold; height: auto; padding: 0 1; }
+    #setup-box, #prev-box, #cfg-prev-box, .cfg-box { border: round #45475a; border-title-color: #cba6f7;
+                                           border-title-style: bold; height: auto; width: 100%; padding: 0 1; }
+    .cfg-box { margin: 1 0; }
     #setup-box { margin: 1 0; }
     #prev-box { margin: 1 0 0 0; }
     #cfg-prev-box { margin: 1 0; }
@@ -3098,8 +3206,8 @@ class StarwrightApp(App):
     .section { color: #cba6f7; text-style: bold; padding: 1 0 0 0; }
     /* Inputs sat flush against their labels and each other. */
     #config-root Input { margin: 0 0 1 0; }
-    #config-root > Label { padding: 1 0 0 0; }
-    #config-root > Checkbox { margin: 0 0 1 0; }
+    .cfg-box > Label { padding: 1 0 0 0; }
+    .cfg-box > Checkbox { margin: 0 0 1 0; }
     .cfg-row { height: auto; border-bottom: solid #313244; padding: 1 0 1 0; }
     .cfg-name { text-style: bold; padding: 0 0 0 1; }
     .cfg-controls { height: auto; align: left middle; }

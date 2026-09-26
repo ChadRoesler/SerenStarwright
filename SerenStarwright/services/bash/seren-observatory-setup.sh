@@ -22,6 +22,7 @@
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via setup-observatory-service.sh
 #    --instance NAME  Instance name
+#    --root DIR  Install root: venvs, apps, stores, logs in one folder
 #    --venv PATH      Override venv location
 #    --no-updates     Turn update checking OFF in the generated config
 #                     (it is ON by default; this never blocks install)
@@ -70,6 +71,9 @@ INSTALL_SERVICE=false
 SERVICE_USER=""
 UPDATES_OFF=false
 INSTANCE=""
+# Starwright's install root (~/seren/<install>): venvs, apps, stores and
+# logs under one folder, absolute paths. Empty = the old layout.
+ROOT=""
 VENV_DIR="$HOME/seren-venvs/observatory"
 APP_DIR="$HOME/seren-observatory"
 
@@ -105,6 +109,7 @@ while [[ $# -gt 0 ]]; do
     --no-updates) UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
+    --root)     ROOT="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --json)     seren_json_on; shift ;;
     --describe) seren_describe; exit 0 ;;
@@ -113,8 +118,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-VENV_DIR="$VENV_DIR$INSTANCE"
-APP_DIR="$APP_DIR$INSTANCE"
+seren_layout "observatory"
 CFG_PATH="$APP_DIR/seren-observatory.yaml"
 CONNECT_HOST="$HOST"; [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
 [[ -n "$INSTANCE" && "$PORT" == "7777" ]] && warn "Instance '$INSTANCE' using default port 7777 - may collide."
@@ -159,6 +163,7 @@ cat > "$CFG_PATH" <<YAML
 server:
   host: ${HOST}
   port: ${PORT}
+$([[ -n "$DATA_DIR" ]] && printf "  secrets_path: '%s'" "$DATA_DIR/secrets.json")
 YAML
 
 # THE TOKEN GOES WHERE THE OBSERVATORY READS IT. --gen-token used to mint one
@@ -175,6 +180,10 @@ if [[ -n "$TOKEN" ]]; then
     warn "The unit runs as $SERVICE_USER: writing the token to $SECRETS_HOME/.seren/secrets.json (needs sudo)"
   fi
   SECRETS_FILE="$SECRETS_HOME/.seren/secrets.json"
+  # Under an install root the token lives in the root's store and the config
+  # names it (server.secrets_path): a second cluster's observatory on this
+  # host has its own, and nothing depends on whose ~ the unit runs in.
+  [[ -n "$DATA_DIR" ]] && SECRETS_FILE="$DATA_DIR/secrets.json"
   _write_secret() {
     "$VPY" - "$1" "$2" <<'PY'
 import json, os, sys
@@ -221,7 +230,7 @@ write_launcher "$APP_DIR" "seren-observatory" "$VPY" "seren_observatory" "$CFG_P
 
 # -- 6. optional autostart ------------------------------------------------------
 if $INSTALL_SERVICE; then
-  setup_autostart "$SCRIPT_DIR" "seren-observatory" "$APP_DIR" "$TOKEN" "$INSTANCE" "$VENV_DIR" "$SERVICE_USER"
+  setup_autostart "$SCRIPT_DIR" "seren-observatory" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
 fi
 
 # -- done -----------------------------------------------------------------------

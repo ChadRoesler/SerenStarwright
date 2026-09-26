@@ -475,6 +475,60 @@ try {
     Remove-Item -Recurse -Force $keepTmp -ErrorAction SilentlyContinue
 }
 
+# -- -Root: one folder per named install (26 Sept 2026) --------------------------
+# Two clusters on one host must not share a Lodestar, an Observatory, Probe's
+# results or Theatre's archive. And the wren set's configs said ~/.seren-...,
+# the services ran as LocalSystem, and all of Wren's memory lived in the
+# Windows system profile. Under a root every path is absolute.
+Section "-Root: a named install in one folder"
+$rootTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-root-" + [guid]::NewGuid().ToString("N"))
+try {
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $l = Get-SerenLayout -Root (Join-Path $rootTmp "wren") -Short "memory" -Instance "wren" -VenvDir "x" -AppDir "y"
+    $r = Join-Path $rootTmp "wren"
+    if ($l.Venv -eq "$r\venvs\memory" -and $l.App -eq "$r\apps\memory" -and $l.Data -eq "$r\stores\memory" -and $l.Logs -eq "$r\logs") {
+        Good "venvs, apps, stores, logs under the root" } else { Bad "layout: $($l | Out-String)" }
+    if ($l.Suffix -eq "-wren" -and $global:SerenSvcSuffix -eq "-wren") { Good "the service name suffix is -wren (SerenMemory-wren)" } else { Bad "suffix: $($l.Suffix)" }
+    $d = Get-SerenLayout -Root (Join-Path $rootTmp "default") -Short "loci" -Instance "" -VenvDir "x" -AppDir "y"
+    if ($d.Suffix -eq "") { Good "the default install keeps the plain service name" } else { Bad "default suffix: $($d.Suffix)" }
+    $h = Get-SerenLayout -Root "~\seren-verify-tilde" -Short "loci" -Instance "" -VenvDir "x" -AppDir "y"
+    if ($h.Root -eq (Join-Path $env:USERPROFILE "seren-verify-tilde")) { Good "~ is this user's profile, made absolute" } else { Bad "tilde: $($h.Root)" }
+    Remove-Item -Recurse -Force (Join-Path $env:USERPROFILE "seren-verify-tilde") -ErrorAction SilentlyContinue
+    $o = Get-SerenLayout -Root "" -Short "memory" -Instance "Test" -VenvDir "C:\v\memory" -AppDir "C:\a\seren-memory"
+    if ($o.Venv -eq "C:\v\memoryTest" -and $o.App -eq "C:\a\seren-memoryTest" -and -not $o.Data -and $o.Suffix -eq "Test") {
+        Good "no root: the old layout and the old suffix" } else { Bad "legacy layout: $($o | Out-String)" }
+
+    foreach ($f in Get-ChildItem (Join-Path $ScriptDir "services\powershell\seren-*-setup.ps1")) {
+        $src = [System.IO.File]::ReadAllText($f.FullName)
+        $card = $f.BaseName -replace "-setup$", ""
+        if ($src -match '\[string\]\s+\$Root\s+=' -and $src -match 'Get-SerenLayout -Root \$Root') { Good "$($card): -Root and Get-SerenLayout" }
+        else { Bad "$($card): no -Root / layout" }
+        $m = [regex]::Match($src, '(?m)^\$storePath = if \(\$layout\.Data\) \{ "(?<root>[^"]*)" \} else \{ "(?<bare>[^"]*)" \}')
+        if ($m.Success) {
+            if ($m.Groups["root"].Value -like "'`$(`$layout.Data)\*'") { Good "$($card): store path absolute and quoted under a root" } else { Bad "$($card): rooted store path $($m.Groups['root'].Value)" }
+            if ($m.Groups["bare"].Value -like "~/*") { Good "$($card): the old ~ path without one" } else { Bad "$($card): legacy store path $($m.Groups['bare'].Value)" }
+            $at = $src.IndexOf('$storePath = if')
+            $db = $src.IndexOf('$dbInstance = $Instance')
+            if ($db -lt 0 -or $db -lt $at) { Good "$($card): the store path sees the instance" } else { Bad "$($card): storePath built before `$dbInstance is set" }
+        }
+    }
+
+    # autostart: the suffixed instance, the app dir, the root's logs
+    $fake = Join-Path $rootTmp "cards"; New-Item -ItemType Directory -Force -Path $fake | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $fake "setup-memory-service.ps1"),
+        'param([string]$Instance,[string]$AppDir,[string]$VenvDir,[string]$LogDir,[string]$ServiceUser,[switch]$RunAsLocalSystem) "WRAPPER|$Instance|$AppDir|$LogDir"')
+    $null = Get-SerenLayout -Root (Join-Path $rootTmp "wren") -Short "memory" -Instance "wren" -VenvDir "x" -AppDir "y"
+    $said = Setup-Autostart -ScriptDir $fake -ServiceName "seren-memory" -AppDir "$r\apps\memory" -Token "" -VenvDir "$r\venvs\memory" 6>$null
+    $said = ($said | Where-Object { "$_" -like "WRAPPER*" }) -join ""
+    if ($said -eq "WRAPPER|-wren|$r\apps\memory|$r\logs") { Good "the wrapper gets -Instance -wren, the app dir and the root's logs" }
+    else { Bad "wrapper call: $said" }
+} catch {
+    Bad "-Root checks threw: $($_.Exception.Message)"
+} finally {
+    Remove-Item -Recurse -Force $rootTmp -ErrorAction SilentlyContinue
+    $global:SerenRoot = $null; $global:SerenSvcSuffix = $null; $global:SerenLogDir = $null
+}
+
 # -- summary ------------------------------------------------------------------
 Write-Host ""
 Write-Host "=========================================="

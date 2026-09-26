@@ -573,7 +573,11 @@ setup_autostart() {
     [[ -n "$service_user" ]] && user_flag=(--service-user "$service_user")
     # Both flag vars are intentionally UNQUOTED: each is a flag+value pair that
     # has to word-split into two arguments, and each is empty when unused.
-    bash "$wrapper" "${venv_flag[@]}" "${user_flag[@]}" --instance "$instance" || die "service install failed"
+    # --app-dir always: under an install root the app dir is not the
+    # wrapper's ~/seren-<svc><instance> guess. $instance is the NAME SUFFIX the
+    # card worked out (seren_layout: "-wren" under a root, the bare instance
+    # without one), so the wrapper's "seren-<svc>$INSTANCE" comes out right.
+    bash "$wrapper" --app-dir "$app_dir" "${venv_flag[@]}" "${user_flag[@]}" --instance "$instance" || die "service install failed"
   else
     # NAMING THE ABSENT FILE, because "not found" sent people looking at the
     # wrapper when the missing half was usually the shared core - two files,
@@ -674,6 +678,43 @@ seren_sibling_token_lines() {
   return 0
 }
 
+# -- seren_layout - where an install lives ------------------------------------
+# With --root (Starwright's install root, ~/seren/<install name>) everything the
+# install owns sits under one folder, so one folder is the whole install - to
+# back up, to move, to know which cluster a thing belongs to:
+#
+#     <root>/venvs/<svc>    the venv (rebuildable; a backup can skip it)
+#     <root>/apps/<svc>     config, launcher, token env file
+#     <root>/stores/<svc>   the service's data
+#     <root>/logs           service logs
+#
+# Every path is ABSOLUTE. A service running as another account resolves ~ to
+# THAT account's home: the wren set's configs said ~/.seren-memory..., the
+# services ran as LocalSystem, and the whole of Wren's memory lived in the
+# Windows system profile, outside every backup (found 26 Sept 2026).
+#
+# The instance is the install's name; the OS service joins it with a dash
+# (seren-memory-wren, SerenMemory-wren). Without --root: the old layout,
+# unchanged, and the old concatenated names.
+seren_layout() {
+  local short="$1"
+  if [[ -n "${ROOT:-}" ]]; then
+    ROOT="${ROOT/#\~/$HOME}"
+    mkdir -p "$ROOT" && ROOT="$(cd "$ROOT" && pwd)"
+    VENV_DIR="$ROOT/venvs/$short"
+    APP_DIR="$ROOT/apps/$short"
+    DATA_DIR="$ROOT/stores/$short"
+    LOG_DIR="$ROOT/logs"
+    SVC_SUFFIX="${INSTANCE:+-$INSTANCE}"
+  else
+    VENV_DIR="$VENV_DIR$INSTANCE"
+    APP_DIR="$APP_DIR$INSTANCE"
+    DATA_DIR=""
+    LOG_DIR=""
+    SVC_SUFFIX="$INSTANCE"
+  fi
+}
+
 # -- seren_record_install - the install ledger ---------------------------------
 # WHY: nothing on a box said what Starwright had already put there. Installing
 # the hippocampus next to an existing Memory, the front-end could not tell you
@@ -723,6 +764,7 @@ seren_record_install() {
   "venv": "$(_json_esc "$venv")",
   "config": "$(_json_esc "$cfg")",
   "app_dir": "$(_json_esc "$app")",
+  "root": "$(_json_esc "${ROOT:-}")",
   "launcher": "$(_json_esc "${app:+$app/run-$service.sh}")",
   "autostart": ${install_service:-false},
   "service_user": "$(_json_esc "${SERVICE_USER:-}")",
