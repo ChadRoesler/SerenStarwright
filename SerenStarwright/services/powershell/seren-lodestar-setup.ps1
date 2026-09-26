@@ -35,6 +35,9 @@ param(
   [string] $ServiceUser = "",
   [switch] $LocalSystem,
   [string] $Instance = "",
+  # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
+  # under one folder, absolute paths. Empty = the old layout.
+  [string] $Root     = "",
   [string] $VenvDir  = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
   [switch] $Json        # stream JSON Lines events on stdout; humans go to stderr
@@ -83,8 +86,9 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\lodestar" }
-$VenvDir = "$VenvDir$Instance"
-$AppDir  = "$env:USERPROFILE\seren-lodestar$Instance"
+$layout  = Get-SerenLayout -Root $Root -Short "lodestar" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-lodestar"
+$VenvDir = $layout.Venv
+$AppDir  = $layout.App
 $CfgPath = "$AppDir\seren-lodestar.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 6361) {

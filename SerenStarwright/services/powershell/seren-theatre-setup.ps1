@@ -52,6 +52,9 @@ param(
   [switch]   $LocalSystem,
   [switch]   $Service,
   [string]   $Instance    = "",
+  # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
+  # under one folder, absolute paths. Empty = the old layout.
+  [string]   $Root        = "",
   [string]   $VenvDir     = ""
 ,
   [switch]   $Describe,   # print service metadata as JSON and exit (no side effects)
@@ -111,8 +114,9 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\theatre" }
-$VenvDir = "$VenvDir$Instance"
-$AppDir  = "$env:USERPROFILE\seren-theatre$Instance"
+$layout  = Get-SerenLayout -Root $Root -Short "theatre" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-theatre"
+$VenvDir = $layout.Venv
+$AppDir  = $layout.App
 $CfgPath = "$AppDir\seren-theatre.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7427) {
@@ -316,6 +320,19 @@ updates:
 }
 
 # -- 5b. launcher -----------------------------------------------------------
+# Under an install root the archive and the recipes live in the root's
+# store, not the package default ~/seren-theatre (a second cluster's theatre
+# would share it). Without a root nothing is written: the defaults stand.
+if ($layout.Data) {
+    @"
+
+archive:
+  dsn: '$($layout.Data)\archive.db'
+  blobs: '$($layout.Data)\blobs'
+recipes: '$($layout.Data)\recipes'
+"@ | Add-SerenTextFile -Path $CfgPath
+}
+
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-theatre" -Vpy $vpy -Module "seren_theatre" -CfgPath $CfgPath
 
 # -- 6. optional autostart ----------------------------------------------------

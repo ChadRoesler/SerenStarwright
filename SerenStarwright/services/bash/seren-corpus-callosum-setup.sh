@@ -24,6 +24,7 @@
 #    --mcp            Install the [mcp] extra
 #    --corp           Route TLS through OS trust store
 #    --instance NAME  Instance name
+#    --root DIR  Install root: venvs, apps, stores, logs in one folder
 #    --venv PATH      Override venv location
 #    --no-updates     Turn update checking OFF in the generated config
 #                     (it is ON by default; this never blocks install)
@@ -74,6 +75,9 @@ MCP=false
 UPDATES_OFF=false
 CORP=false
 INSTANCE=""
+# Starwright's install root (~/seren/<install>): venvs, apps, stores and
+# logs under one folder, absolute paths. Empty = the old layout.
+ROOT=""
 VENV_DIR="$HOME/seren-venvs/callosum"
 APP_DIR="$HOME/seren-corpus-callosum"
 
@@ -123,6 +127,7 @@ while [[ $# -gt 0 ]]; do
     --no-updates) UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
+    --root)     ROOT="$2"; shift 2 ;;
     --venv)      VENV_DIR="$2"; shift 2 ;;
     --memory-url)    MEMORY_URL="$2"; shift 2 ;;
     --memory-config) MEMORY_CONFIG="$2"; shift 2 ;;
@@ -135,8 +140,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-VENV_DIR="$VENV_DIR$INSTANCE"
-APP_DIR="$APP_DIR$INSTANCE"
+seren_layout "corpus-callosum"
 CFG_PATH="$APP_DIR/seren-corpus-callosum.yaml"
 CONNECT_HOST="$HOST"
 [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
@@ -263,7 +267,7 @@ ok "Config written (pre-wired to fan memory:7420 + loci:7422)"
 write_launcher "$APP_DIR" "seren-corpus-callosum" "$VPY" "seren_corpus_callosum" "$CFG_PATH"
 
 # -- 6. optional autostart ----------------------------------------------------
-$INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-corpus-callosum" "$APP_DIR" "$TOKEN" "$INSTANCE" "$VENV_DIR" "$SERVICE_USER"
+$INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-corpus-callosum" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
 
 # -- done -------------------------------------------------------------------
 echo

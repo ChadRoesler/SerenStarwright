@@ -36,6 +36,9 @@ param(
   [switch] $LocalSystem,
   [switch] $Vector,
   [string] $Instance  = "",
+  # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
+  # under one folder, absolute paths. Empty = the old layout.
+  [string] $Root      = "",
   [string] $VenvDir   = "",
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
   [switch] $Json        # stream JSON Lines events on stdout; humans go to stderr
@@ -83,8 +86,9 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\loci" }
-$VenvDir = "$VenvDir$Instance"
-$AppDir  = "$env:USERPROFILE\seren-loci$Instance"
+$layout  = Get-SerenLayout -Root $Root -Short "loci" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-loci"
+$VenvDir = $layout.Venv
+$AppDir  = $layout.App
 $CfgPath = "$AppDir\seren-loci.yaml"
 $global:Instance = $Instance
 if ($Instance -and $Port -eq 7422) {
@@ -125,6 +129,7 @@ if (Test-Path $CfgPath) {
   Warn "Existing config backed up to $(Split-Path $bak -Leaf)"
 }
 $dbInstance = $Instance
+$storePath = if ($layout.Data) { "'$($layout.Data)\loci.db'" } else { "~/.seren-loci$dbInstance/loci.db" }
 $vectorBlock = if ($Vector) {
   "`n  # Vector finder ON (--Vector). Comment these out for embedding-free floor.`n  embedding_model: sentence-transformers/all-MiniLM-L6-v2`n  embedding_device: cpu"
 } else { "" }
@@ -140,7 +145,7 @@ server:
   bearer_token: "$Token"
 
 storage:
-  db_path: ~/.seren-loci$dbInstance/loci.db$vectorBlock$tlsBlock
+  db_path: $storePath$vectorBlock$tlsBlock
 "@ | Write-SerenTextFile -Path $CfgPath
 Ok "Config written"
 

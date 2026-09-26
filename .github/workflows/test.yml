@@ -62,6 +62,9 @@ jobs:
       - name: a reinstall keeps what the card does not write
         run: bash SerenStarwright/services/tests/test-keep-config.sh
 
+      - name: --root puts a named install in one folder, absolute paths
+        run: bash SerenStarwright/services/tests/test-install-root.sh
+
       - name: bash -n every script
         run: |
           fail=0
