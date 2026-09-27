@@ -64,5 +64,9 @@ snapshot_download(repo_id='hexgrad/Kokoro-82M', local_dir='src/models/v1_0')
 
     log "Kokoro-FastAPI installed at $USER_HOME/Kokoro-FastAPI"
     log "Venv: ~/seren-venvs/kokoro"
-    log "Start with: cd ~/Kokoro-FastAPI && ~/seren-venvs/kokoro/bin/python -m uvicorn src.main:app --host 0.0.0.0 --port 8880"
+
+    # ── start/stop + the Observatory manifest (lib/common.sh) ──
+    # CPU: the venv's torch is PyPI's aarch64 CPU build, and the unified
+    # memory goes to llama-server.
+    seren_register_kokoro cpu
 }

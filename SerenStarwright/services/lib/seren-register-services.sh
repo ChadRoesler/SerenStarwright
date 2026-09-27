@@ -18,6 +18,12 @@
 #  those are the things that drift, and a manifest that lies about a port is
 #  worse than no manifest, because the health check then fails convincingly.
 #
+#  WHERE EACH ONE GOES is derived the same way. A unit installed under a
+#  Starwright root (its WorkingDirectory <root>/apps/<svc>, its python under
+#  <root>/venvs/<svc>) is registered in <root>/manifests - the roster that
+#  install's Observatory reads (server.manifests_dir). Everything else goes to
+#  ~/.seren/services, as before. Same rule as setup-seren-service.sh.
+#
 #  USAGE
 #    ./seren-register-services.sh              # show what it would write
 #    ./seren-register-services.sh --apply      # write the manifests
@@ -37,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=true; shift ;;
     --force) FORCE=true; shift ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown flag: $1  (try --help)" ;;
   esac
 done
@@ -46,6 +52,21 @@ command -v systemctl >/dev/null 2>&1 || die "no systemctl - this is for systemd 
 
 SERVICES_DIR="$HOME/.seren/services"
 HEALTH_PATH="/health"
+
+# The install root a unit lives in, or nothing. Design note: two named
+# installs on one host each run an Observatory, so a unit from one must not be
+# backfilled into the shared roster where the other lists it. The shape is
+# seren_layout's (seren-install-lib.sh): <root>/apps/<svc> + <root>/venvs/<svc>,
+# both under the SAME root. Kept in step with setup-seren-service.sh by hand -
+# neither file sources the library.
+install_root_of() {
+  local app="${1%/}" venv="${2%/}"
+  local app_up venv_up
+  app_up="$(dirname "$app")"; venv_up="$(dirname "$venv")"
+  [[ "$(basename "$app_up")" == "apps" && "$(basename "$venv_up")" == "venvs" ]] || return 0
+  [[ "$(dirname "$app_up")" == "$(dirname "$venv_up")" ]] && echo "$(dirname "$app_up")"
+  return 0
+}
 
 # Units, whether running or not: a stopped service is still installed, and an
 # Observatory that only lists what happens to be up is a liar by omission.
@@ -57,8 +78,8 @@ mapfile -t UNITS < <(
 [[ ${#UNITS[@]} -gt 0 ]] && info "Found ${#UNITS[@]} seren unit(s)" \
   || die "no seren-*.service units found on this node"
 
-$APPLY && mkdir -p "$SERVICES_DIR"
 WROTE=0; SKIPPED=0
+declare -A ROSTERS=()
 
 for unit in "${UNITS[@]}"; do
   name="${unit%.service}"
@@ -84,7 +105,15 @@ PY
   fi
 
   desc="$(systemctl show -p Description --value "$unit" 2>/dev/null || echo "$name")"
-  target="$SERVICES_DIR/${name}.json"
+
+  # Which roster: the unit's own WorkingDirectory and python say whether it was
+  # installed under a root. ExecStart reads "{ path=<python> ; argv[]=... }".
+  workdir="$(systemctl show -p WorkingDirectory --value "$unit" 2>/dev/null || true)"
+  python="$(grep -o 'path=[^ ;]*' <<<"$execstart" | head -1 || true)"; python="${python#path=}"
+  venv=""; [[ -n "$python" ]] && venv="$(dirname "$(dirname "$python")")"
+  root="$(install_root_of "$workdir" "$venv")"
+  roster="$SERVICES_DIR"; [[ -n "$root" ]] && roster="$root/manifests"
+  target="$roster/${name}.json"
 
   status="write"
   if [[ -f "$target" ]] && ! $FORCE; then status="exists (use --force)"; fi
@@ -93,8 +122,11 @@ PY
   fi
 
   printf "  %-26s port=%-6s unit=%-28s %s\n" "$name" "$port" "$unit" "$status"
+  [[ -n "$root" ]] && printf "  %-26s -> %s\n" "" "$roster"
 
   if $APPLY && [[ "$status" == "write" ]]; then
+    mkdir -p "$roster"
+    ROSTERS["$roster"]=1
     cat > "$target" <<JSON
 {
   "schema_version": 2,
@@ -116,7 +148,8 @@ done
 
 echo
 if $APPLY; then
-  ok "wrote $WROTE manifest(s), skipped $SKIPPED  ->  $SERVICES_DIR"
+  where="$SERVICES_DIR"; [[ ${#ROSTERS[@]} -gt 0 ]] && where="${!ROSTERS[*]}"
+  ok "wrote $WROTE manifest(s), skipped $SKIPPED  ->  $where"
   echo -e "  Observatory picks these up on the NEXT REQUEST - no restart needed."
   echo -e "  Check it:  ${B}curl -s http://127.0.0.1:7777/api/v1/system/services${NC}"
 else

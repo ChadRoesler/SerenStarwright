@@ -84,6 +84,12 @@ from that service's own web viewer, so the card you tick matches the UI you land
 on), and the flag list is derived from the installer's own argument parser
 rather than declared twice.
 
+`recommends` sits beside `requires` for a service that is better with another
+but works without it. The Corpus Callosum recommends Memory and Loci: either
+alone works, both is best ("im a warning message not a cop"). A recommended
+service is wired when it is installed or ticked, never pulled into a run, and
+when none is there a yellow line under the group says so - Next still works.
+
 ### The two contracts
 
 | Flag | Promise |
@@ -103,6 +109,7 @@ bash nodes/seren-prepare-node.sh --all          # detect platform, install every
 bash nodes/seren-prepare-node.sh -l -k -d       # llama + kokoro + chromadb
 bash nodes/seren-prepare-node.sh --platform spark -l
 bash nodes/seren-prepare-node.sh -w --whisper-model small.en   # speech to text
+bash nodes/seren-prepare-node.sh -l --llama-model qwen2.5-7b-q4_k_m.gguf
 ```
 
 **Whisper** (`-w`) is whisper.cpp's `whisper-server`, staged from the release
@@ -113,6 +120,17 @@ large-v3-turbo on a Spark - and `--whisper-model` picks another. It is the first
 node service that writes `~/start_whisper.sh` / `~/stop_whisper.sh` and a
 service manifest, so the node's Observatory (and Lodestar through it) can start,
 stop and watch it.
+
+**llama.cpp** (`-l`) and **Kokoro** (`-k`) register the same way:
+`~/start_llama.sh` / `~/start_kokoro.sh`, their stop scripts, and manifests the
+node's Observatory reads (llama on 8090 at `/v1/chat/completions`, Kokoro on
+8880 at `/v1/audio/speech`). What llama serves is `~/seren-llama.env` -
+`LLAMA_MODEL`, context, GPU layers, slots - written on first install and kept on
+every reinstall, so swapping a model is an edit, not an install;
+`--llama-model NAME|PATH` changes the model line (a bare name is looked up in
+the models dir). Nothing is downloaded: put a `.gguf` in the models dir. These
+are the BOX's services: their manifests live in `~/.seren/services`, which every
+install's Observatory on the box reads beside its own roster.
 
 Platform is auto-detected from `/etc/nv_tegra_release` (R35 → Xavier/jp5,
 R36 → Orin Nano/jp6). The DGX Spark has no such file, so it's detected by other

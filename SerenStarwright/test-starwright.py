@@ -100,27 +100,112 @@ async def test_nothing_dropped() -> None:
 
 
 async def test_dependencies() -> None:
-    """Corpus Callosum writes a config pre-wired to memory:7420 + loci:7422.
-    Selecting it alone installs a bridge to nothing."""
+    """The hippocampus cannot work without a Memory: selecting it alone pulls
+    one in, installed first."""
     print("\n== Dependency resolution + install order")
     services, problems = sw.discover()
     app = sw.StarwrightApp(services, problems)
     async with app.run_test(size=(120, 60)) as pilot:
         await pilot.click("#install")
         await pilot.pause()
-        scc = "seren-corpus-callosum"
-        if scc not in app.svc_map:
-            return ok("corpus-callosum absent, skipped")
-        app.screen.query_one(f"#svc-{scc}", Checkbox).value = True
+        hip = "seren-hippocampus"
+        if hip not in app.svc_map:
+            return ok("hippocampus absent, skipped")
+        app.screen.query_one(f"#svc-{hip}", Checkbox).value = True
         await pilot.pause()
         note = widget_text(app.screen.query_one("#setup-note", Static))
-        check("pulled in as dependencies" in note and "memory" in note and "loci" in note,
-              f"the panel names both: {note!r}")
+        check("pulled in as dependencies: memory" in note, f"the panel names it: {note!r}")
         await pilot.click("#next")
         await pilot.pause()
         order = app.selected
-        check(order.index("seren-memory") < order.index(scc), "memory before scc")
-        check(order.index("seren-loci") < order.index(scc), "loci before scc")
+        check("seren-memory" in order and order.index("seren-memory") < order.index(hip), f"memory before the hippocampus: {order}")
+
+
+async def test_callosum_recommends() -> None:
+    """Corpus Callosum REQUIRED Memory and Loci, so ticking it pulled both
+    into every run, and its card wrote an entry for each whether or not it
+    was there - a Memory-only callosum reported a dead Loci on every search.
+    Design note: it holds n stores, better with one of each, either
+    alone works - "im a warning message not a cop." It RECOMMENDS them now:
+    wired when present, never pulled, a yellow line when none is, and Next
+    is never blocked."""
+    print("\n== Callosum recommends Memory and Loci, requires nothing")
+    services, problems = sw.discover()
+    svcs = {x.name: x for x in services}
+    scc = "seren-corpus-callosum"
+    if not {scc, "seren-memory", "seren-loci"} <= set(svcs):
+        check(False, "brain cards present"); return
+    cc = svcs[scc]
+    # --describe: the new key, parsed, and requires emptied
+    check(cc.recommends == ["seren-memory", "seren-loci"] and cc.requires == [],
+          f"--describe: recommends memory and loci, requires nothing: {cc.recommends} / {cc.requires}")
+    check(all(isinstance(x.recommends, list) for x in services) and svcs["seren-memory"].recommends == [],
+          "a card that recommends nothing reports an empty list")
+    check(cc.wires == ["seren-memory", "seren-loci"], f"what it recommends is what it is wired to: {cc.wires}")
+    check(sw.resolve_dependencies({scc}, svcs) == {scc}, "nothing is pulled in")
+    check(sw.install_order({scc, "seren-memory"}, svcs) == ["seren-memory", scc],
+          "a recommended sibling ticked into the run installs first (its config is read at install)")
+
+    # nothing on the box, the callosum alone
+    app = sw.StarwrightApp(services, problems)
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.click("#install"); await pilot.pause()
+        scr = app.screen
+        scr.query_one(f"#svc-{scc}", Checkbox).value = True; await pilot.pause()
+        line = scr.query_one("#req-brain", Static)
+        req = widget_text(line)
+        check("Corpus Callosum recommends Seren Memory or Seren Loci" in req and "Corpus Callosum requires" not in req,
+              f"a recommend line under the group, not a requirement: {req!r}")
+        from textual.color import Color
+        check(line.styles.color == Color.parse("#f9e2af"), f"...in yellow: {line.styles.color}")
+        note = widget_text(scr.query_one("#setup-note", Static))
+        check("pulled in" not in note, f"nothing pulled in: {note!r}")
+        await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+        check(isinstance(app.screen, sw.ConfigScreen), f"Next is not blocked: {type(app.screen).__name__}")
+        check(app.selected == [scc], f"only the callosum installs: {app.selected}")
+        cfg = app.per_service.get(scc, {})
+        check(not any(k.startswith(("memory-", "loci-")) for k in cfg), f"nothing wired, so the card writes no store: {cfg}")
+        dep = widget_text(app.screen.query_one("#cfg-installed", Static))
+        check("no memory or loci to wire it to" in dep, f"Configure says so: {dep!r}")
+
+        # ticking memory clears the line; memory installs first and is wired
+        app.pop_screen(); await pilot.pause()
+        scr = app.screen
+        scr.query_one("#svc-seren-memory", Checkbox).value = True; await pilot.pause()
+        req = widget_text(scr.query_one("#req-brain", Static))
+        check("Corpus Callosum" not in req, f"one of them is enough to clear it: {req!r}")
+        await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+        check(app.selected == ["seren-memory", scc], f"memory first, loci not pulled: {app.selected}")
+        cfg = app.per_service.get(scc, {})
+        check(cfg.get("memory-config", "").endswith("seren-memory.yaml") and not any(k.startswith("loci-") for k in cfg),
+              f"wired to this run's memory, no loci handed over: {cfg}")
+
+    # a loci already on the box: wired, not reinstalled, no line
+    import tempfile
+    setups = Path(tempfile.mkdtemp(prefix="sw-recommends-"))
+    os.environ["SEREN_SETUPS_DIR"] = str(setups)          # not this box's own setups
+    loci = sw.InstalledRecord(service="seren-loci", instance="", host="127.0.0.1", port=7422,
+                              config="C:/u/seren-loci/seren-loci.yaml", version="2.2.0")
+    app = sw.StarwrightApp(services, problems, installed=[loci])
+    try:
+        async with app.run_test(size=(120, 60)) as pilot:
+            await pilot.click("#install"); await pilot.pause()
+            scr = app.screen
+            scr.query_one(f"#svc-{scc}", Checkbox).value = True; await pilot.pause()
+            req = widget_text(scr.query_one("#req-brain", Static))
+            check("Corpus Callosum" not in req, f"an installed loci clears the line: {req!r}")
+            note = widget_text(scr.query_one("#setup-note", Static))
+            check("will be used: loci" in note, f"the panel says the installed loci will be used: {note!r}")
+            await pilot.click("#next"); await pilot.pause(); await pilot.pause()
+            check(app.selected == [scc], f"the loci is not reinstalled, the memory not pulled: {app.selected}")
+            cfg = app.per_service.get(scc, {})
+            check(cfg.get("loci-config") == loci.config and not any(k.startswith("memory-") for k in cfg),
+                  f"wired to the installed loci by config path, memory left out: {cfg}")
+            dep = widget_text(app.screen.query_one("#cfg-installed", Static))
+            check("wired to the installed loci" in dep and "no memory or loci" not in dep, f"Configure says so: {dep!r}")
+    finally:
+        os.environ.pop("SEREN_SETUPS_DIR", None)
+        shutil.rmtree(setups, ignore_errors=True)
 
 
 async def test_group_cascade() -> None:
@@ -925,11 +1010,9 @@ async def test_select_layout() -> None:
                 if cols != 140:
                     continue
                 req = widget_text(scr.query_one("#req-brain", Static))
-                check("requires" in req and "Hippocampus" not in req, f"memory is installed: the hippocampus line is gone: {req!r}")
-                check("Corpus Callosum requires" in req and "Loci" in req, f"the callosum still needs loci: {req!r}")
-                scr.query_one("#svc-seren-loci", Checkbox).value = True; await pilot.pause()
-                req = widget_text(scr.query_one("#req-brain", Static))
-                check("Corpus Callosum" not in req, f"ticking loci meets it: {req!r}")
+                check("Hippocampus" not in req, f"memory is installed: the hippocampus line is gone: {req!r}")
+                # the callosum only recommends memory or loci, and one is enough
+                check("Corpus Callosum" not in req, f"...and the callosum has a store to fan: {req!r}")
                 base = scr.query_one("#setup-base", Input)
                 base.value = ""; base.focus(); await pilot.press("7", "x", "4", "0", "0"); await pilot.pause()
                 check(base.value == "7400", f"the port takes digits only: {base.value!r}")
@@ -1439,6 +1522,7 @@ async def main() -> int:
     await test_nothing_dropped()
     await test_group_cascade()
     await test_dependencies()
+    await test_callosum_recommends()
     for c, r in ((80, 24), (100, 40), (140, 50)):
         await test_layout(c, r)
     await test_modal()

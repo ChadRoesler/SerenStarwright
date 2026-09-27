@@ -145,7 +145,8 @@ Section "-Describe contract"
 $installers = Get-ChildItem -Path (Join-Path $ScriptDir "services\powershell") -Filter "seren-*-setup.ps1" -File
 $psServices = @{}
 $required = @("schema_version","name","display","description","group",
-              "package","default_host","default_port","extras","flags")
+              "package","default_host","default_port","extras","flags",
+              "requires","recommends")
 
 foreach ($f in $installers) {
     $rel = $f.Name
@@ -257,6 +258,17 @@ if (-not $bash) {
                  $name, ($bReq -join ' '), ($pReq -join ' '))
             continue
         }
+        # -- recommends -------------------------------------------------------
+        # Wired when present, never pulled (the callosum's Memory and Loci).
+        # Drift here would make Windows pull what Linux only warns about, or
+        # the other way round.
+        $bRec = @($b.recommends | Where-Object { $_ }) | Sort-Object
+        $pRec = @($p.recommends | Where-Object { $_ }) | Sort-Object
+        if (($bRec -join ',') -ne ($pRec -join ',')) {
+            Bad ("{0} : recommends differs (bash [{1}] vs ps [{2}])" -f `
+                 $name, ($bRec -join ' '), ($pRec -join ' '))
+            continue
+        }
 
         # -- flags ------------------------------------------------------------
         # Pinned rather than demanded equal. Some asymmetry is REAL and must not
@@ -310,7 +322,7 @@ if (-not $bash) {
             continue
         }
 
-        Good ("{0,-24} port, group, requires, flags, switches agree" -f $name)
+        Good ("{0,-24} port, group, requires, recommends, flags, switches agree" -f $name)
         if ($gap) {
             $g = @()
             if ($gap.ps.Count)   { $g += "ps-only: $($gap.ps -join ' ')" }
@@ -549,6 +561,75 @@ foreach ($case in @(@{a = @("-SleepAt", "25:00"); w = "HH:MM"}, @{a = @("-SleepE
 $src = [System.IO.File]::ReadAllText($card)
 if ($src -match "# at: ""03:30""" -and $src -match "# max_attempts: 3" -and $src -match "# interval_seconds: 72000") {
     Good "the sleep block shows all three, commented with their defaults when not given" } else { Bad "sleep block defaults missing" }
+
+# -- the callosum card: only the stores it was given (25 Sept 2026) ------------
+# the user: the callosum holds n stores, better with one of each, either alone
+# works - "im a warning message not a cop." The card wrote memory:7420 AND
+# loci:7422 whatever it was handed, so a Memory-only callosum reported a dead
+# Loci on every search. This runs the REAL card from a scratch tree whose lib
+# is the real one with Find-Python / Resolve-Wheel / Create-Venv /
+# Install-Package stubbed: no venv, no pip, no network. The "venv" python is
+# the real one, importing a stand-in package, so the import check and the
+# keep-config step still run for real.
+Section "callosum card: only the stores it was given"
+$pyExe = $null
+foreach ($c in @(Get-Command python -All -ErrorAction SilentlyContinue)) {
+    try { if ((& $c.Source -c "print(7)" 2>$null) -eq "7") { $pyExe = $c.Source; break } } catch { }
+}
+if (-not $pyExe) {
+    Note "no working python on PATH - skipping. Not a failure."
+} else {
+    $sccTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-scc-" + [Guid]::NewGuid().ToString("N"))
+    $sccCard = Join-Path $sccTmp "services\powershell\seren-corpus-callosum-setup.ps1"
+    New-Item -ItemType Directory -Force -Path (Split-Path $sccCard), (Join-Path $sccTmp "services\lib"),
+        (Join-Path $sccTmp "pkg\seren_corpus_callosum") | Out-Null
+    Copy-Item (Join-Path $ScriptDir "services\powershell\seren-corpus-callosum-setup.ps1") $sccCard
+    [System.IO.File]::WriteAllText((Join-Path $sccTmp "pkg\seren_corpus_callosum\__init__.py"), "")
+    $realLib = Join-Path $ScriptDir "services\lib\seren-install-lib.ps1"
+    $stubLib = ". '$realLib'`n" +
+               "function Find-Python { @{ Exe = '$pyExe'; Args = @() } }`n" +
+               "function Resolve-Wheel { @{ Src = 'stub'; Cleanup = `$false } }`n" +
+               "function Create-Venv { '$pyExe' }`n" +
+               "function Install-Package { }`n"
+    [System.IO.File]::WriteAllText((Join-Path $sccTmp "services\lib\seren-install-lib.ps1"), $stubLib)
+    $memYaml = Join-Path $sccTmp "memory.yaml"
+    [System.IO.File]::WriteAllText($memYaml, "server:`n  host: 0.0.0.0`n  port: 7267`n  bearer_token: `"memory-bearer`"`n")
+    $oldPyPath = $env:PYTHONPATH
+    $env:PYTHONPATH = Join-Path $sccTmp "pkg"
+    $env:SEREN_INSTALLED_DIR = Join-Path $sccTmp "ledger"     # never the real ledger
+    function Install-Scc([string] $Name, [string[]] $CardArgs) {
+        $r = Join-Path $sccTmp "root-$Name"
+        $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $sccCard, "-Root", $r) + $CardArgs
+        # the engine running this check, so 5.1 is tested by 5.1 and 7 by 7
+        $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String
+        $cfg = Join-Path $r "apps\corpus-callosum\seren-corpus-callosum.yaml"
+        $text = if (Test-Path $cfg) { [System.IO.File]::ReadAllText($cfg) } else { "" }
+        return @{ Rc = $LASTEXITCODE; Out = $out; Cfg = $text }
+    }
+    try {
+        $m = Install-Scc "mem" @("-MemoryConfig", $memYaml)
+        if ($m.Rc -eq 0 -and $m.Cfg) { Good "a memory config only: it installs" } else { Bad "memory-only install failed (rc=$($m.Rc))"; Note $m.Out }
+        if ($m.Cfg -match "url: http://127\.0\.0\.1:7267" -and $m.Cfg -match 'bearer_token: "memory-bearer"' -and $m.Cfg -match "name: memory") {
+            Good "...the memory store, url and bearer read from its config" } else { Bad "memory store wrong: $($m.Cfg)" }
+        if ($m.Cfg -notmatch "name: loci" -and $m.Cfg -notmatch "7422") { Good "...and no loci entry" } else { Bad "a loci nobody gave was written: $($m.Cfg)" }
+
+        $l = Install-Scc "loci" @("-LociUrl", "http://127.0.0.1:7266")
+        if ($l.Rc -eq 0 -and $l.Cfg -match "name: loci" -and $l.Cfg -notmatch "name: memory" -and $l.Cfg -notmatch "7420") {
+            Good "a loci url only: one loci store, no memory entry" } else { Bad "loci-only wrong (rc=$($l.Rc)): $($l.Cfg)" }
+
+        $n = Install-Scc "none" @()
+        if ($n.Rc -eq 0 -and $n.Cfg) { Good "neither: it installs anyway (a warning, not a cop)" } else { Bad "neither: install failed (rc=$($n.Rc))"; Note $n.Out }
+        if ($n.Out -match "No Memory or Loci was given") { Good "...and warns" } else { Bad "neither: no warning" }
+        if ($n.Cfg -notmatch "(?m)^\s+stores:" -and $n.Cfg -notmatch "name: " -and $n.Cfg -match "(?m)^federation:") {
+            Good "...with no stores: key under federation" } else { Bad "neither wrote stores: $($n.Cfg)" }
+    } catch {
+        Bad "callosum section threw: $($_.Exception.Message)"
+    } finally {
+        $env:PYTHONPATH = $oldPyPath
+        Remove-Item Env:SEREN_INSTALLED_DIR -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $sccTmp -ErrorAction SilentlyContinue
+    }
+}
 
 # -- summary ------------------------------------------------------------------
 Write-Host ""

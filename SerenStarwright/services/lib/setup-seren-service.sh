@@ -299,7 +299,8 @@ else
 fi
 
 # -- register with the node's Observatory --------------------------------------
-# Observatory reports ONLY what it finds in ~/.seren/services/*.json. Nothing
+# Observatory reports ONLY what it finds in its roster (~/.seren/services/*.json
+# by default, <root>/manifests under an install root - see below). Nothing
 # used to write those, so every service installed here was invisible to the
 # node's own management plane - and to Lodestar above it. An operator's only
 # recourse was to hand-author six JSON files and get the schema right from
@@ -309,8 +310,32 @@ fi
 # service name, the unit name, the resolved port and the config path, so the
 # manifest is DERIVED from what was actually installed rather than declared a
 # second time. Linux/systemd only - launchd nodes aren't part of a cluster.
+#
+# WHERE: under an install root, <root>/manifests - the roster that install's
+# Observatory is configured to read (server.manifests_dir, written by the
+# observatory card). Design note: two named installs on one host each
+# run an Observatory, and one shared ~/.seren/services had each listing - and
+# restarting - the other's services. No root: ~/.seren/services, as before.
+#
+# The root is not a flag here: the wrappers pass --app-dir and --venv only, and
+# seren_layout (seren-install-lib.sh) already fixes their shape under a root -
+# <root>/apps/<svc> and <root>/venvs/<svc>. Both pointing into the SAME parent
+# is the root; anything else is the old layout. Prints the root, or nothing.
+install_root_of() {
+  local app="${1%/}" venv="${2%/}"
+  local app_up venv_up
+  app_up="$(dirname "$app")"; venv_up="$(dirname "$venv")"
+  [[ "$(basename "$app_up")" == "apps" && "$(basename "$venv_up")" == "venvs" ]] || return 0
+  [[ "$(dirname "$app_up")" == "$(dirname "$venv_up")" ]] && echo "$(dirname "$app_up")"
+  return 0
+}
 if ! $IS_MAC; then
-  SEREN_SERVICES_DIR="$HOME/.seren/services"
+  INSTALL_ROOT="$(install_root_of "$APP_DIR" "$VENV_DIR")"
+  if [[ -n "$INSTALL_ROOT" ]]; then
+    SEREN_SERVICES_DIR="$INSTALL_ROOT/manifests"
+  else
+    SEREN_SERVICES_DIR="$HOME/.seren/services"
+  fi
   if mkdir -p "$SEREN_SERVICES_DIR" 2>/dev/null; then
     MANIFEST_PATH="$SEREN_SERVICES_DIR/${SERVICE_NAME}.json"
     cat > "$MANIFEST_PATH" <<JSON
@@ -329,7 +354,7 @@ if ! $IS_MAC; then
 JSON
     ok "Registered with this node's Observatory ($MANIFEST_PATH)"
   else
-    warn "Couldn't write $HOME/.seren/services - Observatory won't list this service"
+    warn "Couldn't write $SEREN_SERVICES_DIR - Observatory won't list this service"
   fi
 fi
 
