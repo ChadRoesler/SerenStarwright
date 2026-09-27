@@ -25,10 +25,11 @@
 # Service flags:
 #   -l, --llama       Install llama.cpp inference server
 #   -k, --kokoro      Install Kokoro-FastAPI TTS
+#   -w, --whisper     Install whisper.cpp speech to text (--whisper-model NAME)
 #   -c, --comfyui     Install ComfyUI image generation
 #   -d, --chromadb    Install ChromaDB vector store
 #       --coral       Install Coral M.2 TPU support (off by default; needs hardware)
-#       --all         Install llama + kokoro + comfyui + chromadb (NOT coral)
+#       --all         Install llama + kokoro + whisper + comfyui + chromadb (NOT coral)
 #
 # Options:
 #   -u, --user USER       Target user (default: invoking user)
@@ -110,6 +111,8 @@ WIPE_NVME=false
 
 INSTALL_LLAMA=false
 INSTALL_KOKORO=false
+INSTALL_WHISPER=false
+WHISPER_MODEL=""
 INSTALL_COMFYUI=false
 INSTALL_CHROMADB=false
 INSTALL_CORAL=false
@@ -125,6 +128,8 @@ Usage: $0 [SERVICE FLAGS] [OPTIONS]
 Service flags (combine freely):
   -l, --llama       Install llama.cpp inference server
   -k, --kokoro      Install Kokoro-FastAPI TTS
+  -w, --whisper     Install whisper.cpp speech to text
+      --whisper-model NAME  base.en / small.en / large-v3-turbo ... (default per platform)
   -c, --comfyui     Install ComfyUI image generation
   -d, --chromadb    Install ChromaDB vector store
       --coral       Install Coral M.2 TPU support
@@ -170,6 +175,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -l|--llama)    INSTALL_LLAMA=true; shift ;;
         -k|--kokoro)   INSTALL_KOKORO=true; shift ;;
+        -w|--whisper)  INSTALL_WHISPER=true; shift ;;
+        --whisper-model) WHISPER_MODEL="$2"; shift 2 ;;
         -c|--comfyui)  INSTALL_COMFYUI=true; shift ;;
         -d|--chromadb) INSTALL_CHROMADB=true; shift ;;
         --coral)       INSTALL_CORAL=true; shift ;;
@@ -179,7 +186,7 @@ while [[ $# -gt 0 ]]; do
         # hardware, this is gated on weight. [train] pulls a multi-gigabyte
         # stack for a job most nodes never do, and --all on an 8GB Nano
         # should not quietly become that. Ask for it by name.
-        --all)         INSTALL_LLAMA=true; INSTALL_KOKORO=true
+        --all)         INSTALL_LLAMA=true; INSTALL_KOKORO=true; INSTALL_WHISPER=true
                        INSTALL_COMFYUI=true; INSTALL_CHROMADB=true; shift ;;
         -u|--user)     TARGET_USER="$2"; shift 2 ;;
         # RENAME, not "hostname". The verb is the point: this is the only flag
@@ -237,6 +244,7 @@ fi
 ANY_COMPONENT=false
 $INSTALL_LLAMA    && ANY_COMPONENT=true
 $INSTALL_KOKORO   && ANY_COMPONENT=true
+$INSTALL_WHISPER  && ANY_COMPONENT=true
 $INSTALL_COMFYUI  && ANY_COMPONENT=true
 $INSTALL_CHROMADB && ANY_COMPONENT=true
 $INSTALL_CORAL    && ANY_COMPONENT=true
@@ -381,7 +389,7 @@ log "Build mode:      $($USE_BUILD_FLAG && echo 'BUILD FROM SOURCE' || echo 'pre
 log "OS trim:         $($TRIM_OS && echo 'YES (--trim-os)' || echo 'no')"
 log "NVMe wipe:       $($WIPE_NVME && echo 'ALLOWED (--wipe-nvme)' || echo 'not allowed')"
 log "Max power:       $($SKIP_MAX_POWER && echo 'SKIPPED (--no-max-power)' || echo 'ON (MAXN + jetson_clocks)')"
-log "Services:        llama=$INSTALL_LLAMA kokoro=$INSTALL_KOKORO comfy=$INSTALL_COMFYUI chroma=$INSTALL_CHROMADB coral=$INSTALL_CORAL msmoe=$INSTALL_MSMOE"
+log "Services:        llama=$INSTALL_LLAMA kokoro=$INSTALL_KOKORO whisper=$INSTALL_WHISPER comfy=$INSTALL_COMFYUI chroma=$INSTALL_CHROMADB coral=$INSTALL_CORAL msmoe=$INSTALL_MSMOE"
 
 # Initialize state file. jq first: phase_mark and the provisioned stamp need it,
 # and the READ side (node_provisioned, above) deliberately does not - it has
@@ -646,6 +654,13 @@ if $INSTALL_KOKORO; then
     run_service "Service — Kokoro-FastAPI" install_kokoro
 fi
 
+if $INSTALL_WHISPER; then
+    # shellcheck disable=SC1091
+    source "$PLATFORM_DIR/whisper.sh"
+    export WHISPER_MODEL
+    run_service "Service — whisper.cpp" install_whisper
+fi
+
 if $INSTALL_COMFYUI; then
     # shellcheck disable=SC1091
     source "$PLATFORM_DIR/comfy.sh"
@@ -691,6 +706,7 @@ echo "" >&3
     # a no-op.
     $INSTALL_LLAMA    && echo "    ✓ llama.cpp"
     $INSTALL_KOKORO   && echo "    ✓ Kokoro-FastAPI"
+    $INSTALL_WHISPER  && echo "    ✓ whisper.cpp (speech to text, port ${WHISPER_PORT:-8081})"
     $INSTALL_COMFYUI  && echo "    ✓ ComfyUI"
     $INSTALL_CHROMADB && echo "    ✓ ChromaDB"
     $INSTALL_MSMOE    && echo "    ✓ Ms.MoE Maker"

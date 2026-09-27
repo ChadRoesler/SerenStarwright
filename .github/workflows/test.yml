@@ -50,6 +50,9 @@ jobs:
       - name: prebuilt staging verifies against the release index
         run: bash SerenStarwright/nodes/tests/test-prebuilts-fetch.sh
 
+      - name: whisper on a node - binary, model, start/stop, the Observatory manifest
+        run: bash SerenStarwright/nodes/tests/test-whisper-install.sh
+
       - name: --local installs from a dev wheelhouse (real pip, no network)
         run: bash SerenStarwright/services/tests/test-local-wheelhouse.sh
 
@@ -64,6 +67,9 @@ jobs:
 
       - name: --root puts a named install in one folder, absolute paths
         run: bash SerenStarwright/services/tests/test-install-root.sh
+
+      - name: the hippocampus card writes bedtime and the draft cap, refuses bad values
+        run: bash SerenStarwright/services/tests/test-hippocampus-sleep-flags.sh
 
       - name: bash -n every script
         run: |

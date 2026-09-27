@@ -102,7 +102,17 @@ it behaves exactly as it always did.
 bash nodes/seren-prepare-node.sh --all          # detect platform, install everything
 bash nodes/seren-prepare-node.sh -l -k -d       # llama + kokoro + chromadb
 bash nodes/seren-prepare-node.sh --platform spark -l
+bash nodes/seren-prepare-node.sh -w --whisper-model small.en   # speech to text
 ```
+
+**Whisper** (`-w`) is whisper.cpp's `whisper-server`, staged from the release
+like llama-server (SystemPrebuilts builds it with `--whisper`). It answers
+OpenAI-style multipart POSTs at `/v1/audio/transcriptions` on port 8081. The
+default model follows the box - base.en on an Orin Nano, small.en on a Xavier,
+large-v3-turbo on a Spark - and `--whisper-model` picks another. It is the first
+node service that writes `~/start_whisper.sh` / `~/stop_whisper.sh` and a
+service manifest, so the node's Observatory (and Lodestar through it) can start,
+stop and watch it.
 
 Platform is auto-detected from `/etc/nv_tegra_release` (R35 → Xavier/jp5,
 R36 → Orin Nano/jp6). The DGX Spark has no such file, so it's detected by other

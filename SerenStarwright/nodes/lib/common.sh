@@ -111,6 +111,7 @@ seren_describe_node() {
     local specs=(
         "llama:llama.cpp:Inference server"
         "kokoro:Kokoro:Text to speech"
+        "whisper:Whisper:Speech to text"
         "comfyui:ComfyUI:Image generation"
         "chromadb:ChromaDB:Vector store"
         "msmoe:Ms.MoE Maker:MoE build pipeline"
@@ -832,6 +833,10 @@ run_prebuilts_download_services() {
         seren_prebuilts_stage 'llama-server-*' STAGED_LLAMA_BIN required || return 1
         chmod +x "$STAGED_LLAMA_BIN"      # AFTER verification, never before
     fi
+    if ${INSTALL_WHISPER:-false}; then
+        seren_prebuilts_stage 'whisper-server-*' STAGED_WHISPER_BIN required || return 1
+        chmod +x "$STAGED_WHISPER_BIN"
+    fi
 
     # torch + torchvision for whichever component needs them. The names come
     # from the index, so the torchvision local-version tag is whatever THIS
@@ -1104,6 +1109,114 @@ venv_python() {
 }
 
 # ═════════════════════════════════════════════════════════════
+# Whisper - speech to text (whisper.cpp's whisper-server)
+# ═════════════════════════════════════════════════════════════
+#
+# The same shape as llama.cpp: SystemPrebuilts builds one static binary per
+# platform (phases/whisper.sh), this copies it into place. What llama.sh does
+# NOT do, and this does: a start and a stop script, a pid and a log where the
+# Observatory looks for them, and a service manifest - so Lodestar can start,
+# stop and watch it like any other node service (26 Sept 2026; until then no
+# node installer wrote a manifest at all, so a node looked empty to its
+# Observatory however much it ran).
+#
+# The server answers multipart POSTs at /v1/audio/transcriptions (an OpenAI-
+# style path via --inference-path) with the model loaded once. No bearer: like
+# llama-server and Kokoro on the node, it is a LAN service behind Lodestar.
+#
+#   seren_install_whisper DEFAULT_MODEL
+#     WHISPER_MODEL        overrides the model (--whisper-model): a ggml name
+#                          from huggingface.co/ggerganov/whisper.cpp, e.g.
+#                          base.en, small.en, large-v3-turbo
+#     WHISPER_PORT         default 8081
+#     WHISPER_MODEL_BASE   where models are fetched from (a test points this
+#                          at a folder)
+seren_install_whisper() {
+    local default_model="$1"
+    local USER_HOME="/home/$TARGET_USER"
+    [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
+    local BIN_DIR="$USER_HOME/whisper.cpp/build/bin"
+    local MODEL="${WHISPER_MODEL:-$default_model}"
+    local PORT="${WHISPER_PORT:-8081}"
+    local BASE="${WHISPER_MODEL_BASE:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main}"
+    local MODELS="$USER_HOME/models/whisper"
+    [ -d /mnt/nvme ] && [ -z "${SEREN_TEST_HOME:-}" ] && MODELS="/mnt/nvme/models/whisper"
+    local MODEL_PATH="$MODELS/ggml-${MODEL}.bin"
+    local LOGS="$USER_HOME/seren-logs"
+
+    if [ -z "${STAGED_WHISPER_BIN:-}" ] || [ ! -f "$STAGED_WHISPER_BIN" ]; then
+        fail "Staged whisper-server binary missing. Prebuilts didn't run, or the release has no whisper-server for this platform."
+        fail "Expected at: ${STAGED_WHISPER_BIN:-<unset>}  (SystemPrebuilts: build-jetson-prebuilts.sh --whisper)"
+        return 1
+    fi
+    _as_target mkdir -p "$BIN_DIR" "$MODELS" "$LOGS"
+    _as_target cp -f "$STAGED_WHISPER_BIN" "$BIN_DIR/whisper-server"
+    chmod +x "$BIN_DIR/whisper-server"
+    log "whisper-server installed at $BIN_DIR/whisper-server"
+
+    # The model: fetched once, kept. A partial download lands under a temp
+    # name and is only moved into place whole.
+    if [ -s "$MODEL_PATH" ]; then
+        log "Whisper model already here: $MODEL_PATH"
+    else
+        log "Downloading whisper model ggml-${MODEL}.bin..."
+        _as_target curl -fL --retry 3 -o "$MODEL_PATH.part" "$BASE/ggml-${MODEL}.bin" \
+            || { rm -f "$MODEL_PATH.part"; fail "Could not download ggml-${MODEL}.bin from $BASE"; return 1; }
+        _as_target mv "$MODEL_PATH.part" "$MODEL_PATH"
+    fi
+    local SUM; SUM="$(sha256sum "$MODEL_PATH" | awk '{print $1}')"
+
+    # Start / stop: the pid_file lifecycle the Observatory drives. CUDA's
+    # runtime libraries are found through LD_LIBRARY_PATH, as for llama-server.
+    _as_target tee "$USER_HOME/start_whisper.sh" > /dev/null <<STARTEOF
+#!/bin/bash
+# start_whisper.sh - written by seren-prepare-node (whisper). Started and
+# stopped by the Observatory through its manifest (~/.seren/services/whisper.json).
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\${LD_LIBRARY_PATH:-}
+PID="$LOGS/whisper.pid"
+if [ -f "\$PID" ] && kill -0 "\$(cat "\$PID")" 2>/dev/null; then echo "whisper already running"; exit 0; fi
+nohup "$BIN_DIR/whisper-server" \\
+  -m "$MODEL_PATH" \\
+  --host 0.0.0.0 --port $PORT \\
+  --inference-path /v1/audio/transcriptions \\
+  -t "\$(nproc)" >> "$LOGS/whisper.log" 2>&1 &
+echo \$! > "\$PID"
+STARTEOF
+    _as_target tee "$USER_HOME/stop_whisper.sh" > /dev/null <<STOPEOF
+#!/bin/bash
+# stop_whisper.sh - written by seren-prepare-node (whisper).
+PID="$LOGS/whisper.pid"
+[ -f "\$PID" ] || exit 0
+kill "\$(cat "\$PID")" 2>/dev/null
+for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "\$(cat "\$PID")" 2>/dev/null || break; sleep 1; done
+kill -9 "\$(cat "\$PID")" 2>/dev/null
+rm -f "\$PID"
+STOPEOF
+    chmod +x "$USER_HOME/start_whisper.sh" "$USER_HOME/stop_whisper.sh"
+
+    write_service_manifest "whisper" \
+        service_type=pid_file \
+        implementation=whisper.cpp \
+        port="$PORT" \
+        endpoint=/v1/audio/transcriptions \
+        health_path=/ \
+        start_script="$USER_HOME/start_whisper.sh" \
+        stop_script="$USER_HOME/stop_whisper.sh" \
+        pid_path="$LOGS/whisper.pid" \
+        log_path="$LOGS/whisper.log" \
+        --service-specific model="$MODEL" \
+        --service-specific model_path="$MODEL_PATH" \
+        --service-specific model_sha256="$SUM" \
+        --service-specific device=cuda
+
+    if "$BIN_DIR/whisper-server" --help >/dev/null 2>&1; then
+        log "whisper-server runs; start it with ~/start_whisper.sh (or from Lodestar)"
+    else
+        warn "whisper-server did not answer --help - check LD_LIBRARY_PATH (/usr/local/cuda/lib64)"
+    fi
+}
+
+# ═════════════════════════════════════════════════════════════
 # Manifest writers - ~/.seren/{node,services/<name>}.json
 # ═════════════════════════════════════════════════════════════
 #
@@ -1159,7 +1272,7 @@ _seren_manifest_dir() {
         return 1
     fi
     local d="$USER_HOME/.seren"
-    sudo -u "$TARGET_USER" mkdir -p "$d/services"
+    _as_target mkdir -p "$d/services"
     echo "$d"
 }
 
@@ -1167,9 +1280,11 @@ _seren_manifest_dir() {
 _seren_atomic_write() {
     local target="$1"; shift
     local content="$1"
-    local tmp; tmp=$(sudo -u "$TARGET_USER" mktemp "${target}.XXXXXX")
-    echo "$content" | sudo -u "$TARGET_USER" tee "$tmp" > /dev/null
-    sudo -u "$TARGET_USER" mv "$tmp" "$target"
+    # _as_target, not sudo -u: the same user needs no sudo (and a test, or a
+    # box without it, has none).
+    local tmp; tmp=$(_as_target mktemp "${target}.XXXXXX")
+    echo "$content" | _as_target tee "$tmp" > /dev/null
+    _as_target mv "$tmp" "$target"
 }
 
 write_service_manifest() {

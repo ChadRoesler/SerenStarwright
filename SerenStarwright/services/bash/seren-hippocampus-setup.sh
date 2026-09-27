@@ -22,6 +22,9 @@
 #    --memory-config P   Memory's own config: its url AND its bearer, read from the file
 #    --model-url URL     Small model, OpenAI-compatible (default http://localhost:8090/v1;
 #                        "" = mechanical mode, no attach/supersede proposals)
+#    --sleep-at HH:MM    Bedtime at a wall-clock time (a sleep still waits for a brief)
+#    --sleep-every HOURS ...or bedtime every N hours after the last sleep (default ~20)
+#    --max-attempts N    The draft cap: attempts per chain, 1-10 (default 3)
 #    --repo-dir PATH     SerenHippocampus checkout    (default: sibling ../SerenHippocampus)
 #    --wheel PATH        Install from a local .whl
 #    --local DIR|URL     Install from a dev wheelhouse (seren-dev-publish.sh)
@@ -29,6 +32,7 @@
 #    --ref TAG           Pin to a GitHub release tag
 #    --repo SLUG         GitHub release repo
 #    --service           Autostart via systemd/launchd
+#    --mcp               Install the [mcp] extra: the sleep's tools at /mcp for the main model
 #    --corp              Route TLS through OS trust store
 #    --instance NAME     Instance name
 #    --root DIR     Install root: venvs, apps, stores, logs in one folder
@@ -74,6 +78,9 @@ MEMORY_URL="http://127.0.0.1:7420"
 MEMORY_TOKEN=""
 MEMORY_CONFIG=""      # Memory's own config: its url AND its bearer, read from the file
 MODEL_URL="http://localhost:8090/v1"
+SLEEP_AT=""
+SLEEP_EVERY=""
+MAX_ATTEMPTS=""
 REPO_DIR="$(find_upward "SerenHippocampus" || true)"   # sibling checkout (build source)
 WHEEL=""
 LOCAL=""
@@ -82,6 +89,7 @@ REF=""
 REPO=""
 INSTALL_SERVICE=false
 SERVICE_USER=""
+MCP=false
 CORP=false
 UPDATES_OFF=false
 INSTANCE=""
@@ -114,6 +122,9 @@ while [[ $# -gt 0 ]]; do
     --memory-token) MEMORY_TOKEN="$2"; shift 2 ;;
     --memory-config) MEMORY_CONFIG="$2"; shift 2 ;;
     --model-url)    MODEL_URL="$2"; shift 2 ;;
+    --sleep-at)     SLEEP_AT="$2"; shift 2 ;;
+    --sleep-every)  SLEEP_EVERY="$2"; shift 2 ;;
+    --max-attempts) MAX_ATTEMPTS="$2"; shift 2 ;;
     --repo-dir)     REPO_DIR="$2"; shift 2 ;;
     --wheel)        WHEEL="$2"; shift 2 ;;
     --local)        LOCAL="$2"; shift 2 ;;
@@ -121,6 +132,7 @@ while [[ $# -gt 0 ]]; do
     --ref)          REF="$2"; shift 2 ;;
     --repo)         REPO="$2"; shift 2 ;;
     --service)      INSTALL_SERVICE=true; shift ;;
+    --mcp)          MCP=true; shift ;;
     --corp)         CORP=true; shift ;;
     --no-updates)   UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
@@ -135,6 +147,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 seren_layout "hippocampus"
+
+# Bedtime and the draft cap. Checked here so a typo fails the install with its
+# reason instead of a service that quietly falls back to defaults.
+if [[ -n "$SLEEP_AT" ]]; then
+  [[ "$SLEEP_AT" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]] || die "--sleep-at wants HH:MM (local time), got '$SLEEP_AT'"
+fi
+SLEEP_EVERY_SECONDS=""
+if [[ -n "$SLEEP_EVERY" ]]; then
+  SLEEP_EVERY_SECONDS="$(awk -v h="$SLEEP_EVERY" 'BEGIN { if (h+0 > 0) printf "%d", h*3600 }')"
+  [[ -n "$SLEEP_EVERY_SECONDS" && "$SLEEP_EVERY_SECONDS" -ge 600 ]] || die "--sleep-every wants hours (at least 0.17, ten minutes), got '$SLEEP_EVERY'"
+fi
+if [[ -n "$MAX_ATTEMPTS" ]]; then
+  [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ && "$MAX_ATTEMPTS" -ge 1 && "$MAX_ATTEMPTS" -le 10 ]] || die "--max-attempts wants 1-10, got '$MAX_ATTEMPTS'"
+fi
 CFG_PATH="$APP_DIR/seren-hippocampus.yaml"
 CONNECT_HOST="$HOST"
 [[ "$HOST" == "0.0.0.0" ]] && CONNECT_HOST="127.0.0.1"
@@ -192,11 +218,12 @@ create_venv "$VENV_DIR"
 VPY="$VENV_DIR/bin/python"
 
 EXTRAS_LIST=()
+$MCP  && EXTRAS_LIST+=("mcp")
 $CORP && EXTRAS_LIST+=("corp")
 EXTRAS=""
 [[ ${#EXTRAS_LIST[@]} -gt 0 ]] && EXTRAS="[$(IFS=,; echo "${EXTRAS_LIST[*]}")]"
 CORP_ARGS="$(pip_corp_args)"
-pip_install "$VPY" "$WHEEL_SRC" "$EXTRAS" "$CORP_ARGS" "$($CORP && echo ' (+ truststore)')"
+pip_install "$VPY" "$WHEEL_SRC" "$EXTRAS" "$CORP_ARGS" "$($MCP && echo ' (+ MCP SDK)')$($CORP && echo ' (+ truststore)')"
 $CLEANUP_WHEEL && rm -f "$WHEEL_SRC"
 
 # -- 4. sanity check ----------------------------------------------------------
@@ -228,6 +255,16 @@ model:
 sleep:
   mode: thread
   state_path: ${STORE_PATH}
+  # BEDTIME, not a timer: a sleep fires whenever the main model has left a
+  # brief, any hour. Bedtime is when the hippocampus starts counting checks
+  # that find none and, after enough, asks for one. Either a wall-clock time
+  # (local HH:MM)...
+$([[ -n "$SLEEP_AT" ]] && printf '  at: "%s"' "$SLEEP_AT" || printf '  # at: "03:30"')
+  # ...or every N hours after the last sleep (the default, ~20h: not 24, so it drifts through the day).
+$([[ -n "$SLEEP_EVERY_SECONDS" ]] && printf '  interval_seconds: %s' "$SLEEP_EVERY_SECONDS" || printf '  # interval_seconds: 72000')
+  # The draft cap: attempts per chain before the last is terminal (the reviewer
+  # may then edit on approve; a denial ends the chain). 1-10.
+$([[ -n "$MAX_ATTEMPTS" ]] && printf '  max_attempts: %s' "$MAX_ATTEMPTS" || printf '  # max_attempts: 3')
 YAML
 [[ -n "$TOKEN" || -n "$MEMORY_TOKEN_LINES" ]] && chmod 600 "$CFG_PATH"
 
@@ -261,6 +298,7 @@ echo -e "  Sleep now:       ${B}POST http://${CONNECT_HOST}:${PORT}/sleep${NC}"
 echo -e "  Memory:          ${B}${MEMORY_URL}${NC}"
 [[ -z "$MODEL_URL" ]] && echo -e "  Model:           ${Y}none - mechanical mode${NC}" || echo -e "  Model:           ${B}${MODEL_URL}${NC}"
 [[ -n "$TOKEN" ]] && echo -e "  Bearer token:    ${Y}${TOKEN}${NC}"
+$MCP && echo -e "  MCP endpoint:    ${B}http://${CONNECT_HOST}:${PORT}/mcp/${NC}"
 echo
 echo -e "  ${Y}Sleeps every ~20h; tends denied operations every 5 minutes.${NC}"
 echo -e "${G}Rip it and win. 🌭🔧${NC}"

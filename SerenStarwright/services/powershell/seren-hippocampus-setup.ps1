@@ -23,12 +23,18 @@ param(
   [string] $MemoryToken = "",
   [string] $MemoryConfig = "",   # Memory's own config: its url AND its bearer, read from the file
   [string] $ModelUrl    = "http://localhost:8090/v1",
+  # Bedtime (a sleep still waits for a brief): a wall-clock HH:MM, or every N
+  # hours after the last sleep. And the draft cap: attempts per chain, 1-10.
+  [string] $SleepAt     = "",
+  [double] $SleepEvery  = 0,
+  [int]    $MaxAttempts = 0,
   [string] $Wheel       = "",
   [string] $Local       = "",
   [string] $Ref         = "",
   [string] $Repo        = "",
   [string] $RepoDir     = "",
   [switch] $Pypi,
+  [switch] $Mcp,        # [mcp] extra: the sleep's tools at /mcp for the main model
   [switch] $Corp,
   [switch] $NoUpdates,
   [string] $ServiceUser = "",
@@ -82,6 +88,11 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\hippocampus" }
+# Checked here so a typo fails the install with its reason instead of a
+# service that quietly falls back to defaults.
+if ($SleepAt -and $SleepAt -notmatch '^([01]?[0-9]|2[0-3]):[0-5][0-9]$') { Die "-SleepAt wants HH:MM (local time), got '$SleepAt'" }
+if ($SleepEvery -ne 0 -and ($SleepEvery * 3600) -lt 600) { Die "-SleepEvery wants hours (at least 0.17, ten minutes), got '$SleepEvery'" }
+if ($MaxAttempts -ne 0 -and ($MaxAttempts -lt 1 -or $MaxAttempts -gt 10)) { Die "-MaxAttempts wants 1-10, got '$MaxAttempts'" }
 $layout  = Get-SerenLayout -Root $Root -Short "hippocampus" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-hippocampus"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -146,8 +157,8 @@ if ($Wheel) {
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyExe -PyArgs $pyArgs
-$extras = Get-Extras-Suffix -Corp:$Corp
-Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras $extras -Label "$(if ($Corp) { ' (+ truststore)' } else { '' })"
+$extras = Get-Extras-Suffix -Mcp:$Mcp -Corp:$Corp
+Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras $extras -Label "$(if ($Mcp) { ' (+ MCP SDK)' } else { '' })$(if ($Corp) { ' (+ truststore)' } else { '' })"
 if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue }
 
 # -- 4. sanity check ----------------------------------------------------------
@@ -183,6 +194,16 @@ model:
 sleep:
   mode: thread
   state_path: $storePath
+  # BEDTIME, not a timer: a sleep fires whenever the main model has left a
+  # brief, any hour. Bedtime is when the hippocampus starts counting checks
+  # that find none and, after enough, asks for one. Either a wall-clock time
+  # (local HH:MM)...
+$(if ($SleepAt) { "  at: `"$SleepAt`"" } else { '  # at: "03:30"' })
+  # ...or every N hours after the last sleep (the default, ~20h: not 24, so it drifts through the day).
+$(if ($SleepEvery -gt 0) { "  interval_seconds: $([int]($SleepEvery * 3600))" } else { '  # interval_seconds: 72000' })
+  # The draft cap: attempts per chain before the last is terminal (the reviewer
+  # may then edit on approve; a denial ends the chain). 1-10.
+$(if ($MaxAttempts -gt 0) { "  max_attempts: $MaxAttempts" } else { '  # max_attempts: 3' })
 "@ | Write-SerenTextFile -Path $CfgPath
 Ok "Config written"
 
@@ -217,6 +238,7 @@ Write-Host "  Sleep now:       POST http://${connectHost}:$Port/sleep" -Foregrou
 Write-Host "  Memory:          $MemoryUrl" -ForegroundColor Blue
 if ($ModelUrl) { Write-Host "  Model:           $ModelUrl" -ForegroundColor Blue } else { Write-Host "  Model:           none - mechanical mode" -ForegroundColor Yellow }
 if ($Token) { Write-Host "  Bearer token:    $Token" -ForegroundColor Yellow }
+if ($Mcp)   { Write-Host "  MCP endpoint:    http://${connectHost}:$Port/mcp/" -ForegroundColor Blue }
 Write-Host ""
 Write-Host "  Sleeps every ~20h; tends denied operations every 5 minutes." -ForegroundColor Yellow
 Write-Host "Rip it and win." -ForegroundColor Green
@@ -227,7 +249,7 @@ $doneArgs = @{
     Port        = $Port
     Autostart   = ([bool] $Service)
     Token       = $Token
-    Mcp         = $false
+    Mcp         = ([bool] $Mcp)
     Corp        = ([bool] $Corp)
     Vector      = $false
     Venv        = $VenvDir
