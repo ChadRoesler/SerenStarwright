@@ -438,6 +438,11 @@ class ServiceDef:
     extras: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
+    # Better with, works without (--describe's `recommends`). Wired when
+    # present, never pulled into a run; none present is a yellow line under
+    # the group, never a blocked Next. Chad, 25 Sept 2026: "im a warning
+    # message not a cop."
+    recommends: list[str] = field(default_factory=list)
     params: dict[str, str] = field(default_factory=dict)   # canonical -> native (ps only)
     # Flags that take no value, from --describe's `switches` (bash derives it
     # from `shift ;;` branches, PowerShell from [switch] parameters). An older
@@ -448,6 +453,12 @@ class ServiceDef:
 
     def is_switch(self, flag: str) -> bool:
         return flag in self.switches or (not self.switches and flag in LEGACY_SWITCHES)
+
+    @property
+    def wires(self) -> list[str]:
+        """Every sibling this service is handed the address of: what it
+        requires, then what it recommends. Only `requires` is ever pulled."""
+        return self.requires + [r for r in self.recommends if r not in self.requires]
 
     @property
     def advanced_flags(self) -> list[str]:
@@ -635,6 +646,7 @@ def discover() -> tuple[list[ServiceDef], list[str]]:
                 accent=str(d.get("accent", "") or ""),
                 extras=list(d.get("extras", [])), flags=list(d.get("flags", [])),
                 requires=list(d.get("requires", [])),
+                recommends=list(d.get("recommends", [])),
                 params=dict(d.get("params", {})),
                 switches=list(d.get("switches", [])), script=script))
         except json.JSONDecodeError as e:
@@ -647,7 +659,8 @@ def discover() -> tuple[list[ServiceDef], list[str]]:
 
 
 def resolve_dependencies(selected: set[str], svcs: dict[str, ServiceDef]) -> set[str]:
-    """Transitively pull in whatever the selection requires."""
+    """Transitively pull in whatever the selection requires. What it only
+    recommends is never pulled: a warning, not a cop."""
     out, stack = set(selected), list(selected)
     while stack:
         cur = svcs.get(stack.pop())
@@ -666,12 +679,14 @@ def install_order(selected: set[str], svcs: dict[str, ServiceDef]) -> list[str]:
     Sequential installs make ordering free - you only have to know it. Falls
     back to a stable alphabetical tail if a cycle ever appears, because
     refusing to install is a worse answer than installing in a mediocre order.
+    A recommended sibling ticked into the same run goes first too: the
+    dependent reads its config at install time, so it has to exist by then.
     """
     ordered: list[str] = []
     remaining = set(selected)
     while remaining:
         ready = sorted(n for n in remaining
-                       if not (set(svcs[n].requires) & remaining))
+                       if not (set(svcs[n].wires) & remaining))
         if not ready:                       # cycle - break it, don't hang
             ready = [sorted(remaining)[0]]
         ordered.extend(ready)
@@ -1121,12 +1136,14 @@ def wire_dependencies(selected: list[str], svcs: dict[str, ServiceDef], per_serv
     on argv); one that only takes <short>-url gets the url. The sibling is,
     in order: one installed in this run (its planned config), a member of the
     setup, or the one installed instance on the box. Two candidates and no
-    setup means the person chooses."""
+    setup means the person chooses. A recommended sibling is wired the same
+    way when one is there; when none is, nothing is handed over and the card
+    writes no entry for it."""
     by_label = {r.label: r for r in installed}
     for n in selected:
         svc = svcs[n]
         cfg = per_service.setdefault(n, {})
-        for req in svc.requires:
+        for req in svc.wires:
             short = req.replace("seren-", "", 1)
             cfg_flag, url_flag = f"{short}-config", f"{short}-url"
             if cfg.get(cfg_flag) or cfg.get(url_flag):
@@ -1241,7 +1258,7 @@ def prefill_reinstall(selected: list[str], svcs: dict[str, ServiceDef], per_serv
                 if not flag.endswith("-url") or flag in cfg:
                     continue
                 block = flag[: -len("-url")]
-                if f"seren-{block}" in svc.requires:
+                if f"seren-{block}" in svc.wires:
                     continue                          # a dependency is wired, not copied
                 v = config_value(rec.config, block, "url")
                 if v:
@@ -1302,7 +1319,7 @@ def wired_dependencies(svc: ServiceDef, cfg: dict) -> dict[str, str]:
     """The dependencies Starwright has already wired for this service:
     {"memory": "<config path or url>"}. Their flags need no answer."""
     out: dict[str, str] = {}
-    for req in svc.requires:
+    for req in svc.wires:
         short = req.replace("seren-", "", 1)
         target = cfg.get(f"{short}-config") or cfg.get(f"{short}-url")
         if target:
@@ -1316,7 +1333,13 @@ def dependency_notes(selected: list[str], svcs: dict[str, ServiceDef], per_servi
     out: list[str] = []
     for n in selected:
         short_n = n.replace("seren-", "", 1)
-        for req in svcs[n].requires:
+        # Nothing it recommends is in the run or wired: said, not refused.
+        rec = [r.replace("seren-", "", 1) for r in svcs[n].recommends]
+        wired = wired_dependencies(svcs[n], per_service.get(n, {}))
+        if rec and not any(f"seren-{r}" in selected or r in wired for r in rec):
+            out.append(f"{short_n}: no {' or '.join(rec)} to wire it to - "
+                       f"it installs anyway, with nothing to work with until one is added")
+        for req in svcs[n].wires:
             short = req.replace("seren-", "", 1)
             cfg = per_service.get(n, {})
             target = cfg.get(f"{short}-config") or cfg.get(f"{short}-url")
@@ -1377,7 +1400,10 @@ def previous_install_data(installed: list[InstalledRecord], setups: list["Setup"
         out.append("nothing installed by Starwright on this box yet")
 
     pulled = resolve_dependencies(chosen, svcs) - chosen
-    sat = satisfied_dependencies(pulled, installed, picked)
+    # A recommendation is never pulled, but one the box already has is wired,
+    # so it is named here the same way a satisfied requirement is.
+    recommended = {r for n in chosen if n in svcs for r in svcs[n].recommends} - chosen - pulled
+    sat = satisfied_dependencies(pulled | recommended, installed, picked)
     for n, recs in sorted(sat.items()):
         out.append(f"will be used: {n.replace('seren-', '', 1)} "
                    f"({', '.join(installed_summary(r) for r in recs)})")
@@ -1392,14 +1418,26 @@ def requirement_lines(members: list["ServiceDef"], svcs: dict[str, "ServiceDef"]
                       chosen: set[str]) -> list[str]:
     """'Hippocampus requires Memory to be installed', for each service in a
     group whose requirements are not met yet. Met = installed (in the picked
-    setup, when there is one) or ticked in this run."""
+    setup, when there is one) or ticked in this run.
+
+    A service that only RECOMMENDS gets a line when none of what it
+    recommends is there: the same yellow, in the same place, and Next still
+    goes. One of them is enough to clear it - the callosum works with a
+    Memory alone. Chad, 25 Sept 2026: "im a warning message not a cop."
+    """
     have = {r.service for r in installed if picked is None or r.label in picked.members}
     out = []
+
+    def names(deps: list[str]) -> list[str]:
+        return [svcs[r].display if r in svcs else r.replace("seren-", "", 1) for r in deps]
+
     for s in members:
         unmet = [r for r in s.requires if r not in have and r not in chosen]
         if unmet:
-            names = [svcs[r].display if r in svcs else r.replace("seren-", "", 1) for r in unmet]
-            out.append(f"{s.display} requires {' and '.join(names)} to be installed")
+            out.append(f"{s.display} requires {' and '.join(names(unmet))} to be installed")
+        if s.recommends and not any(r in have or r in chosen for r in s.recommends):
+            out.append(f"{s.display} recommends {' or '.join(names(s.recommends))} - "
+                       f"it installs without, but is better with one")
     return out
 
 
@@ -1419,7 +1457,7 @@ def prefill_from_installed(svc: ServiceDef, cfg: dict, installed: list[Installed
     from the ledger - when exactly one instance is installed. The hippocampus
     needs Memory; if the box has one Memory, --memory-url is its url. Two
     Memories means the person chooses, so nothing is guessed."""
-    for req in svc.requires:
+    for req in svc.wires:
         flag = req.replace("seren-", "", 1) + "-url"
         if flag in svc.flags and not cfg.get(flag):
             recs = [r for r in installed_for(req, installed) if r.port]
@@ -3315,7 +3353,7 @@ def main() -> None:
                  if IS_BUNDLED else ""))
         for s in services:
             print(f"{s.group:10} {s.name:24} :{s.default_port:<6} "
-                  f"extras={s.extras} requires={s.requires}")
+                  f"extras={s.extras} requires={s.requires} recommends={s.recommends}")
         for p in problems:
             print(f"PROBLEM: {p}", file=sys.stderr)
         if not services:

@@ -53,6 +53,12 @@ jobs:
       - name: whisper on a node - binary, model, start/stop, the Observatory manifest
         run: bash SerenStarwright/nodes/tests/test-whisper-install.sh
 
+      - name: llama on a node - the model setting, start/stop, the Observatory manifest
+        run: bash SerenStarwright/nodes/tests/test-llama-install.sh
+
+      - name: kokoro on a node - uvicorn from the repo root, cpu/cuda, the Observatory manifest
+        run: bash SerenStarwright/nodes/tests/test-kokoro-install.sh
+
       - name: --local installs from a dev wheelhouse (real pip, no network)
         run: bash SerenStarwright/services/tests/test-local-wheelhouse.sh
 
@@ -70,6 +76,12 @@ jobs:
 
       - name: the hippocampus card writes bedtime and the draft cap, refuses bad values
         run: bash SerenStarwright/services/tests/test-hippocampus-sleep-flags.sh
+
+      - name: service manifests go into the install's own roster
+        run: bash SerenStarwright/services/tests/test-manifests-dir.sh
+
+      - name: the callosum card writes only the stores it was given (recommends, not requires)
+        run: bash SerenStarwright/services/tests/test-callosum-stores.sh
 
       - name: bash -n every script
         run: |
@@ -97,7 +109,7 @@ jobs:
           assert rows, "no services described"
           req = {"schema_version", "name", "display", "description", "group",
                  "package", "default_host", "default_port", "extras", "flags",
-                 "requires", "accent", "switches"}
+                 "requires", "recommends", "accent", "switches"}
           for d in rows:
               # a switch is a flag; --no-updates is one on every card
               assert set(d["switches"]) <= set(d["flags"]), "%s: switches not in flags" % d["name"]

@@ -1109,6 +1109,42 @@ venv_python() {
 }
 
 # ═════════════════════════════════════════════════════════════
+# pid_file plumbing shared by whisper, llama and Kokoro
+# ═════════════════════════════════════════════════════════════
+#
+# The Observatory runs a start script as `bash start_<name>.sh` - no login
+# shell, so the LD_LIBRARY_PATH foundation puts in ~/.bashrc is not there. Each
+# start script sets its own, and it has to be the same path foundation wrote
+# for this platform: the Xavier's CUDA 12.2 only works through the compat shim
+# (R35 ships an older driver), which plain /usr/local/cuda/lib64 does not
+# include. Mirrors the .bashrc lines in <platform>/foundation.sh.
+seren_cuda_ld_path() {
+    case "${PLATFORM:-}" in
+        xavier) echo "/usr/local/cuda-12.2/compat:/usr/local/cuda-12.2/lib64" ;;
+        nano)   echo "/usr/local/cuda-12.6/lib64" ;;
+        *)      echo "/usr/local/cuda/lib64" ;;
+    esac
+}
+
+# _seren_write_stop_script NAME USER_HOME LOGS - ~/stop_<name>.sh. The same for
+# every pid_file service: TERM, ten seconds' grace, KILL, clear the pid. A
+# missing pid file is "not running", which is success.
+_seren_write_stop_script() {
+    local name="$1" home="$2" logs="$3"
+    _as_target tee "$home/stop_${name}.sh" > /dev/null <<STOPEOF
+#!/bin/bash
+# stop_${name}.sh - written by seren-prepare-node (${name}).
+PID="$logs/${name}.pid"
+[ -f "\$PID" ] || exit 0
+kill "\$(cat "\$PID")" 2>/dev/null
+for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "\$(cat "\$PID")" 2>/dev/null || break; sleep 1; done
+kill -9 "\$(cat "\$PID")" 2>/dev/null
+rm -f "\$PID"
+STOPEOF
+    chmod +x "$home/stop_${name}.sh"
+}
+
+# ═════════════════════════════════════════════════════════════
 # Whisper - speech to text (whisper.cpp's whisper-server)
 # ═════════════════════════════════════════════════════════════
 #
@@ -1167,12 +1203,15 @@ seren_install_whisper() {
     local SUM; SUM="$(sha256sum "$MODEL_PATH" | awk '{print $1}')"
 
     # Start / stop: the pid_file lifecycle the Observatory drives. CUDA's
-    # runtime libraries are found through LD_LIBRARY_PATH, as for llama-server.
+    # runtime libraries are found through LD_LIBRARY_PATH, as for llama-server
+    # (seren_cuda_ld_path - this said /usr/local/cuda/lib64 on every platform,
+    # which on a Xavier leaves out the compat shim its CUDA 12.2 needs).
+    local LDP; LDP="$(seren_cuda_ld_path)"
     _as_target tee "$USER_HOME/start_whisper.sh" > /dev/null <<STARTEOF
 #!/bin/bash
 # start_whisper.sh - written by seren-prepare-node (whisper). Started and
 # stopped by the Observatory through its manifest (~/.seren/services/whisper.json).
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\${LD_LIBRARY_PATH:-}
+export LD_LIBRARY_PATH=$LDP:\${LD_LIBRARY_PATH:-}
 PID="$LOGS/whisper.pid"
 if [ -f "\$PID" ] && kill -0 "\$(cat "\$PID")" 2>/dev/null; then echo "whisper already running"; exit 0; fi
 nohup "$BIN_DIR/whisper-server" \\
@@ -1182,17 +1221,8 @@ nohup "$BIN_DIR/whisper-server" \\
   -t "\$(nproc)" >> "$LOGS/whisper.log" 2>&1 &
 echo \$! > "\$PID"
 STARTEOF
-    _as_target tee "$USER_HOME/stop_whisper.sh" > /dev/null <<STOPEOF
-#!/bin/bash
-# stop_whisper.sh - written by seren-prepare-node (whisper).
-PID="$LOGS/whisper.pid"
-[ -f "\$PID" ] || exit 0
-kill "\$(cat "\$PID")" 2>/dev/null
-for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "\$(cat "\$PID")" 2>/dev/null || break; sleep 1; done
-kill -9 "\$(cat "\$PID")" 2>/dev/null
-rm -f "\$PID"
-STOPEOF
-    chmod +x "$USER_HOME/start_whisper.sh" "$USER_HOME/stop_whisper.sh"
+    chmod +x "$USER_HOME/start_whisper.sh"
+    _seren_write_stop_script whisper "$USER_HOME" "$LOGS"
 
     write_service_manifest "whisper" \
         service_type=pid_file \
@@ -1212,8 +1242,234 @@ STOPEOF
     if "$BIN_DIR/whisper-server" --help >/dev/null 2>&1; then
         log "whisper-server runs; start it with ~/start_whisper.sh (or from Lodestar)"
     else
-        warn "whisper-server did not answer --help - check LD_LIBRARY_PATH (/usr/local/cuda/lib64)"
+        warn "whisper-server did not answer --help - check LD_LIBRARY_PATH ($LDP)"
     fi
+}
+
+# ═════════════════════════════════════════════════════════════
+# llama.cpp - the inference server (llama-server)
+# ═════════════════════════════════════════════════════════════
+#
+# Chad, 27 Sept 2026: llama and Kokoro were installed on every node and
+# registered on none, so the Observatory listed nothing and Lodestar could not
+# start or stop either. The punch-list row was "write_service_manifest exists,
+# nobody calls it for llama or Kokoro". This is llama's half; Kokoro's follows.
+#
+# ONE manifest, and the model is a SETTING, not an identity. A node serves one
+# model at a time and swapping it is the everyday act, so "llama" is the
+# service and ~/seren-llama.env says what it serves. The alternative - a
+# manifest per model - makes each swap an install, and leaves the Observatory
+# listing three llamas on a box that can only run one.
+#
+# ~/seren-llama.env is written ONCE and is then the user's: a re-install (and
+# every -l is one) keeps it, and --llama-model changes that one line and
+# nothing else. Overwriting it would quietly undo the last model swap every
+# time anyone added a component. The port is NOT in it: the manifest carries
+# the port too, and one number in two files is two numbers.
+#
+# Nothing is downloaded. Models are big, many and a choice; the Observatory's
+# /service/llama/models lists what is in models_dir, and a start with no model
+# there fails saying which file it wanted and where to set it.
+#
+# This absorbed spark/llama.sh's ~/start-llama-spark.sh: its sizes (32k
+# context, two slots, q8_0 KV cache) are now the Spark's defaults here.
+#
+#   seren_install_llama CTX PARALLEL [EXTRA_ARGS]    (per-platform defaults)
+#     LLAMA_MODEL    --llama-model: a .gguf path, or a bare name inside the
+#                    models dir. Unset keeps what the env file already says.
+#     LLAMA_PORT     default 8090 (where the chat side has always found it)
+seren_install_llama() {
+    local def_ctx="$1" def_parallel="$2" def_extra="${3:-}"
+    local USER_HOME="/home/$TARGET_USER"
+    [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
+    local BIN_DIR="$USER_HOME/llama.cpp/build/bin"
+    local PORT="${LLAMA_PORT:-8090}"
+    local MODELS="$USER_HOME/models"
+    [ -d /mnt/nvme ] && [ -z "${SEREN_TEST_HOME:-}" ] && MODELS="/mnt/nvme/models"
+    local LOGS="$USER_HOME/seren-logs"
+    local ENVF="$USER_HOME/seren-llama.env"
+    local LDP; LDP="$(seren_cuda_ld_path)"
+
+    if [ -z "${STAGED_LLAMA_BIN:-}" ] || [ ! -f "$STAGED_LLAMA_BIN" ]; then
+        fail "Staged llama-server binary missing. Prebuilts/build phase didn't run or failed."
+        fail "Expected at: ${STAGED_LLAMA_BIN:-<unset>}"
+        return 1
+    fi
+    _as_target mkdir -p "$BIN_DIR" "$MODELS" "$LOGS"
+    _as_target cp -f "$STAGED_LLAMA_BIN" "$BIN_DIR/llama-server"
+    chmod +x "$BIN_DIR/llama-server"
+    log "llama-server installed at $BIN_DIR/llama-server"
+
+    # A bare name means "the one in the models dir" - the same words the
+    # Observatory's model list uses.
+    local want="${LLAMA_MODEL:-}"
+    [ -n "$want" ] && [[ "$want" != */* ]] && want="$MODELS/$want"
+
+    if [ ! -f "$ENVF" ]; then
+        # First install: the model asked for, else the only .gguf here, else a
+        # placeholder the start script will refuse by name.
+        if [ -z "$want" ]; then
+            local found=("$MODELS"/*.gguf)
+            if [ ${#found[@]} -eq 1 ] && [ -f "${found[0]}" ]; then want="${found[0]}"; fi
+        fi
+        [ -n "$want" ] || want="$MODELS/model.gguf"
+        {
+            echo "# ~/seren-llama.env - what ~/start_llama.sh serves. Written once by"
+            echo "# seren-prepare-node (llama) and yours from then on: a re-install keeps it,"
+            echo "# and --llama-model changes the LLAMA_MODEL line and nothing else."
+            echo "# Edit, then restart llama from Lodestar (or ~/stop_llama.sh; ~/start_llama.sh)."
+            echo "# The port lives in ~/.seren/services/llama.json, not here."
+            printf 'LLAMA_MODEL=%q\n' "$want"
+            printf 'LLAMA_CTX=%q\n' "$def_ctx"
+            echo "LLAMA_NGL=999        # layers on the GPU; 999 = all of them"
+            printf 'LLAMA_PARALLEL=%q\n' "$def_parallel"
+            # Quoted by hand, not %q: these are our own flags, and a file meant
+            # for editing should read '--cache-type-k q8_0', not '\ '-escaped.
+            echo "LLAMA_EXTRA_ARGS=\"$def_extra\""
+        } | _as_target tee "$ENVF" > /dev/null
+        log "llama settings written: $ENVF"
+    elif [ -n "$want" ]; then
+        local tmp; tmp="$(_as_target mktemp "$ENVF.XXXXXX")"
+        awk -v line="$(printf 'LLAMA_MODEL=%q' "$want")" \
+            'BEGIN{d=0} /^LLAMA_MODEL=/{print line; d=1; next} {print} END{if(!d) print line}' \
+            "$ENVF" | _as_target tee "$tmp" > /dev/null
+        _as_target mv "$tmp" "$ENVF"
+        log "llama model set in $ENVF: $want"
+    else
+        log "llama settings kept: $ENVF (--llama-model changes the model)"
+    fi
+    # shellcheck disable=SC1090
+    local shown; shown="$( . "$ENVF" 2>/dev/null; echo "${LLAMA_MODEL:-}")"
+    [ -f "$shown" ] || warn "No model at $shown yet - put a .gguf there, or set LLAMA_MODEL in $ENVF"
+
+    _as_target tee "$USER_HOME/start_llama.sh" > /dev/null <<STARTEOF
+#!/bin/bash
+# start_llama.sh - written by seren-prepare-node (llama). Started and stopped by
+# the Observatory through its manifest (~/.seren/services/llama.json). WHAT it
+# serves is $ENVF - edit that, not this.
+export LD_LIBRARY_PATH=$LDP:\${LD_LIBRARY_PATH:-}
+PID="$LOGS/llama.pid"
+if [ -f "\$PID" ] && kill -0 "\$(cat "\$PID")" 2>/dev/null; then echo "llama already running"; exit 0; fi
+ENVF="$ENVF"
+[ -f "\$ENVF" ] || { echo "no \$ENVF - re-run seren-prepare-node.sh -l" >&2; exit 1; }
+. "\$ENVF"
+[ -f "\${LLAMA_MODEL:-}" ] || { echo "no model at '\${LLAMA_MODEL:-}' - set LLAMA_MODEL in \$ENVF" >&2; exit 1; }
+# LLAMA_EXTRA_ARGS is a list of flags, so it is split on purpose.
+# shellcheck disable=SC2086
+nohup "$BIN_DIR/llama-server" \\
+  --model "\$LLAMA_MODEL" \\
+  --host 0.0.0.0 --port $PORT \\
+  --ctx-size "\${LLAMA_CTX:-8192}" \\
+  --n-gpu-layers "\${LLAMA_NGL:-999}" \\
+  --parallel "\${LLAMA_PARALLEL:-1}" \\
+  --jinja \${LLAMA_EXTRA_ARGS:-} >> "$LOGS/llama.log" 2>&1 &
+echo \$! > "\$PID"
+STARTEOF
+    chmod +x "$USER_HOME/start_llama.sh"
+    _seren_write_stop_script llama "$USER_HOME" "$LOGS"
+
+    # models_dir is what the Observatory's /service/llama/models lists. No
+    # "model" key: the env file is the truth for that, and a copy here would be
+    # wrong after the first swap.
+    write_service_manifest "llama" \
+        service_type=pid_file \
+        implementation=llama.cpp \
+        port="$PORT" \
+        endpoint=/v1/chat/completions \
+        health_path=/health \
+        start_script="$USER_HOME/start_llama.sh" \
+        stop_script="$USER_HOME/stop_llama.sh" \
+        pid_path="$LOGS/llama.pid" \
+        log_path="$LOGS/llama.log" \
+        --service-specific models_dir="$MODELS" \
+        --service-specific config_path="$ENVF" \
+        --service-specific device=cuda
+
+    if "$BIN_DIR/llama-server" --version 2>&1 | head -3; then
+        log "llama-server runs; start it with ~/start_llama.sh (or from Lodestar)"
+    else
+        warn "llama-server did not answer --version - check LD_LIBRARY_PATH ($LDP)"
+    fi
+}
+
+# ═════════════════════════════════════════════════════════════
+# Kokoro - text to speech (Kokoro-FastAPI), registered for the Observatory
+# ═════════════════════════════════════════════════════════════
+#
+# The install itself stays in <platform>/kokoro.sh - the dependency pins are
+# genuinely per platform. What is shared is the part that was missing
+# (27 Sept 2026, with llama above): start/stop scripts and a manifest.
+#
+# HOW Kokoro-FastAPI starts, from its own start-gpu.sh: uvicorn api.src.main:app
+# from the repo root with the repo and api/ on PYTHONPATH. The installers used
+# to log "uvicorn src.main:app", which is not a module in that repo.
+#
+# MODEL_DIR is absolute on purpose. Kokoro joins it onto api/, and an absolute
+# path wins that join - so it points at where the installers actually put the
+# weights (src/models/v1_0 at the repo root), not at api/src/models where
+# upstream's own script downloads them and ours never did. The voices ship in
+# the repo, at api/src/voices/v1_0; that is also what the Observatory's
+# /service/kokoro/voices lists, through serviceSpecific.voices_path.
+#
+#   seren_register_kokoro DEVICE     cpu | cuda
+#     cpu on the Jetsons: the venv's torch is PyPI's aarch64 CPU build, and
+#     Kokoro on the CPU leaves the unified memory to llama-server (the reason
+#     the old start_kokoro.sh hid the GPU). cuda on the Spark - USE_GPU on,
+#     and Kokoro itself falls back to the CPU if torch cannot see CUDA.
+#     KOKORO_PORT   default 8880
+seren_register_kokoro() {
+    local device="${1:-cpu}"
+    local USER_HOME="/home/$TARGET_USER"
+    [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
+    local DIR="$USER_HOME/Kokoro-FastAPI"
+    local VENV="$USER_HOME/seren-venvs/kokoro"
+    local PORT="${KOKORO_PORT:-8880}"
+    local LOGS="$USER_HOME/seren-logs"
+    local VOICES="$DIR/api/src/voices/v1_0"
+    local use_gpu=false hide_gpu='export CUDA_VISIBLE_DEVICES=""'
+    if [ "$device" = cuda ]; then use_gpu=true; hide_gpu="# (the GPU is visible - device cuda)"; fi
+
+    if [ ! -d "$DIR" ] || [ ! -x "$VENV/bin/python" ]; then
+        fail "Kokoro is not where its start script would look: $DIR, $VENV"
+        return 1
+    fi
+    _as_target mkdir -p "$LOGS"
+
+    _as_target tee "$USER_HOME/start_kokoro.sh" > /dev/null <<STARTEOF
+#!/bin/bash
+# start_kokoro.sh - written by seren-prepare-node (kokoro). Started and stopped
+# by the Observatory through its manifest (~/.seren/services/kokoro.json).
+PID="$LOGS/kokoro.pid"
+if [ -f "\$PID" ] && kill -0 "\$(cat "\$PID")" 2>/dev/null; then echo "kokoro already running"; exit 0; fi
+cd "$DIR" || exit 1
+export PYTHONPATH="$DIR:$DIR/api"
+export MODEL_DIR="$DIR/src/models"
+export VOICES_DIR="$VOICES"
+export WEB_PLAYER_PATH="$DIR/web"
+export USE_GPU=$use_gpu
+$hide_gpu
+nohup "$VENV/bin/python" -m uvicorn api.src.main:app \\
+  --host 0.0.0.0 --port $PORT >> "$LOGS/kokoro.log" 2>&1 &
+echo \$! > "\$PID"
+STARTEOF
+    chmod +x "$USER_HOME/start_kokoro.sh"
+    _seren_write_stop_script kokoro "$USER_HOME" "$LOGS"
+
+    write_service_manifest "kokoro" \
+        service_type=pid_file \
+        implementation=kokoro-fastapi \
+        port="$PORT" \
+        endpoint=/v1/audio/speech \
+        health_path=/health \
+        start_script="$USER_HOME/start_kokoro.sh" \
+        stop_script="$USER_HOME/stop_kokoro.sh" \
+        pid_path="$LOGS/kokoro.pid" \
+        log_path="$LOGS/kokoro.log" \
+        venv_path="$VENV" \
+        --service-specific voices_path="$VOICES" \
+        --service-specific model_dir="$DIR/src/models" \
+        --service-specific device="$device"
+    log "Kokoro registered; start it with ~/start_kokoro.sh (or from Lodestar), port $PORT"
 }
 
 # ═════════════════════════════════════════════════════════════

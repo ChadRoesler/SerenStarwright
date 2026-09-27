@@ -211,17 +211,26 @@ seren_switches_from_self() {
 # no second edit.
 # SVC_REQUIRES: space-separated service names this one needs ALREADY INSTALLED.
 # Declared, not guessed - the only honest source is the config the installer
-# writes. seren-corpus-callosum writes a config pre-wired to memory:7420 and
-# loci:7422, so it genuinely requires both; nothing else currently does.
+# writes. The hippocampus cannot work without a Memory, so it requires one.
 #
 # A front-end uses this two ways: warn/auto-select when a dependency is missing,
 # and topologically sort the install queue so dependencies come up first.
 # Sequential installs make the ordering free - you just have to know it.
+#
+# SVC_RECOMMENDS: service names this one is BETTER WITH but works without. A
+# front-end wires one that is present exactly as it wires a requirement, and
+# installs it first when both are in a run, but never pulls one in; with none
+# of them present it warns and carries on. The corpus callosum fans n stores -
+# one Memory and one Loci is the good shape, either alone works, neither still
+# installs. Chad, 25 Sept 2026: "im a warning message not a cop."
 seren_describe() {
-  local extras_json="" flags_json="" requires_json="" f
+  local extras_json="" flags_json="" requires_json="" recommends_json="" f
   local flags="${SVC_FLAGS:-$(seren_flags_from_self)}"
   for f in ${SVC_REQUIRES:-}; do
     requires_json+="${requires_json:+,}\"$(_json_esc "$f")\""
+  done
+  for f in ${SVC_RECOMMENDS:-}; do
+    recommends_json+="${recommends_json:+,}\"$(_json_esc "$f")\""
   done
   local extras="${SVC_EXTRAS:-}"
   if [[ -z "$extras" ]]; then
@@ -259,6 +268,7 @@ seren_describe() {
   printf ',"flags":[%s]'        "$flags_json"
   printf ',"switches":[%s]'     "$switches_json"
   printf ',"requires":[%s]'     "$requires_json"
+  printf ',"recommends":[%s]'   "$recommends_json"
   printf '}\n'
 }
 

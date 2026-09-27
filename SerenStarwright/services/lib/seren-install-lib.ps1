@@ -200,7 +200,14 @@ function Get-SerenDescribe {
         # on a Windows box installed a bridge to nothing - the exact failure the
         # bash side declares SVC_REQUIRES to prevent, and which the test suite
         # names as its reason for existing.
-        [string[]] $Requires = @()
+        [string[]] $Requires = @(),
+        # Service names this one is BETTER WITH but works without. Twin of
+        # SVC_RECOMMENDS: Starwright wires one that is present exactly as it
+        # wires a requirement, but never pulls one into a run, and with none of
+        # them present it warns and carries on. The corpus callosum fans n
+        # stores; one of each is the good shape, either alone works.
+        # Chad, 25 Sept 2026: "im a warning message not a cop."
+        [string[]] $Recommends = @()
     )
     $flags  = @(Get-SerenFlagsFromSelf -ScriptPath $ScriptPath)
     if ($Extras.Count -gt 0) {
@@ -251,6 +258,7 @@ function Get-SerenDescribe {
         # walks the characters.
         switches       = @($switches)
         requires       = @($Requires)
+        recommends     = @($Recommends)
         params         = $params
     }
     # Write-Output is CORRECT here, unlike in Send-SerenEvent, and the

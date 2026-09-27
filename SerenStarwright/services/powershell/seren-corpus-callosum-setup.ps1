@@ -35,9 +35,12 @@ param(
   [switch] $LocalSystem,
   # The stores it fans. A URL says where; a CONFIG PATH says where AND presents
   # that service's bearer, read from its own file - a token never crosses argv.
-  [string] $MemoryUrl    = "http://127.0.0.1:7420",
+  # Empty = not given, and a store not given is not written: these used to
+  # default to memory:7420 + loci:7422, so a Memory-only callosum carried a
+  # Loci entry nobody had installed and reported it dead on every search.
+  [string] $MemoryUrl    = "",
   [string] $MemoryConfig = "",
-  [string] $LociUrl      = "http://127.0.0.1:7422",
+  [string] $LociUrl      = "",
   [string] $LociConfig   = "",
   [string] $Instance  = "",
   # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
@@ -84,11 +87,11 @@ if ($Describe) {
         Accent      = '#9d7cff'
         DefaultHost = $SccHost
         DefaultPort = $Port
-        # Mirrors SVC_REQUIRES in seren-corpus-callosum-setup.sh. The config
-        # written below is pre-wired to memory:7420 and loci:7422, so this
-        # genuinely cannot work without both - installing it alone builds a
-        # bridge to nothing.
-        Requires    = @('seren-memory', 'seren-loci')
+        # Mirrors SVC_RECOMMENDS in seren-corpus-callosum-setup.sh.
+        # Recommended, not required: it fans n stores, one Memory and one
+        # Loci is the good shape, either alone works, and with neither it
+        # still installs. Chad, 25 Sept 2026: "im a warning message not a cop."
+        Recommends  = @('seren-memory', 'seren-loci')
     }
     Get-SerenDescribe @describeArgs
     exit 0
@@ -173,6 +176,28 @@ if ($LociConfig) {
     $lociTokenLines = Get-SerenSiblingTokenLines -Sib $sib -Indent "      "
     Ok "Loci: $LociUrl (from $LociConfig$(if ($lociTokenLines) { ', with its bearer' } else { '' }))"
 }
+if ($MemoryConfig -and -not $MemoryUrl) { Warn "Memory: $MemoryConfig gave no address - no memory store written" }
+if ($LociConfig -and -not $LociUrl) { Warn "Loci: $LociConfig gave no address - no loci store written" }
+# Only the stores it was given. A store with no address is left out rather
+# than guessed at a default port: an entry for a store that is not there is
+# a dead store on every search.
+$storeLines = ""; $fanned = @()
+if ($MemoryUrl) {
+    $storeLines += "    - name: memory`n      type: seren_memory`n      url: $MemoryUrl`n$memoryTokenLines"
+    $fanned += "memory $MemoryUrl"
+}
+if ($LociUrl) {
+    $storeLines += "    - name: loci`n      type: seren_loci`n      url: $LociUrl`n$lociTokenLines"
+    $fanned += "loci $LociUrl"
+}
+# With neither, the block says so and has no stores: key - so a reinstall
+# that was given nothing keeps the stores the last config had (keep-config
+# restores a missing key) instead of wiping them.
+$federation = if ($storeLines) { "  stores:`n$storeLines" } else {
+    "  # None was given at install (-MemoryUrl/-MemoryConfig, -LociUrl/`n" +
+    "  # -LociConfig). A reinstall keeps the stores the last config had; add`n" +
+    "  # one here under stores, or from the viewer.`n"
+}
 $tlsBlock = if ($Corp) {
   "`ntls:`n  trust_system_store: true"
 } else { "" }
@@ -185,16 +210,15 @@ server:
   bearer_token: "$Token"
 
 federation:
-  stores:
-    - name: memory
-      type: seren_memory
-      url: $MemoryUrl
-$memoryTokenLines    - name: loci
-      type: seren_loci
-      url: $LociUrl
-$lociTokenLines$tlsBlock
+$federation$tlsBlock
 "@ | Write-SerenTextFile -Path $CfgPath
-Ok "Config written (fanning $MemoryUrl + $LociUrl)"
+if ($fanned.Count -gt 0) {
+    Ok "Config written (fanning $($fanned -join ' + '))"
+} else {
+    Ok "Config written"
+    # A warning, not a refusal: it installs, and a store can be added later.
+    Warn "No Memory or Loci was given - the callosum is installed but fans across nothing until a store is added (-MemoryUrl/-MemoryConfig, -LociUrl/-LociConfig, or its viewer)"
+}
 
 if ($NoUpdates) {
     # Update checking is ON by default across the Seren family: it asks the

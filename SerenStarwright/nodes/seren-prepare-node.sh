@@ -23,7 +23,7 @@
 #   bash seren-prepare-node.sh [SERVICE FLAGS] [OPTIONS]
 #
 # Service flags:
-#   -l, --llama       Install llama.cpp inference server
+#   -l, --llama       Install llama.cpp inference server (--llama-model PATH|NAME)
 #   -k, --kokoro      Install Kokoro-FastAPI TTS
 #   -w, --whisper     Install whisper.cpp speech to text (--whisper-model NAME)
 #   -c, --comfyui     Install ComfyUI image generation
@@ -110,6 +110,8 @@ TRIM_OS=false
 WIPE_NVME=false
 
 INSTALL_LLAMA=false
+# Empty means "leave ~/seren-llama.env's model as it is" - see seren_install_llama.
+LLAMA_MODEL=""
 INSTALL_KOKORO=false
 INSTALL_WHISPER=false
 WHISPER_MODEL=""
@@ -127,13 +129,16 @@ Usage: $0 [SERVICE FLAGS] [OPTIONS]
 
 Service flags (combine freely):
   -l, --llama       Install llama.cpp inference server
+      --llama-model PATH|NAME  the .gguf it serves (a bare NAME is looked up in
+                        the models dir). Written to ~/seren-llama.env; omit it
+                        and a re-install keeps the model already set there.
   -k, --kokoro      Install Kokoro-FastAPI TTS
   -w, --whisper     Install whisper.cpp speech to text
       --whisper-model NAME  base.en / small.en / large-v3-turbo ... (default per platform)
   -c, --comfyui     Install ComfyUI image generation
   -d, --chromadb    Install ChromaDB vector store
       --coral       Install Coral M.2 TPU support
-      --all         Install llama + kokoro + comfyui + chromadb (NOT coral)
+      --all         Install llama + kokoro + whisper + comfyui + chromadb (NOT coral)
 
 Base prep (OS trim, CUDA, NVMe, sudoers - the slow, machine-wide part):
       --prep            Run base + foundation prep even if already done
@@ -174,6 +179,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -l|--llama)    INSTALL_LLAMA=true; shift ;;
+        --llama-model) LLAMA_MODEL="$2"; shift 2 ;;
         -k|--kokoro)   INSTALL_KOKORO=true; shift ;;
         -w|--whisper)  INSTALL_WHISPER=true; shift ;;
         --whisper-model) WHISPER_MODEL="$2"; shift 2 ;;
@@ -645,6 +651,7 @@ fi
 if $INSTALL_LLAMA; then
     # shellcheck disable=SC1091
     source "$PLATFORM_DIR/llama.sh"
+    export LLAMA_MODEL
     run_service "Service — llama.cpp" install_llama
 fi
 
@@ -704,8 +711,8 @@ echo "" >&3
     # msmoe was missing from this list while being installable, so a run that
     # did nothing else reported an empty "Installed components" and looked like
     # a no-op.
-    $INSTALL_LLAMA    && echo "    ✓ llama.cpp"
-    $INSTALL_KOKORO   && echo "    ✓ Kokoro-FastAPI"
+    $INSTALL_LLAMA    && echo "    ✓ llama.cpp (port ${LLAMA_PORT:-8090}, model set in ~/seren-llama.env)"
+    $INSTALL_KOKORO   && echo "    ✓ Kokoro-FastAPI (text to speech, port ${KOKORO_PORT:-8880})"
     $INSTALL_WHISPER  && echo "    ✓ whisper.cpp (speech to text, port ${WHISPER_PORT:-8081})"
     $INSTALL_COMFYUI  && echo "    ✓ ComfyUI"
     $INSTALL_CHROMADB && echo "    ✓ ChromaDB"
