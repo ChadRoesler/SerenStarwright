@@ -529,6 +529,27 @@ try {
     $global:SerenRoot = $null; $global:SerenSvcSuffix = $null; $global:SerenLogDir = $null
 }
 
+# -- the hippocampus card: bedtime and the draft cap (26 Sept 2026) ---------------
+# They existed in the config and no card wrote them. A bad value must be
+# refused with its reason before anything is installed.
+Section "hippocampus card: bedtime and the draft cap"
+$card = Join-Path $ScriptDir "services\powershell\seren-hippocampus-setup.ps1"
+$d = & $card -Describe | ConvertFrom-Json
+foreach ($f in "sleep-at", "sleep-every", "max-attempts") {
+    if ($d.flags -contains $f) { Good "-Describe advertises $f" } else { Bad "-Describe is missing $f" }
+}
+foreach ($case in @(@{a = @("-SleepAt", "25:00"); w = "HH:MM"}, @{a = @("-SleepEvery", "0.05"); w = "ten minutes"},
+                    @{a = @("-MaxAttempts", "11"); w = "1-10"})) {
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $card) + $case.a
+    # the engine running this check, so 5.1 is tested by 5.1 and 7 by 7
+    $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -and $out -match [regex]::Escape($case.w)) { Good "$($case.a -join ' ') is refused ($($case.w))" }
+    else { Bad "$($case.a -join ' ') was not refused: $out" }
+}
+$src = [System.IO.File]::ReadAllText($card)
+if ($src -match "# at: ""03:30""" -and $src -match "# max_attempts: 3" -and $src -match "# interval_seconds: 72000") {
+    Good "the sleep block shows all three, commented with their defaults when not given" } else { Bad "sleep block defaults missing" }
+
 # -- summary ------------------------------------------------------------------
 Write-Host ""
 Write-Host "=========================================="
