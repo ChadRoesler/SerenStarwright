@@ -265,7 +265,7 @@ them. `verify-powershell.ps1` catches it.
 
 ## License
 
-GPL-3.0. Same as the rest of the Seren stack.
+AGPL-3.0-or-later. Same as the rest of the Seren stack.
 
 Rip it and win. 🌭🔧
 
