@@ -185,7 +185,9 @@ $VECTOR && EXTRAS_DESC+=" + sqlite-vec + sentence-transformers/torch"
 # ============================================================================
 #  PHASE 1: find Python
 # ============================================================================
-step "Finding a usable Python (3.10-3.12)"
+# Same rule as find_python in seren-install-lib.sh: prefer 3.12-3.10, then any
+# newer 3.x (the 3.10-3.12 cap was lifted 27 Sept 2026).
+step "Finding a usable Python (3.10+, preferring 3.12-3.10)"
 PYBIN=""
 for cand in python3.12 python3.11 python3.10 python3 python; do
   if command -v "$cand" >/dev/null 2>&1; then
@@ -193,7 +195,14 @@ for cand in python3.12 python3.11 python3.10 python3 python; do
     case "$ver" in 3.10|3.11|3.12) PYBIN="$cand"; break ;; esac
   fi
 done
-[[ -n "$PYBIN" ]] || die "No Python 3.10-3.12 found. Install python3.12 + python3.12-venv."
+if [[ -z "$PYBIN" ]]; then
+  for cand in python3.14 python3.13 python3 python; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      "$cand" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null && { PYBIN="$cand"; break; }
+    fi
+  done
+fi
+[[ -n "$PYBIN" ]] || die "No Python 3.10 or newer found. Install python3.12 + python3.12-venv."
 PYVER="$("$PYBIN" -c 'import sys; print("%d.%d.%d"%sys.version_info[:3])')"
 ok "Using $PYBIN (Python $PYVER)"
 

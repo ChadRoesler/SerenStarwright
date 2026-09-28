@@ -101,7 +101,7 @@ Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenMargin setup (Windows)" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 
-# -- 1. find Python (3.10-3.12) -----------------------------------------------
+# -- 1. find Python (3.10+) ---------------------------------------------------
 $pyInfo = Find-Python
 $global:pyInfo = $pyInfo
 

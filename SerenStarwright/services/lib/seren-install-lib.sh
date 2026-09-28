@@ -291,7 +291,11 @@ find_upward() {
   return 1
 }
 
-# -- find_python - locate Python 3.10-3.12 ------------------------------------
+# -- find_python - locate Python 3.10+ ----------------------------------------
+# Prefers 3.12, 3.11, 3.10 (the versions every service has run on longest),
+# then takes any newer 3.x. The window was 3.10-3.12 until 27 Sept 2026, when
+# the last caps (torch for Loci [vector], chromadb for Memory) were lifted: the
+# suites pass on 3.14 with every extra.
 find_python() {
   local PYBIN=""
   for cand in python3.12 python3.11 python3.10 python3 python; do
@@ -301,13 +305,19 @@ find_python() {
     fi
   done
   if [[ -z "$PYBIN" ]]; then
-    die "No Python 3.10-3.12 found.
+    for cand in python3.14 python3.13 python3 python; do
+      if command -v "$cand" >/dev/null 2>&1; then
+        "$cand" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null && { PYBIN="$cand"; break; }
+      fi
+    done
+  fi
+  if [[ -z "$PYBIN" ]]; then
+    die "No Python 3.10 or newer found.
   Install one, e.g.:
     macOS:          brew install python@3.12
     Debian/Ubuntu:  sudo apt install python3.12 python3.12-venv
     Fedora:         sudo dnf install python3.12
-    Arch:           sudo pacman -S python
-  (Avoid 3.13+ for now - some dependencies can't build there yet.)"
+    Arch:           sudo pacman -S python"
   fi
   PYVER="$("$PYBIN" -c 'import sys; print("%d.%d.%d"%sys.version_info[:3])')"
   ok "Using $PYBIN (Python $PYVER)"

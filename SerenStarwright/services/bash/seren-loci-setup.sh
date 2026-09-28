@@ -137,8 +137,8 @@ echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenLoci setup (macOS)${NC}" || echo -e "${G}  SerenLoci setup (Linux)${NC}"
 echo -e "${G}==========================================${NC}"
 
-# -- 1. find Python (3.10-3.12; torch in [vector] needs 3.12 at most) ---------
-PYBIN="$(find_python)"   # lib caps at 3.12
+# -- 1. find Python (3.10+) ---------------------------------------------------
+PYBIN="$(find_python)"
 
 [[ -n "$REF" && -z "$REPO" ]] && REPO="ChadRoesler/SerenLoci"
 

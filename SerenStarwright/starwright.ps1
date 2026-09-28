@@ -68,7 +68,7 @@ if (-not $PyExe) {
     if ($cmd) { $PyExe = $cmd.Source; $PyArgs = @() }
 }
 if (-not $PyExe) {
-    Die "No Python found. Install 3.10-3.12 from python.org or:  winget install Python.Python.3.12"
+    Die "No Python found. Install 3.10 or newer from python.org or:  winget install Python.Python.3.12"
 }
 
 # -- create the venv ----------------------------------------------------------

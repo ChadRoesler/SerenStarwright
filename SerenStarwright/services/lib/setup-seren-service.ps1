@@ -69,6 +69,10 @@ param(
   # no credential prompt. The PASSWORD is deliberately NOT a parameter - see
   # the identity section near the bottom for why.
   [string] $ServiceUser = "",
+  # Who may start, stop and query THIS service without being an admin - the
+  # account the Observatory runs as. Blank means you, the person running this
+  # install (services run as you by default, the Observatory included).
+  [string] $ControlAccount = "",
 
   # -- inline env vars ----------------------------------------------------------
   # Injected into the NSSM service via AppEnvironmentExtra. The wrapper supplies
@@ -274,6 +278,78 @@ if ($RunAsLocalSystem) {
          "       The service exists but will not start until this is fixed: nssm edit $ServiceName")
   }
   Ok "service will run as $account"
+}
+
+# -- let the Observatory drive it, and tell it the service exists -------------
+#
+#  THE GRANT. Chad, 27 Sept 2026: the Windows spelling of seren-systemctl. On a
+#  node the Observatory may start/stop seren-* units through one narrow sudo
+#  helper and nothing else; here the service's own security descriptor gains
+#  one ACE giving the control account start (RP), stop (WP), query status (LC)
+#  and interrogate (LO) on THIS service. The Observatory stays unprivileged and
+#  every other service on the box stays out of its reach. nssm remove/install
+#  resets the descriptor, so every reinstall writes the grant again.
+#
+#  THE MANIFEST. Same fields as the Linux core writes (setup-seren-service.sh),
+#  service_type windows_service. Under an install root (<root>\apps\<svc> and
+#  <root>\venvs\<svc> sharing a parent) it goes to <root>\manifests, the roster
+#  that install's Observatory reads; otherwise ~\.seren\services.
+Step "Registering $ServiceName with the Observatory"
+try {
+  if ($ControlAccount) {
+    $ctlSid = ([Security.Principal.NTAccount]$ControlAccount).Translate([Security.Principal.SecurityIdentifier]).Value
+    $ctlName = $ControlAccount
+  } else {
+    $ctlSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $ctlName = $env:USERNAME
+  }
+  $sddl = (& sc.exe sdshow $ServiceName | Where-Object { $_ -match '\S' } | Select-Object -First 1)
+  if ($LASTEXITCODE -ne 0 -or -not $sddl) { throw "sc sdshow exited $LASTEXITCODE" }
+  $sddl = $sddl.Trim()
+  $ace = "(A;;RPWPLCLO;;;$ctlSid)"
+  if ($sddl -notlike "*$ace*") {
+    # The ACE joins the DACL (D:...), ahead of any SACL (S:...). SIDs inside
+    # ACEs read S-1-..., never S:, so the first S: is the SACL.
+    $i = $sddl.IndexOf("S:")
+    $new = if ($i -ge 0) { $sddl.Substring(0, $i) + $ace + $sddl.Substring($i) } else { $sddl + $ace }
+    & sc.exe sdset $ServiceName $new | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sc sdset exited $LASTEXITCODE" }
+  }
+  Ok "$ctlName may start, stop and query $ServiceName (nothing else)"
+} catch {
+  Warn "Could not grant start/stop on $ServiceName ($_)."
+  Warn "The Observatory will list it, but start/stop are refused unless it runs as an admin."
+}
+
+$appUp = Split-Path $AppDir -Parent; $venvUp = Split-Path (Resolve-Path $VenvDir).Path -Parent
+$installRoot = $null
+if ((Split-Path $appUp -Leaf) -eq "apps" -and (Split-Path $venvUp -Leaf) -eq "venvs" -and
+    (Split-Path $appUp -Parent) -eq (Split-Path $venvUp -Parent)) {
+  $installRoot = Split-Path $appUp -Parent
+}
+$rosterDir = if ($installRoot) { Join-Path $installRoot "manifests" } else { Join-Path $env:USERPROFILE ".seren\services" }
+try {
+  New-Item -ItemType Directory -Force -Path $rosterDir | Out-Null
+  $manifest = [ordered]@{
+    schema_version  = 2
+    service         = $ServiceName
+    service_type    = "windows_service"
+    windows_service = $ServiceName
+    port            = $HealthPort
+    description     = $Description
+    config_path     = $ConfigPath
+    app_dir         = $AppDir
+    health_url      = "http://127.0.0.1:$HealthPort$HealthPath"
+    log_path        = $ErrLog
+    installed_by    = "setup-seren-service.ps1"
+  }
+  $manifestPath = Join-Path $rosterDir "$ServiceName.json"
+  # UTF-8 WITHOUT a BOM: Windows PowerShell's -Encoding UTF8 writes one, and
+  # the Observatory's json.load would reject the file.
+  [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+  Ok "manifest: $manifestPath"
+} catch {
+  Warn "Couldn't write $rosterDir ($_) - the Observatory won't list this service"
 }
 
 # -- start + health check + show the error if it sulks ------------------------

@@ -27,7 +27,7 @@
   WHAT THIS IS NOT:
   Unlike `dotnet publish --self-contained`, this does NOT bundle the Python
   runtime; the target needs a python3. That costs nothing here - every seren-*
-  installer already requires Python 3.10-3.12, so a box without Python can't
+  installer already requires Python 3.10+, so a box without Python can't
   install anything anyway. A true zero-runtime binary means PyInstaller or
   Nuitka, at the price of a separate build per platform and 15-40MB apiece.
 

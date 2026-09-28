@@ -138,7 +138,7 @@ resolve_wheel
 # -- 3. venv + install ----------------------------------------------------------
 create_venv "$VENV_DIR"
 VPY="$VENV_DIR/bin/python"
-CORP=false; MCP=false; VECTOR=false  # observatory: only [updates] applies
+CORP=false; MCP=false; VECTOR=false  # observatory: no extras (update checking is core in meninges)
 CORP_ARGS=""
 # Build extras
 EXTRAS_LIST=()
