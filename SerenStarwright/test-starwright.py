@@ -1452,14 +1452,25 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
         check(list(re_) == ["seren-hippocampus"], "recognised as a reinstall")
         check(cfg.get("port") == 7269, f"port kept: {cfg}")
         check(cfg.get("venv") == str(home / "wren-seren-venvs-"), f"venv prefix derived: {cfg.get('venv')}")
-        check(cfg.get("service") is True and cfg.get("local-system") is True, "autostart and LocalSystem from the OS")
+        # LocalSystem is a Windows account: only the PowerShell cards have the
+        # switch. A bash card has no local-system flag, so on Linux the record's
+        # LocalSystem has nothing to land on (CI runs this on Ubuntu).
+        if sw.IS_WINDOWS:
+            check(cfg.get("service") is True and cfg.get("local-system") is True, "autostart and LocalSystem from the OS")
+        else:
+            check(cfg.get("service") is True and "local-system" not in cfg,
+                  f"autostart from the OS; no LocalSystem on a bash card: {cfg}")
         check(cfg.get("model-url") == "http://localhost:7200/v1", f"model url from its config: {cfg.get('model-url')}")
         check("memory-url" not in cfg, "a dependency's url is wired, not copied")
         check("token" not in cfg and "gen-token" not in cfg, "the bearer is left to the card to keep")
         cmd = sw.build_command(svcs["seren-hippocampus"], cfg, {"service-user": "alice"})
         joined = " ".join(cmd)
-        check(("LocalSystem" in joined or "--local-system" in joined) and "alice" not in joined,
-              f"LocalSystem beats the universal account: {cmd[-8:]}")
+        if sw.IS_WINDOWS:
+            check(("LocalSystem" in joined or "--local-system" in joined) and "alice" not in joined,
+                  f"LocalSystem beats the universal account: {cmd[-8:]}")
+        else:
+            check("--local-system" not in joined and "--service-user alice" in joined,
+                  f"no LocalSystem on Linux, so the universal account applies: {cmd}")
         inh = sw.inherited_options([rec])
         check(inh.get("venv") == str(home / "wren-seren-venvs-") and inh.get("local-system") is True
               and inh.get("service") is True, f"universal defaults from the record: {inh}")
