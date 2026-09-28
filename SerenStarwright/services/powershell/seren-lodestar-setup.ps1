@@ -28,6 +28,11 @@ param(
   [switch] $Mcp,
   [switch] $Corp,
   [switch] $NoUpdates,
+  # Route a hippocampus's ripple: a node name (its Observatory runs it), local
+  # (run it on this box as -RippleRunAs, default you), or self (not built yet).
+  [string] $RippleTarget  = "",
+  [string] $RippleCommand = "",
+  [string] $RippleRunAs   = "",
   # -- service identity (only meaningful alongside -Service) -------------------
   # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
   # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
@@ -159,6 +164,22 @@ updates:
   enabled: false
 "@ | Add-SerenTextFile -Path $CfgPath
     Ok "Update checking disabled in config"
+}
+
+if ($RippleTarget) {
+    function ConvertTo-SerenYamlQuoted([string] $v) { "'" + ($v -replace "'", "''") + "'" }
+    $rl = "`n# -- Ripple ---------------------------------------------------------------`n" +
+          "# Where a hippocampus's ripple goes (a brief at bedtime, a review when`n" +
+          "# drafts wait): a node name (its Observatory runs it), local, or self.`n" +
+          "ripple:`n  target: $(ConvertTo-SerenYamlQuoted $RippleTarget)"
+    if ($RippleTarget -eq "local") {
+        $rcmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
+        # Inferred at setup: the person running the install (Chad, 28 Sept 2026).
+        $rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
+        $rl += "`n  command: $(ConvertTo-SerenYamlQuoted $rcmd)`n  run_as: $(ConvertTo-SerenYamlQuoted $rwho)"
+    }
+    $rl | Add-SerenTextFile -Path $CfgPath
+    Ok "Ripples route to: $RippleTarget"
 }
 
 # -- 5b. launcher ---------------------------------------------------------------

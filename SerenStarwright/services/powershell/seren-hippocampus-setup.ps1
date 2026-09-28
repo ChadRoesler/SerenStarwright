@@ -28,6 +28,29 @@ param(
   [string] $SleepAt     = "",
   [double] $SleepEvery  = 0,
   [int]    $MaxAttempts = 0,
+  # The model the hippocampus starts when a sleep needs it: the server and the
+  # .gguf it serves (both, or neither). Host and port come from -ModelUrl.
+  [string] $ModelServer = "",
+  [string] $ModelPath   = "",
+  [string] $ModelArgs   = "",
+  # Ask the model at bedtime and when drafts wait. ValidateSet is what
+  # Starwright reads to offer a dropdown (-Describe's `choices`).
+  [ValidateSet("script", "endpoint", "off")]
+  [string] $Ripple        = "",
+  [string] $RippleCommand = "",
+  [string] $RippleUrl     = "",
+  # The endpoint's bearer: the model box's Observatory token.
+  [string] $RippleToken   = "",
+  # Whose account a script ripple runs as. Default: you, the person running
+  # this - a LocalSystem service borrows your logged-on session.
+  [string] $RippleRunAs   = "",
+  # The message goes on stdin, not as {message}: for `ssh desktop claude -p`
+  # when there is neither Lodestar nor an Observatory.
+  [switch] $RippleStdin,
+  # Wake Claude Code as the model: `claude -p` run in this project folder (where
+  # its memory MCP servers are registered) with those servers' tools
+  # pre-approved - read from ~/.claude.json. A script ripple; implies -Ripple script.
+  [string] $RippleClaude  = "",
   [string] $Wheel       = "",
   [string] $Local       = "",
   [string] $Ref         = "",
@@ -93,6 +116,16 @@ if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\hippocampus" }
 if ($SleepAt -and $SleepAt -notmatch '^([01]?[0-9]|2[0-3]):[0-5][0-9]$') { Die "-SleepAt wants HH:MM (local time), got '$SleepAt'" }
 if ($SleepEvery -ne 0 -and ($SleepEvery * 3600) -lt 600) { Die "-SleepEvery wants hours (at least 0.17, ten minutes), got '$SleepEvery'" }
 if ($MaxAttempts -ne 0 -and ($MaxAttempts -lt 1 -or $MaxAttempts -gt 10)) { Die "-MaxAttempts wants 1-10, got '$MaxAttempts'" }
+if ($Ripple -eq "endpoint" -and -not $RippleUrl) { Die "-Ripple endpoint needs -RippleUrl" }
+if ($RippleClaude) {
+    if (-not $Ripple) { $Ripple = "script" }
+    if ($Ripple -ne "script") {
+        Die "-RippleClaude wakes Claude Code on THIS box (a script ripple). For a model on another box, point -Ripple endpoint at its Observatory or Lodestar and give that card -RippleClaude"
+    }
+}
+if (($ModelServer -or $ModelPath) -and -not ($ModelServer -and $ModelPath)) {
+    Die "-ModelServer and -ModelPath go together (the server and the .gguf it serves)"
+}
 $layout  = Get-SerenLayout -Root $Root -Short "hippocampus" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-hippocampus"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -177,6 +210,45 @@ if (Test-Path $CfgPath) {
 }
 $serverToken = if ($Token) { "  bearer_token: `"$Token`"`n" } else { "" }
 $memoryToken = $memoryTokenLines
+# The model lifecycle and the ripple, built before the config so an unset flag
+# writes nothing (seren-keep-config.py then carries the old block forward).
+# YAML single-quoted: backslashes stay literal, a ' is written ''.
+function ConvertTo-SerenYamlQuoted([string] $v) { "'" + ($v -replace "'", "''") + "'" }
+$lifecycleLines = ""
+if ($ModelServer -and $ModelPath) {
+    $lifecycleLines = "  lifecycle:`n" +
+        "    # Started when a sleep needs it, stopped when idle: <server> -m <model_path>`n" +
+        "    # --host/--port (from url) <server_args>.`n" +
+        "    server: $(ConvertTo-SerenYamlQuoted $ModelServer)`n" +
+        "    model_path: $(ConvertTo-SerenYamlQuoted $ModelPath)"
+    if ($ModelArgs) { $lifecycleLines += "`n    server_args: $(ConvertTo-SerenYamlQuoted $ModelArgs)" }
+}
+$rippleLines = ""
+switch ($Ripple) {
+    "off"      { $rippleLines = "`nripple:`n  type: `"`"                  # off; -Ripple script|endpoint turns it back on" }
+    "script"   {
+        $cmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
+        # Inferred at setup (Chad, 28 Sept 2026): the person running the install
+        # is whose login the command needs.
+        $who = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
+        if ($RippleClaude) {
+            # Claude Code, read off this box: run in the project, memory tools
+            # pre-approved (seren-claude-ripple.py prints the two yaml lines).
+            $helper = Join-Path $PSScriptRoot "..\lib\seren-claude-ripple.py"
+            $claudeLines = (& $vpy $helper $RippleClaude --yaml 2 2>&1 | Out-String).TrimEnd()
+            if ($LASTEXITCODE -ne 0) { Die "-RippleClaude ${RippleClaude}: $claudeLines" }
+            $rippleLines = "`nripple:`n  # At bedtime and when drafts wait, the hippocampus wakes Claude Code.`n  type: script`n$claudeLines`n  run_as: $(ConvertTo-SerenYamlQuoted $who)"
+        } else {
+            $rippleLines = "`nripple:`n  # At bedtime and when drafts wait, the hippocampus asks the model.`n  type: script`n  command: $(ConvertTo-SerenYamlQuoted $cmd)`n  run_as: $(ConvertTo-SerenYamlQuoted $who)"
+        }
+        if ($RippleStdin) { $rippleLines += "`n  stdin: true" }
+    }
+    "endpoint" {
+        # The model lives on another box: its Observatory receives the ripple.
+        $rippleLines = "`nripple:`n  type: endpoint`n  url: $(ConvertTo-SerenYamlQuoted $RippleUrl)"
+        if ($RippleToken) { $rippleLines += "`n  bearer_token: $(ConvertTo-SerenYamlQuoted $RippleToken)" }
+    }
+}
 $storePath = if ($layout.Data) { "'$($layout.Data)\state.json'" } else { "~/.seren-hippocampus$Instance/state.json" }
 @"
 # SerenHippocampus config - generated by seren-hippocampus-setup.ps1
@@ -190,6 +262,7 @@ memory:
 $memoryToken
 model:
   url: "$ModelUrl"
+$lifecycleLines
 
 sleep:
   mode: thread
@@ -205,6 +278,7 @@ $(if ($SleepEvery -gt 0) { "  interval_seconds: $([int]($SleepEvery * 3600))" } 
   # may then edit on approve; a denial ends the chain). 1-10.
 $(if ($MaxAttempts -gt 0) { "  max_attempts: $MaxAttempts" } else { '  # max_attempts: 3' })
 "@ | Write-SerenTextFile -Path $CfgPath
+if ($rippleLines) { $rippleLines | Add-SerenTextFile -Path $CfgPath }
 Ok "Config written"
 
 if ($NoUpdates) {

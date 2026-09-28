@@ -192,6 +192,7 @@ $doneArgs = @{
     Mcp         = ([bool] $Mcp)
     Corp        = ([bool] $Corp)
     Vector      = $false
+    St          = ([bool] $St)
     Venv        = $VenvDir
     Config      = $CfgPath
 }

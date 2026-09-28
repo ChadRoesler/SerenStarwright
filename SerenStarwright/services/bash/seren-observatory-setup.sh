@@ -25,6 +25,11 @@
 #    --root DIR  Install root: venvs, apps, stores, logs in one folder
 #    --venv PATH      Override venv location
 #    --no-updates     Turn update checking OFF in the generated config
+#    --ripple         Receive ripples: a hippocampus on another node wakes the
+#                     model on THIS box (POST /api/v1/system/ripple)
+#    --ripple-command CMD  What a ripple runs (default: claude -p "{message}")
+#    --ripple-run-as USER  Whose account it runs as (default: you, the person
+#                     running this - a root service drops to you)
 #                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
@@ -70,6 +75,9 @@ INSTALL_SERVICE=false
 # Empty = the unit runs as whoever installs it. Only meaningful with --service.
 SERVICE_USER=""
 UPDATES_OFF=false
+RIPPLE=false
+RIPPLE_COMMAND=""
+RIPPLE_RUN_AS=""
 INSTANCE=""
 # Starwright's install root (~/seren/<install>): venvs, apps, stores and
 # logs under one folder, absolute paths. Empty = the old layout.
@@ -107,6 +115,9 @@ while [[ $# -gt 0 ]]; do
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
+    --ripple)    RIPPLE=true; shift ;;
+    --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
+    --ripple-run-as)  RIPPLE_RUN_AS="$2"; shift 2 ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --root)     ROOT="$2"; shift 2 ;;
@@ -228,6 +239,25 @@ $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
 updates:
   enabled: false
 YAML
+if $RIPPLE; then
+  # yaml single-quoted: backslashes stay literal, a ' is written ''
+  _yq() { local v=${1//\'/\'\'}; printf "'%s'" "$v"; }
+  # A variable, not inline: the } of {message} would close ${...:-...} early.
+  RIPPLE_DEFAULT_COMMAND='claude -p "{message}"'
+  # Inferred at setup (Chad, 28 Sept 2026): the person running the install is
+  # whose login the command needs; a root service drops to them (runuser).
+  cat >> "$CFG_PATH" <<YAML
+
+# -- Ripple ---------------------------------------------------------------
+# A hippocampus on another node wakes the model that lives on this box: at
+# bedtime for a brief, and when drafts wait for review. It sends only the
+# message; the command is this config's. Needs the Observatory's bearer.
+ripple:
+  enabled: true
+  command: $(_yq "${RIPPLE_COMMAND:-$RIPPLE_DEFAULT_COMMAND}")
+  run_as: $(_yq "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")
+YAML
+fi
 [[ -n "$TOKEN" ]] && chmod 600 "$CFG_PATH"
 ok "Config written"
 

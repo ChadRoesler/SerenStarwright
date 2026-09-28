@@ -25,6 +25,24 @@
 #    --sleep-at HH:MM    Bedtime at a wall-clock time (a sleep still waits for a brief)
 #    --sleep-every HOURS ...or bedtime every N hours after the last sleep (default ~20)
 #    --max-attempts N    The draft cap: attempts per chain, 1-10 (default 3)
+#    --model-server PATH The llama-server the hippocampus starts when a sleep needs it
+#                        (default on a node: ~/llama.cpp/build/bin/llama-server)
+#    --model-path PATH   The .gguf it serves. With a server this turns on management:
+#                        started for a sleep, stopped when idle. Host and port from --model-url
+#    --model-args ARGS   The rest of the server line (default "-ngl 99 -c 8192")
+#    --ripple TYPE       Ask the model at bedtime and when drafts wait: script | endpoint | off
+#    --ripple-command C  The script ripple's command (default: claude -p "{message}")
+#    --ripple-url URL    The endpoint ripple's url (the model box's Observatory:
+#                        http://<desktop>:7777/api/v1/system/ripple)
+#    --ripple-token TOK  The bearer for --ripple-url (that Observatory's token)
+#    --ripple-claude DIR Wake Claude Code as the model: `claude -p` run in DIR (the
+#                        project its memory MCP servers are registered for) with those
+#                        servers' tools pre-approved - read from ~/.claude.json. A script
+#                        ripple; implies --ripple script
+#    --ripple-stdin      A script ripple sends the message on stdin, not as {message}:
+#                        for `ssh desktop claude -p` with no Lodestar or Observatory
+#    --ripple-run-as U   Whose account a script ripple runs as (default: you, the
+#                        person running this - a root service drops to you)
 #    --repo-dir PATH     SerenHippocampus checkout    (default: sibling ../SerenHippocampus)
 #    --wheel PATH        Install from a local .whl
 #    --local DIR|URL     Install from a dev wheelhouse (seren-dev-publish.sh)
@@ -81,6 +99,16 @@ MODEL_URL="http://localhost:8090/v1"
 SLEEP_AT=""
 SLEEP_EVERY=""
 MAX_ATTEMPTS=""
+MODEL_SERVER=""
+MODEL_PATH=""
+MODEL_ARGS=""
+RIPPLE=""
+RIPPLE_COMMAND=""
+RIPPLE_URL=""
+RIPPLE_TOKEN=""
+RIPPLE_RUN_AS=""
+RIPPLE_STDIN=false
+RIPPLE_CLAUDE=""
 REPO_DIR="$(find_upward "SerenHippocampus" || true)"   # sibling checkout (build source)
 WHEEL=""
 LOCAL=""
@@ -107,6 +135,7 @@ SVC_GROUP="brain"
 SVC_PACKAGE="seren-hippocampus"
 SVC_REQUIRES="seren-memory"
 SVC_ACCENT="#c9a0dc"
+SVC_CHOICES="ripple=script|endpoint|off"
 
 for _a in "$@"; do
   [[ "$_a" == "--describe" ]] && { seren_describe; exit 0; }
@@ -125,6 +154,16 @@ while [[ $# -gt 0 ]]; do
     --sleep-at)     SLEEP_AT="$2"; shift 2 ;;
     --sleep-every)  SLEEP_EVERY="$2"; shift 2 ;;
     --max-attempts) MAX_ATTEMPTS="$2"; shift 2 ;;
+    --model-server) MODEL_SERVER="$2"; shift 2 ;;
+    --model-path)   MODEL_PATH="$2"; shift 2 ;;
+    --model-args)   MODEL_ARGS="$2"; shift 2 ;;
+    --ripple)       RIPPLE="$2"; shift 2 ;;
+    --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
+    --ripple-url)   RIPPLE_URL="$2"; shift 2 ;;
+    --ripple-token) RIPPLE_TOKEN="$2"; shift 2 ;;
+    --ripple-run-as) RIPPLE_RUN_AS="$2"; shift 2 ;;
+    --ripple-stdin) RIPPLE_STDIN=true; shift ;;
+    --ripple-claude) RIPPLE_CLAUDE="$2"; shift 2 ;;
     --repo-dir)     REPO_DIR="$2"; shift 2 ;;
     --wheel)        WHEEL="$2"; shift 2 ;;
     --local)        LOCAL="$2"; shift 2 ;;
@@ -160,6 +199,21 @@ if [[ -n "$SLEEP_EVERY" ]]; then
 fi
 if [[ -n "$MAX_ATTEMPTS" ]]; then
   [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ && "$MAX_ATTEMPTS" -ge 1 && "$MAX_ATTEMPTS" -le 10 ]] || die "--max-attempts wants 1-10, got '$MAX_ATTEMPTS'"
+fi
+# Refused here, before anything is installed, like the sleep flags above.
+RIPPLE_CLAUDE_LINES=""
+if [[ -n "$RIPPLE_CLAUDE" ]]; then
+  [[ -z "$RIPPLE" ]] && RIPPLE=script
+  [[ "$RIPPLE" == script ]] || die "--ripple-claude wakes Claude Code on THIS box (a script ripple). For a model on another box, point --ripple endpoint at its Observatory or Lodestar and give that card --ripple-claude"
+  RIPPLE_CLAUDE_LINES="$(seren_claude_ripple_lines "$RIPPLE_CLAUDE" 2)" || exit 1
+fi
+case "$RIPPLE" in
+  ""|off|script) ;;
+  endpoint) [[ -n "$RIPPLE_URL" ]] || die "--ripple endpoint needs --ripple-url" ;;
+  *) die "--ripple wants script, endpoint or off, got '$RIPPLE'" ;;
+esac
+if [[ -n "$MODEL_SERVER$MODEL_PATH" && -z "$MODEL_PATH" ]]; then
+  die "--model-server needs --model-path (the server and the .gguf it serves go together)"
 fi
 CFG_PATH="$APP_DIR/seren-hippocampus.yaml"
 CONNECT_HOST="$HOST"
@@ -237,6 +291,53 @@ $GEN_TOKEN && TOKEN="$("$VPY" -c 'import secrets; print(secrets.token_urlsafe(32
 # A reinstall keeps the existing bearer unless --token / --gen-token say otherwise.
 if [[ -z "$TOKEN" ]] && ! $GEN_TOKEN; then seren_reuse_token "$CFG_PATH" || true; fi
 if [[ -n "$DATA_DIR" ]]; then STORE_PATH="'$DATA_DIR/state.json'"; else STORE_PATH='~/.seren-hippocampus'${INSTANCE}'/state.json'; fi
+# The model lifecycle and the ripple, built before the heredoc so an unset flag
+# writes nothing (seren-keep-config.py then carries the old block forward).
+# yaml single-quoted: backslashes stay literal, a ' is written ''
+_yq() { local v=${1//\'/\'\'}; printf "'%s'" "$v"; }
+if [[ -n "$MODEL_PATH" && -z "$MODEL_SERVER" && -x "$HOME/llama.cpp/build/bin/llama-server" ]]; then
+  MODEL_SERVER="$HOME/llama.cpp/build/bin/llama-server"      # the node's llama component
+fi
+MODEL_LIFECYCLE_LINES=""
+if [[ -n "$MODEL_SERVER" || -n "$MODEL_PATH" ]]; then
+  [[ -n "$MODEL_SERVER" ]] || die "--model-path needs --model-server: no llama-server at ~/llama.cpp/build/bin to default to"
+  MODEL_LIFECYCLE_LINES="  lifecycle:
+    # Started when a sleep needs it, stopped when idle: <server> -m <model_path>
+    # --host/--port (from url) <server_args>.
+    server: $(_yq "$MODEL_SERVER")
+    model_path: $(_yq "$MODEL_PATH")"
+  [[ -n "$MODEL_ARGS" ]] && MODEL_LIFECYCLE_LINES+="
+    server_args: $(_yq "$MODEL_ARGS")"
+fi
+RIPPLE_LINES=""
+RIPPLE_DEFAULT_COMMAND='claude -p "{message}"'
+case "$RIPPLE" in
+  "") ;;
+  off)
+    RIPPLE_LINES=$(printf '\nripple:\n  type: ""                  # off; --ripple script|endpoint turns it back on')
+    ;;
+  script)
+    # Inferred at setup (Chad, 28 Sept 2026): the person running the install is
+    # whose login the command needs. A root service drops to them (runuser).
+    RIPPLE_WHO="${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}"
+    if [[ -n "${RIPPLE_CLAUDE_LINES:-}" ]]; then
+      # Claude Code, read off this box: run in the project, memory tools pre-approved.
+      RIPPLE_LINES=$(printf '\nripple:\n  # At bedtime and when drafts wait, the hippocampus wakes Claude Code.\n  type: script\n%s\n  run_as: %s' \
+        "$RIPPLE_CLAUDE_LINES" "$(_yq "$RIPPLE_WHO")")
+    else
+      RIPPLE_LINES=$(printf '\nripple:\n  # At bedtime and when drafts wait, the hippocampus asks the model.\n  type: script\n  command: %s\n  run_as: %s' \
+        "$(_yq "${RIPPLE_COMMAND:-$RIPPLE_DEFAULT_COMMAND}")" "$(_yq "$RIPPLE_WHO")")
+    fi
+    [[ "${RIPPLE_STDIN:-false}" == true ]] && RIPPLE_LINES+=$(printf '\n  stdin: true')
+    ;;
+  endpoint)
+    # The model lives on another box: its Observatory receives the ripple and
+    # starts the command there, as the person (POST /api/v1/system/ripple).
+    RIPPLE_LINES=$(printf '\nripple:\n  type: endpoint\n  url: %s' "$(_yq "$RIPPLE_URL")")
+    [[ -n "$RIPPLE_TOKEN" ]] && RIPPLE_LINES+=$(printf '\n  bearer_token: %s' "$(_yq "$RIPPLE_TOKEN")")
+    ;;
+esac
+
 cat > "$CFG_PATH" <<YAML
 # SerenHippocampus config - generated by seren-hippocampus-setup.sh
 # Full reference: see seren-hippocampus.yaml.sample in the repo.
@@ -251,6 +352,7 @@ ${MEMORY_TOKEN_LINES}
 
 model:
   url: "${MODEL_URL}"
+${MODEL_LIFECYCLE_LINES}
 
 sleep:
   mode: thread
@@ -267,6 +369,8 @@ $([[ -n "$SLEEP_EVERY_SECONDS" ]] && printf '  interval_seconds: %s' "$SLEEP_EVE
 $([[ -n "$MAX_ATTEMPTS" ]] && printf '  max_attempts: %s' "$MAX_ATTEMPTS" || printf '  # max_attempts: 3')
 YAML
 [[ -n "$TOKEN" || -n "$MEMORY_TOKEN_LINES" ]] && chmod 600 "$CFG_PATH"
+if [[ -n "$RIPPLE_LINES" ]]; then echo "$RIPPLE_LINES" >> "$CFG_PATH"; fi
+[[ -n "$RIPPLE_TOKEN" ]] && chmod 600 "$CFG_PATH"
 
 $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
 

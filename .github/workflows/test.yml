@@ -77,8 +77,17 @@ jobs:
       - name: --root puts a named install in one folder, absolute paths
         run: bash SerenStarwright/services/tests/test-install-root.sh
 
-      - name: the hippocampus card writes bedtime and the draft cap, refuses bad values
-        run: bash SerenStarwright/services/tests/test-hippocampus-sleep-flags.sh
+      - name: the hippocampus card writes bedtime, the draft cap, the model lifecycle and the ripple
+        # PyYAML parses the blocks the card writes, so quoting is checked by a real parser.
+        run: |
+          python3 -m pip install --quiet pyyaml
+          bash SerenStarwright/services/tests/test-hippocampus-sleep-flags.sh
+
+      - name: the observatory card receives ripples - enabled, run as the installer
+        run: bash SerenStarwright/services/tests/test-observatory-ripple.sh
+
+      - name: the lodestar card routes ripples - a node, local, or nothing
+        run: bash SerenStarwright/services/tests/test-lodestar-ripple.sh
 
       - name: service manifests go into the install's own roster
         run: bash SerenStarwright/services/tests/test-manifests-dir.sh

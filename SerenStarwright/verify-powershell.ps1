@@ -412,7 +412,7 @@ try {
     $global:Instance = "wren"
     $Wheel = "C:\wheels\seren_memory-3.1.0-py3-none-any.whl"
     Write-SerenInstallRecord -Service "seren-memory" -ConnectHost "127.0.0.1" -Port 7267 -Autostart $false `
-        -Token "s3cret-do-not-write-me" -Mcp $true -Venv "C:\nope\venv" -Config "C:\nope\seren-memory\seren-memory.yaml"
+        -Token "s3cret-do-not-write-me" -Mcp $true -St $true -Venv "C:\nope\venv" -Config "C:\nope\seren-memory\seren-memory.yaml"
     $recPath = Join-Path $ledgerTmp "seren-memory@wren.json"
     if (Test-Path $recPath) { Good "record written as <service>@<instance>.json" } else { Bad "no record at $recPath" }
     $raw = Get-Content $recPath -Raw
@@ -422,6 +422,8 @@ try {
     if ($rec.source -eq "wheel" -and $rec.source_ref -like "*seren_memory-3.1.0*") { Good "source is the wheel" } else { Bad "source wrong: $($rec.source) $($rec.source_ref)" }
     if ($rec.has_token -eq $true -and $raw -notmatch "s3cret") { Good "has_token true, token itself never written" } else { Bad "token leaked or has_token wrong" }
     if ($rec.extras.mcp -eq $true -and $rec.derived -eq $false) { Good "extras and derived flag" } else { Bad "extras/derived wrong" }
+    # Memory's -St (torch) was recorded as false whatever was ticked, so a reinstall unticked it (28 Sept 2026).
+    if ($rec.extras.st -eq $true -and $rec.extras.vector -eq $false) { Good "the st extra is recorded as ticked" } else { Bad "st extra lost: $($rec.extras | ConvertTo-Json -Compress)" }
 } catch {
     Bad "Write-SerenInstallRecord threw: $($_.Exception.Message)"
 } finally {
@@ -561,6 +563,41 @@ foreach ($case in @(@{a = @("-SleepAt", "25:00"); w = "HH:MM"}, @{a = @("-SleepE
 $src = [System.IO.File]::ReadAllText($card)
 if ($src -match "# at: ""03:30""" -and $src -match "# max_attempts: 3" -and $src -match "# interval_seconds: 72000") {
     Good "the sleep block shows all three, commented with their defaults when not given" } else { Bad "sleep block defaults missing" }
+
+# The model lifecycle and the ripple (28 Sept 2026): the server + .gguf that the
+# hippocampus starts itself, and the bedtime question, offered as a dropdown.
+foreach ($f in "model-server", "model-path", "model-args", "ripple", "ripple-command", "ripple-url") {
+    if ($d.flags -contains $f) { Good "-Describe advertises $f" } else { Bad "-Describe is missing $f" }
+}
+if ((@($d.choices.ripple) -join ",") -eq "script,endpoint,off") { Good "-Describe offers -Ripple as a choice (from its ValidateSet)" }
+else { Bad "ripple choices wrong: $($d.choices | ConvertTo-Json -Compress)" }
+foreach ($case in @(@{a = @("-Ripple", "carrier-pigeon"); w = "script"}, @{a = @("-Ripple", "endpoint"); w = "needs -RippleUrl"},
+                    @{a = @("-ModelServer", "C:\llama\llama-server.exe"); w = "go together"})) {
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $card) + $case.a
+    $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -and $out -match [regex]::Escape($case.w)) { Good "$($case.a -join ' ') is refused ($($case.w))" }
+    else { Bad "$($case.a -join ' ') was not refused: $out" }
+}
+$qdef = [regex]::Match($src, "function ConvertTo-SerenYamlQuoted[^\r\n]*").Value
+if ($qdef) {
+    Invoke-Expression $qdef
+    $q = ConvertTo-SerenYamlQuoted "C:\models\it's-q5.gguf"
+    if ($q -eq "'C:\models\it''s-q5.gguf'") { Good "a Windows path with a quote is written as valid single-quoted YAML" }
+    else { Bad "yaml quoting wrong: $q" }
+} else { Bad "ConvertTo-SerenYamlQuoted not found in the card" }
+
+# -- the observatory card receives ripples (28 Sept 2026) ---------------------
+# The hippocampus moves to the Nano, the model stays on the desktop: the ripple
+# crosses boxes, and this card turns the receiving end on.
+Section "observatory card: receiving a ripple"
+$obs = & (Join-Path $ScriptDir "services\powershell\seren-observatory-setup.ps1") -Describe | ConvertFrom-Json
+foreach ($f in "ripple", "ripple-command", "ripple-run-as") {
+    if ($obs.flags -contains $f) { Good "-Describe advertises $f" } else { Bad "-Describe is missing $f" }
+}
+if ($obs.switches -contains "ripple") { Good "-Ripple is a switch (a checkbox in the TUI)" } else { Bad "-Ripple is not a switch" }
+$osrc = [System.IO.File]::ReadAllText((Join-Path $ScriptDir "services\powershell\seren-observatory-setup.ps1"))
+if ($osrc -match [regex]::Escape('$rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }')) {
+    Good "run_as defaults to the person running the install" } else { Bad "no run_as default in the observatory card" }
 
 # -- the callosum card: only the stores it was given (25 Sept 2026) ------------
 # Chad: the callosum holds n stores, better with one of each, either alone

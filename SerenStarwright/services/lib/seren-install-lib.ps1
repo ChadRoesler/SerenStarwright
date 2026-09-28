@@ -224,6 +224,10 @@ function Get-SerenDescribe {
     # these as check boxes; anything else is a text box. Mirrors
     # seren_switches_from_self on the bash side.
     $switches = @()
+    # Flags that take one of a few values: derived from [ValidateSet] on the
+    # card's own parameter, so the dropdown and the card cannot disagree.
+    # Twin of SVC_CHOICES on the bash side.
+    $choices = [ordered] @{}
     if ($ScriptPath) {
         try {
             $cmd = Get-Command -Name $ScriptPath -CommandType ExternalScript -ErrorAction Stop
@@ -235,6 +239,8 @@ function Get-SerenDescribe {
                 if ($cmd.Parameters[$p].ParameterType -eq [switch]) {
                     $switches += (ConvertTo-SerenFlagName $p)
                 }
+                $vs = @($cmd.Parameters[$p].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] })
+                if ($vs.Count -gt 0) { $choices[(ConvertTo-SerenFlagName $p)] = @($vs[0].ValidValues) }
             }
             $switches = @($switches | Sort-Object -Unique)
         } catch { }
@@ -259,6 +265,7 @@ function Get-SerenDescribe {
         switches       = @($switches)
         requires       = @($Requires)
         recommends     = @($Recommends)
+        choices        = $choices
         params         = $params
     }
     # Write-Output is CORRECT here, unlike in Send-SerenEvent, and the
@@ -392,7 +399,7 @@ function Write-SerenInstallRecord {
     param(
         [string] $Service, [string] $ConnectHost, [int] $Port,
         [bool] $Autostart, [string] $Token,
-        [bool] $Mcp = $false, [bool] $Corp = $false, [bool] $Vector = $false,
+        [bool] $Mcp = $false, [bool] $Corp = $false, [bool] $Vector = $false, [bool] $St = $false,
         [string] $Venv = "", [string] $Config = "", [string] $Package = ""
     )
     $dir = $env:SEREN_INSTALLED_DIR
@@ -445,7 +452,7 @@ function Write-SerenInstallRecord {
         service_user   = [string] (Get-Variable -Name ServiceUser -ValueOnly -ErrorAction SilentlyContinue)
         local_system   = [bool] (Get-Variable -Name LocalSystem -ValueOnly -ErrorAction SilentlyContinue)
         has_token      = $hasToken
-        extras         = [ordered] @{ mcp = $Mcp; corp = $Corp; vector = $Vector; st = $false }
+        extras         = [ordered] @{ mcp = $Mcp; corp = $Corp; vector = $Vector; st = $St }
         source         = $source
         source_ref     = $sourceRef
         installed_at   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -465,14 +472,14 @@ function Send-SerenDone {
     param(
         [string] $Service, [string] $ConnectHost, [int] $Port,
         [bool] $Autostart, [string] $Token,
-        [bool] $Mcp = $false, [bool] $Corp = $false, [bool] $Vector = $false,
+        [bool] $Mcp = $false, [bool] $Corp = $false, [bool] $Vector = $false, [bool] $St = $false,
         [string] $Venv = "", [string] $Config = ""
     )
     $hasToken = $false
     if ($Token) { $hasToken = $true }
     # The ledger first: written whether or not anyone asked for -Json.
     Write-SerenInstallRecord -Service $Service -ConnectHost $ConnectHost -Port $Port -Autostart $Autostart `
-        -Token $Token -Mcp $Mcp -Corp $Corp -Vector $Vector -Venv $Venv -Config $Config
+        -Token $Token -Mcp $Mcp -Corp $Corp -Vector $Vector -St $St -Venv $Venv -Config $Config
     Send-SerenEvent -EventName "done" -Data @{
         ok        = $true
         service   = $Service
@@ -483,6 +490,7 @@ function Send-SerenDone {
         mcp       = $Mcp
         corp      = $Corp
         vector    = $Vector
+        st        = $St
         venv      = $Venv
         config    = $Config
         has_token = $hasToken
