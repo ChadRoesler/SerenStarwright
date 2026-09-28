@@ -200,6 +200,23 @@ seren_switches_from_self() {
     | grep -oE '^[[:space:]]+--[a-z-]+' | tr -d ' ' | sed 's/^--//' | sort -u | tr '\n' ' '
 }
 
+# -- seren_claude_ripple_lines DIR INDENT - a ripple that wakes Claude Code -----
+# The ripple's command for Claude Code, read off this box (Design note:
+# "so that YOU can use it here"): `claude -p "{message}"` run IN the project the
+# model's memory MCP servers are registered for, with those servers' tools
+# pre-approved - a headless run cannot answer a permission prompt. Prints the
+# `command:` and `cwd:` yaml lines at INDENT spaces; dies with the reason when
+# the project has no MCP servers (a ripple would wake the model without its
+# memory). See seren-claude-ripple.py.
+seren_claude_ripple_lines() {
+  local dir="$1" indent="${2:-2}" py="" c
+  for c in "${VPY:-}" python3 python; do
+    [[ -n "$c" ]] && "$c" -c 'import json' >/dev/null 2>&1 && { py="$c"; break; }
+  done
+  [[ -n "$py" ]] || die "--ripple-claude: no python on PATH to read the Claude Code settings with"
+  "$py" "$(dirname "${BASH_SOURCE[0]}")/seren-claude-ripple.py" "$dir" --yaml "$indent"     || die "--ripple-claude $dir: see above"
+}
+
 # -- seren_describe - the --describe payload ----------------------------------
 # Reads the SVC_* identity vars each installer sets alongside its defaults, plus
 # PORT/HOST. Must be callable before ANY work happens - see the --describe scan
@@ -251,6 +268,15 @@ seren_describe() {
   fi
   for f in $extras; do extras_json+="${extras_json:+,}\"$(_json_esc "$f")\""; done
   for f in $flags;  do flags_json+="${flags_json:+,}\"$(_json_esc "$f")\""; done
+  # SVC_CHOICES: flags that take one of a few values, "flag=a|b|c" space-
+  # separated. The TUI shows a dropdown for them instead of a text box.
+  local choices_json="" ch opts o
+  for ch in ${SVC_CHOICES:-}; do
+    opts=""
+    IFS='|' read -ra _seren_opts <<<"${ch#*=}"
+    for o in "${_seren_opts[@]}"; do opts+="${opts:+,}\"$(_json_esc "$o")\""; done
+    choices_json+="${choices_json:+,}\"$(_json_esc "${ch%%=*}")\":[${opts}]"
+  done
   local switches_json="" sw
   for sw in ${SVC_SWITCHES:-$(seren_switches_from_self)}; do
     switches_json+="${switches_json:+,}\"$(_json_esc "$sw")\""
@@ -269,6 +295,7 @@ seren_describe() {
   printf ',"switches":[%s]'     "$switches_json"
   printf ',"requires":[%s]'     "$requires_json"
   printf ',"recommends":[%s]'   "$recommends_json"
+  printf ',"choices":{%s}'      "$choices_json"
   printf '}\n'
 }
 
@@ -821,6 +848,7 @@ seren_emit_done() {
     mcp       "${MCP:-false}" \
     corp      "${CORP:-false}" \
     vector    "${VECTOR:-false}" \
+    st        "${ST:-false}" \
     venv      "${VENV_DIR:-}" \
     config    "${CFG_PATH:-}" \
     has_token "$([[ -n "$token" ]] && echo true || echo false)"

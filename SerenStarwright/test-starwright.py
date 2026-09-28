@@ -892,6 +892,51 @@ async def test_advanced_values_can_be_changed_and_cleared() -> None:
         check("instance" not in app.per_service.get(target, {}), "cancel leaves the config untouched")
 
 
+async def test_a_choice_flag_is_a_dropdown() -> None:
+    """Design note: the hippocampus ripple is 'script' or 'endpoint' (or off),
+    and a text box let any typo through to the card. A flag the card offers
+    choices for (--describe's `choices`) is a dropdown; picking one reaches the
+    command line, and the blank means the card's default - the flag is left off."""
+    print("\n== A choice flag is a dropdown")
+    services, problems = sw.discover()
+    app = sw.StarwrightApp(services, problems)
+    target = "seren-hippocampus"
+    if target not in app.svc_map:
+        check(False, "hippocampus card present")
+        return
+    svc = app.svc_map[target]
+    check(svc.choices.get("ripple") == ["script", "endpoint", "off"], f"the card offers ripple choices: {svc.choices}")
+
+    async def open_modal(pilot):
+        app.screen.query_one(f"#adv-{target}", Button).press()
+        return await settled_modal(pilot, app)
+
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.click("#install"); await pilot.pause()
+        app.screen.query_one(f"#svc-{target}", Checkbox).value = True
+        await pilot.pause()
+        await pilot.click("#next"); await pilot.pause()
+
+        m = await open_modal(pilot)
+        check(isinstance(m.query_one("#adv-ripple"), Select), "ripple is a dropdown, not a text box")
+        check(isinstance(m.query_one("#adv-ripple-command"), Input), "its command is still free text")
+        m.query_one("#adv-ripple", Select).value = "script"
+        await pilot.pause(); await pilot.pause()
+        await pilot.click("#ok"); await pilot.pause(); await pilot.pause()
+        cfg = app.per_service.get(target, {})
+        check(cfg.get("ripple") == "script", f"the choice is kept: {cfg}")
+        cmd = sw.build_command(svc, cfg, {})
+        joined = " ".join(cmd)
+        check(("--ripple script" in joined) or ("-Ripple script" in joined), f"and reaches the card: {cmd[-6:]}")
+
+        m = await open_modal(pilot)
+        check(m.query_one("#adv-ripple", Select).value == "script", "reopening shows the choice")
+        m.query_one("#adv-ripple", Select).clear()
+        await pilot.pause(); await pilot.pause()
+        await pilot.click("#ok"); await pilot.pause(); await pilot.pause()
+        check("ripple" not in app.per_service.get(target, {}), "cleared back to the card's default")
+
+
 async def test_install_ledger() -> None:
     """The box knows what Starwright already put on it: ledger records, plus
     installs found by scanning the launchers older cards wrote."""
@@ -1560,6 +1605,7 @@ async def main() -> int:
     await test_reinstall_starts_from_what_is_installed()
     await test_switches_are_check_boxes()
     await test_advanced_values_can_be_changed_and_cleared()
+    await test_a_choice_flag_is_a_dropdown()
 
     print("\n" + "=" * 46)
     if FAIL:

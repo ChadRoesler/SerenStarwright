@@ -25,6 +25,12 @@ param(
   [string] $Repo      = "ChadRoesler/SerenObservatory",
   [switch] $Service,
   [switch] $NoUpdates,
+  # Receive ripples: a hippocampus on another node wakes the model on THIS box
+  # (POST /api/v1/system/ripple). The command runs as -RippleRunAs, default
+  # you - a LocalSystem Observatory borrows your logged-on session.
+  [switch] $Ripple,
+  [string] $RippleCommand = "",
+  [string] $RippleRunAs   = "",
   # -- service identity (only meaningful alongside -Service) -------------------
   # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
   # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
@@ -184,6 +190,26 @@ updates:
   enabled: false
 "@ | Add-SerenTextFile -Path $CfgPath
     Ok "Update checking disabled in config"
+}
+
+if ($Ripple) {
+    # Inferred at setup (Design note:): the person running the install is
+    # whose login the command needs.
+    function ConvertTo-SerenYamlQuoted([string] $v) { "'" + ($v -replace "'", "''") + "'" }
+    $rcmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
+    $rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
+    @"
+
+# -- Ripple ---------------------------------------------------------------
+# A hippocampus on another node wakes the model that lives on this box: at
+# bedtime for a brief, and when drafts wait for review. It sends only the
+# message; the command is this config's. Needs the Observatory's bearer.
+ripple:
+  enabled: true
+  command: $(ConvertTo-SerenYamlQuoted $rcmd)
+  run_as: $(ConvertTo-SerenYamlQuoted $rwho)
+"@ | Add-SerenTextFile -Path $CfgPath
+    Ok "Ripples enabled: they run as $rwho"
 }
 
 # -- 5b. launcher ---------------------------------------------------------------

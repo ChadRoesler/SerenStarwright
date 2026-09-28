@@ -29,6 +29,10 @@
 #    --root DIR  Install root: venvs, apps, stores, logs in one folder
 #    --venv PATH      Override venv location
 #    --no-updates     Turn update checking OFF in the generated config
+#    --ripple-target T  Route a hippocampus's ripple: a node name (its Observatory
+#                     runs it), local (run it on this box), or self (not built yet)
+#    --ripple-command CMD  For local: what runs (default: claude -p "{message}")
+#    --ripple-run-as USER  For local: whose account (default: you, the installer)
 #                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
@@ -75,6 +79,9 @@ INSTALL_SERVICE=false
 SERVICE_USER=""
 MCP=false
 UPDATES_OFF=false
+RIPPLE_TARGET=""
+RIPPLE_COMMAND=""
+RIPPLE_RUN_AS=""
 CORP=false
 INSTANCE=""
 # Starwright's install root (~/seren/<install>): venvs, apps, stores and
@@ -118,6 +125,9 @@ while [[ $# -gt 0 ]]; do
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
+    --ripple-target)  RIPPLE_TARGET="$2"; shift 2 ;;
+    --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
+    --ripple-run-as)  RIPPLE_RUN_AS="$2"; shift 2 ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --root)     ROOT="$2"; shift 2 ;;
@@ -227,6 +237,23 @@ $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
 updates:
   enabled: false
 YAML
+if [[ -n "$RIPPLE_TARGET" ]]; then
+  # yaml single-quoted: backslashes stay literal, a ' is written ''
+  _yq() { local v=${1//\'/\'\'}; printf "'%s'" "$v"; }
+  # A variable, not inline: the } of {message} would close ${...:-...} early.
+  RIPPLE_DEFAULT_COMMAND='claude -p "{message}"'
+  {
+    printf '\n# -- Ripple ---------------------------------------------------------------\n'
+    printf '# Where a hippocampus'"'"'s ripple goes (a brief at bedtime, a review when\n'
+    printf '# drafts wait): a node name (its Observatory runs it), local, or self.\n'
+    printf 'ripple:\n  target: %s\n' "$(_yq "$RIPPLE_TARGET")"
+    if [[ "$RIPPLE_TARGET" == "local" ]]; then
+      printf '  command: %s\n' "$(_yq "${RIPPLE_COMMAND:-$RIPPLE_DEFAULT_COMMAND}")"
+      # Inferred at setup: the person running the install (Design note:).
+      printf '  run_as: %s\n' "$(_yq "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")"
+    fi
+  } >> "$CFG_PATH"
+fi
 [[ -n "$TOKEN" ]] && chmod 600 "$CFG_PATH"
 ok "Config written"
 

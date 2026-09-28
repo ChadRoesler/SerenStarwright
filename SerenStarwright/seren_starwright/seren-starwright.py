@@ -444,6 +444,11 @@ class ServiceDef:
     # message not a cop."
     recommends: list[str] = field(default_factory=list)
     params: dict[str, str] = field(default_factory=dict)   # canonical -> native (ps only)
+    # A flag that takes one of a few values (--describe's `choices`: bash
+    # declares SVC_CHOICES, PowerShell derives it from [ValidateSet]). The
+    # Advanced dialog shows a dropdown for it instead of a text box, so a
+    # typo can't reach the card. Design note: the ripple type.
+    choices: dict[str, list[str]] = field(default_factory=dict)
     # Flags that take no value, from --describe's `switches` (bash derives it
     # from `shift ;;` branches, PowerShell from [switch] parameters). An older
     # card that does not report it falls back to the switches every card in
@@ -648,6 +653,8 @@ def discover() -> tuple[list[ServiceDef], list[str]]:
                 requires=list(d.get("requires", [])),
                 recommends=list(d.get("recommends", [])),
                 params=dict(d.get("params", {})),
+                choices={str(k): [str(c) for c in v] for k, v in (d.get("choices") or {}).items()
+                         if isinstance(v, list) and v} if isinstance(d.get("choices"), dict) else {},
                 switches=list(d.get("switches", [])), script=script))
         except json.JSONDecodeError as e:
             problems.append(f"{script.name}: bad JSON from --describe ({e})")
@@ -2132,6 +2139,18 @@ class AdvancedModal(ModalScreen[dict]):
                         yield Checkbox(flag, value=bool(self.current.get(flag)),
                                        id=f"adv-{flag}")
                         continue
+                    if flag in self.svc.choices:
+                        # A dropdown, blank = the card's default (leave it alone).
+                        # The initial value is passed only when it is one of the
+                        # choices: the blank sentinel's spelling moves between
+                        # Textual versions (see the setup picker).
+                        opts = self.svc.choices[flag]
+                        cur = str(self.current.get(flag) or "")
+                        yield Label(flag)
+                        kw = {"value": cur} if cur in opts else {}
+                        yield Select([(o, o) for o in opts], prompt="(default)", allow_blank=True,
+                                     id=f"adv-{flag}", **kw)
+                        continue
                     default = ""
                     if flag == "port":
                         default = str(self.svc.default_port)
@@ -2191,6 +2210,11 @@ class AdvancedModal(ModalScreen[dict]):
                 continue
             if isinstance(w, Checkbox):
                 out[flag] = True if w.value else None
+            elif isinstance(w, Select):
+                # Only one of the card's own choices counts; the blank reads as
+                # "not set" whatever the sentinel is called in this Textual.
+                v = w.value
+                out[flag] = v if isinstance(v, str) and v in self.svc.choices.get(flag, []) else None
             elif isinstance(w, Input):
                 out[flag] = w.value.strip() or None
 
