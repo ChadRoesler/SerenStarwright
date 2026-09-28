@@ -100,7 +100,7 @@ Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenMemory setup (Windows)" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 
-# -- 1. find Python (3.10-3.12; chromadb can't build on 3.13) -----------------
+# -- 1. find Python (3.10+) ---------------------------------------------------
 $pyInfo = Find-Python
 $global:pyInfo = $pyInfo
 

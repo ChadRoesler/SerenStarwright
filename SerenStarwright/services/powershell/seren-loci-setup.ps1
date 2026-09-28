@@ -99,7 +99,7 @@ Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenLoci setup (Windows)" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 
-# -- 1. find Python (3.10-3.12; torch in [vector] needs 3.12 at most) ---------
+# -- 1. find Python (3.10+) ---------------------------------------------------
 $pyInfo = Find-Python
 $global:pyInfo = $pyInfo
 

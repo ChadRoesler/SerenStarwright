@@ -138,8 +138,8 @@ echo -e "${G}==========================================${NC}"
 $IS_MAC && echo -e "${G}  SerenMemory setup (macOS)${NC}" || echo -e "${G}  SerenMemory setup (Linux)${NC}"
 echo -e "${G}==========================================${NC}"
 
-# -- 1. find Python (3.10-3.12; chromadb can't build on 3.13) ------------------
-PYBIN="$(find_python)"   # lib's find_python caps at 3.12 by default - good here
+# -- 1. find Python (3.10+) ---------------------------------------------------
+PYBIN="$(find_python)"
 
 [[ -n "$REF" && -z "$REPO" ]] && REPO="ChadRoesler/SerenMemory"
 

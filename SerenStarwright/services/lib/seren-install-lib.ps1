@@ -9,7 +9,7 @@
 #  Provides:
 #    Step / Ok / Warn / Die         - colored output helpers
 #    Find-Upward                    - reorg-robust file locator
-#    Find-Python                    - locate Python 3.10-3.12 (default)
+#    Find-Python                    - locate Python 3.10+ (prefers 3.12-3.10)
 #    Find-Python-NoUpper            - locate Python 3.10+ (SCC)
 #    Resolve-Wheel                  - resolve -Wheel / -Local / -Repo / PyPI
 #    Resolve-LocalWheel             - the dev wheelhouse (seren-dev-publish)
@@ -511,30 +511,41 @@ function Find-Upward {
     return $null
 }
 
-# -- find a usable Python 3.10-3.12 -------------------------------------------
+# -- find a usable Python 3.10+ ----------------------------------------------
+# Prefers 3.12, 3.11, 3.10 (the versions every service has run on longest),
+# then takes any newer 3.x. The window was 3.10-3.12 until 27 Sept 2026, when
+# the last caps (torch for Loci [vector], chromadb for Memory) were lifted: the
+# suites pass on 3.14 with every extra. -NoUpper (the Callosum card's "allow
+# 3.13") is kept so callers still parse; every card gets the same preference.
 function Find-Python {
-    param([switch] $NoUpper)   # $NoUpper → allow 3.13 (SCC)
-    Step "Finding a usable Python$(if ($NoUpper) { ' (3.10+)' } else { ' (3.10-3.12)' })"
-    $candidates = @("python", "py -3.12", "py -3.11", "py -3.10")
-    if ($NoUpper) { $candidates = @("python", "py -3.13", "py -3.12", "py -3.11", "py -3.10") }
+    param([switch] $NoUpper)
+    Step "Finding a usable Python (3.10+, preferring 3.12-3.10)"
+    $passes = @(
+        @{ Cands = @("python", "py -3.12", "py -3.11", "py -3.10");
+           Ok = '^3\.(10|11|12)$' },
+        @{ Cands = @("python", "py -3.14", "py -3.13", "py -3"); Ok = '^3\.(1\d)$' }
+    )
     $pyBin = $null
-    foreach ($cand in $candidates) {
-        $parts = $cand.Split(" ")
-        $exe = $parts[0]
-        if (Get-Command $exe -ErrorAction SilentlyContinue) {
-            try {
-                $ver = & $exe $parts[1..($parts.Length-1)] -c "import sys; print('%d.%d'%sys.version_info[:2])" 2>$null
-            } catch { $ver = "" }
-            if ($NoUpper) {
-                if ($ver -match '^3\.(10|11|12|13)$') { $pyBin = $cand; break }
-            } else {
-                if ($ver -match '^3\.(10|11|12)$') { $pyBin = $cand; break }
+    foreach ($pass in $passes) {
+        foreach ($cand in $pass.Cands) {
+            $parts = $cand.Split(" ")
+            $exe = $parts[0]
+            if (Get-Command $exe -ErrorAction SilentlyContinue) {
+                # Skip 1, never [1..(Length-1)]: for a one-word candidate that
+                # range is 1..0, which PowerShell reads as [1],[0] - it passed
+                # "python" to python, so the bare 'python' never matched.
+                $rest = @($parts | Select-Object -Skip 1)
+                try {
+                    $ver = & $exe $rest -c "import sys; print('%d.%d'%sys.version_info[:2])" 2>$null
+                } catch { $ver = "" }
+                if ($ver -match $pass.Ok) { $pyBin = $cand; break }
             }
         }
+        if ($pyBin) { break }
     }
     if (-not $pyBin) { Die "No suitable Python found. Install from python.org or 'winget install Python.Python.3.12'." }
     $pyArr = $pyBin.Split(" ")
-    $pyExe = $pyArr[0]; $pyArgs = $pyArr[1..($pyArr.Length-1)]
+    $pyExe = $pyArr[0]; $pyArgs = @($pyArr | Select-Object -Skip 1)
     $pyVer = & $pyExe $pyArgs -c "import sys; print('%d.%d.%d'%sys.version_info[:3])"
     Ok "Using '$pyBin' (Python $pyVer)"
     return @{ Exe = $pyExe; Args = $pyArgs; Bin = $pyBin; Ver = $pyVer }

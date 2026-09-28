@@ -4,12 +4,24 @@
 #
 # Removes everything seren-prepare-node.sh installs:
 #   - All venvs at /mnt/nvme/seren-venvs/* and ~/seren-venvs/*
-#   - Service repos: ~/Kokoro-FastAPI, ~/ComfyUI, ~/llama.cpp
+#   - Service repos and binaries: ~/Kokoro-FastAPI, ~/ComfyUI, ~/llama.cpp,
+#     ~/whisper.cpp
+#   - The node services' start/stop scripts (~/start_{whisper,llama,kokoro}.sh
+#     and the stop_ twins), ~/seren-llama.env, and their manifests in
+#     ~/.seren/services, so the Observatory stops listing what cannot start
 #   - Staged prebuilts: ~/seren-prebuilts/
 #   - User pip packages on NVMe: /mnt/nvme/pip-packages/, /mnt/nvme/pip-cache/
-#   - Persistence dirs: ~/seren-memory/
+#   - Persistence dirs: ~/seren-memory/, ~/seren-logs/
 #   - Phase tracker: ~/.seren/node-state.json (and the legacy
-#     .seren-setup.state.json, for a node prepped before it moved)
+#     .seren-setup.state.json, for a node prepped before it moved), and the
+#     node manifest ~/.seren/node.json, which the next prep writes again
+#
+# Optionally (with --models):
+#   - Models and build output: ~/models or /mnt/nvme/models (the llama ggufs,
+#     the whisper ggml files), /mnt/nvme/comfyui-models, and the Ms.MoE run
+#     root (/mnt/nvme/msMoEMaker or ~/msMoEMaker). Kept by default: they are
+#     tens of gigabytes and slow to fetch, and the installers skip a model that
+#     is already there, so a re-prep after a plain wipe is quick.
 #
 # Optionally (with --deep):
 #   - Removes /usr/local/bin/python3.10 + /usr/local/lib/python3.10
@@ -30,6 +42,7 @@
 #   bash seren-wipe.sh --dry-run          # show what would be removed, do nothing
 #   bash seren-wipe.sh --yes              # skip confirmation prompt (CAREFUL)
 #   bash seren-wipe.sh --deep             # ALSO remove python/sqlite/sudoers/etc
+#   bash seren-wipe.sh --models           # ALSO remove models and build output
 #   bash seren-wipe.sh --deep --yes       # full reset, no prompts
 #   bash seren-wipe.sh -u youruser          # specify target user (default: invoking user)
 # ══════════════════════════════════════════════════════════════
@@ -53,6 +66,7 @@ TARGET_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 DRY_RUN=false
 ASSUME_YES=false
 DEEP=false
+MODELS=false
 
 usage() {
     cat <<EOF
@@ -65,6 +79,9 @@ Options:
       --deep        Also remove python3.10, sqlite3.45, systemd unit,
                     sudoers, and reset hostname. Slower to recover from
                     (foundation rebuilds these from prebuilts/source).
+      --models      Also remove models and build output (llama/whisper
+                    models, ComfyUI models, the Ms.MoE run root). Kept by
+                    default: big, slow to fetch, and reused by a re-prep.
   -h, --help        Show this help
 
 Examples:
@@ -81,6 +98,7 @@ while [[ $# -gt 0 ]]; do
         --dry-run)   DRY_RUN=true; shift ;;
         -y|--yes)    ASSUME_YES=true; shift ;;
         --deep)      DEEP=true; shift ;;
+        --models)    MODELS=true; shift ;;
         -h|--help)   usage; exit 0 ;;
         *)           fail "Unknown option: $1" ;;
     esac
@@ -92,13 +110,17 @@ fi
 
 USER_HOME="/home/$TARGET_USER"
 [ "$TARGET_USER" = "root" ] && USER_HOME="/root"
+# Tests point both roots at a scratch folder (the SEREN_TEST_HOME convention
+# common.sh uses), so a test run can never reach a real home or NVMe.
+[ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
+NVME="${SEREN_TEST_NVME:-/mnt/nvme}"
 
 # ─────────────────────────────────────────────────────────────
 # Build the target list - what we'd remove
 # ─────────────────────────────────────────────────────────────
 SHALLOW_TARGETS=(
     # Venvs (NVMe-backed + home symlinks)
-    "/mnt/nvme/seren-venvs"
+    "$NVME/seren-venvs"
     "$USER_HOME/seren-venvs"
 
     # Staged prebuilts
@@ -108,10 +130,27 @@ SHALLOW_TARGETS=(
     "$USER_HOME/Kokoro-FastAPI"
     "$USER_HOME/ComfyUI"
     "$USER_HOME/llama.cpp"
+    "$USER_HOME/whisper.cpp"
+
+    # The node services (whisper, llama, Kokoro): their start/stop scripts, the
+    # llama env file, and the manifests the Observatory lists them from. Left
+    # behind, a wiped node keeps listing services that cannot start. Named, not
+    # globbed: ~/.seren/services also holds manifests other installers wrote.
+    "$USER_HOME/start_whisper.sh"
+    "$USER_HOME/stop_whisper.sh"
+    "$USER_HOME/start_llama.sh"
+    "$USER_HOME/stop_llama.sh"
+    "$USER_HOME/start_kokoro.sh"
+    "$USER_HOME/stop_kokoro.sh"
+    "$USER_HOME/seren-llama.env"
+    "$USER_HOME/.seren/services/whisper.json"
+    "$USER_HOME/.seren/services/llama.json"
+    "$USER_HOME/.seren/services/kokoro.json"
+    "$USER_HOME/.seren/node.json"
 
     # User pip packages on NVMe (the .local symlinks point here)
-    "/mnt/nvme/pip-packages"
-    "/mnt/nvme/pip-cache"
+    "$NVME/pip-packages"
+    "$NVME/pip-cache"
 
     # Persistence dirs
     "$USER_HOME/seren-memory"
@@ -130,6 +169,16 @@ SHALLOW_TARGETS=(
 # on a box that no longer has a foundation. Named explicitly rather than left to
 # the find below, because "node-state.json" is a generic enough filename that
 # matching it anywhere under a home directory could hit something unrelated.
+# Models and build output (--models). Both the NVMe and the home spelling:
+# the installers pick whichever exists, and a node may have moved between them.
+MODEL_TARGETS=(
+    "$USER_HOME/models"
+    "$NVME/models"
+    "$NVME/comfyui-models"
+    "$USER_HOME/msMoEMaker"
+    "$NVME/msMoEMaker"
+)
+
 STATE_FILES=()
 [ -f "$USER_HOME/.seren/node-state.json" ] && STATE_FILES+=("$USER_HOME/.seren/node-state.json")
 
@@ -184,6 +233,7 @@ echo -e "${GREEN}═════════════════════
 echo ""
 log "Target user:   $TARGET_USER"
 log "Mode:          $($DEEP && echo 'DEEP (system-level)' || echo 'shallow (services + venvs)')"
+log "Models:        $($MODELS && echo 'REMOVE (--models)' || echo 'kept')"
 log "Dry run:       $DRY_RUN"
 echo ""
 
@@ -216,6 +266,12 @@ echo "User-local pip leftovers (always):"
 for t in "${LOCAL_DIRS[@]}"; do print_target "$t"; done
 echo ""
 
+if $MODELS; then
+    echo "Models and build output (--models):"
+    for t in "${MODEL_TARGETS[@]}"; do print_target "$t"; done
+    echo ""
+fi
+
 if $DEEP; then
     echo "System-level removals (--deep):"
     for t in "${DEEP_TARGETS[@]}"; do print_target "$t"; done
@@ -234,6 +290,11 @@ if $DEEP; then
 fi
 
 echo "Will NOT touch:"
+if ! $MODELS; then
+    for t in "${MODEL_TARGETS[@]}"; do
+        [ -e "$t" ] && echo -e "  ${BLUE}·${NC} $t (models and build output; --models removes them)"
+    done
+fi
 echo -e "  ${BLUE}·${NC} extlinux.conf kernel cmdline (Coral cmdline args left in place)"
 echo -e "  ${BLUE}·${NC} /etc/modprobe.d/coral-blacklist.conf"
 echo -e "  ${BLUE}·${NC} /lib/modules/$(uname -r)/.../gasket.ko, apex.ko"
@@ -294,6 +355,11 @@ done
 if [ -L "$USER_HOME/.cache/pip" ]; then
     sudo rm -f "$USER_HOME/.cache/pip"
     log "removed symlink: $USER_HOME/.cache/pip"
+fi
+
+# Models (--models)
+if $MODELS; then
+    for t in "${MODEL_TARGETS[@]}"; do remove_path "$t"; done
 fi
 
 # Deep removals

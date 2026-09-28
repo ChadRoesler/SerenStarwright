@@ -91,6 +91,15 @@ grep -qF "manifests_dir: '\$(\$layout.Root)\\manifests'" "$HERE/services/powersh
   && grep -qF 'if ($layout.Root) { "`n  manifests_dir:' "$HERE/services/powershell/seren-observatory-setup.ps1" \
   && ok_ "powershell card: manifests_dir under a root only" || bad "powershell card: no rooted manifests_dir"
 
+echo "== setup-seren-service.ps1 (Windows): a manifest and the per-service grant"
+PSCORE="$HERE/services/lib/setup-seren-service.ps1"
+grep -qF 'service_type    = "windows_service"' "$PSCORE" && grep -qF 'windows_service = $ServiceName' "$PSCORE" \
+  && ok_ "the PowerShell core writes a windows_service manifest" || bad "no windows_service manifest in the PowerShell core"
+grep -qF 'Join-Path $installRoot "manifests"' "$PSCORE" && grep -qF 'Join-Path $env:USERPROFILE ".seren\services"' "$PSCORE" \
+  && ok_ "...into <root>\\manifests under a root, ~\\.seren\\services otherwise" || bad "the PowerShell core's roster choice is wrong"
+grep -qF '$ace = "(A;;RPWPLCLO;;;$ctlSid)"' "$PSCORE" && grep -qF '& sc.exe sdset $ServiceName $new' "$PSCORE" \
+  && ok_ "...and grants start/stop/query on that one service (sc sdset)" || bad "no per-service grant in the PowerShell core"
+
 echo "== seren-register-services.sh backfills into each unit's roster"
 H="$T/home4"; R="$H/seren/wren"
 fake_install "$R/apps/loci" "$R/venvs/loci"

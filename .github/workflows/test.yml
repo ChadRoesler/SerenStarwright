@@ -59,6 +59,9 @@ jobs:
       - name: kokoro on a node - uvicorn from the repo root, cpu/cuda, the Observatory manifest
         run: bash SerenStarwright/nodes/tests/test-kokoro-install.sh
 
+      - name: seren-wipe removes the node services, keeps models unless --models
+        run: bash SerenStarwright/nodes/tests/test-wipe.sh
+
       - name: --local installs from a dev wheelhouse (real pip, no network)
         run: bash SerenStarwright/services/tests/test-local-wheelhouse.sh
 

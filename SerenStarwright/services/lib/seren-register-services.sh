@@ -53,20 +53,10 @@ command -v systemctl >/dev/null 2>&1 || die "no systemctl - this is for systemd 
 SERVICES_DIR="$HOME/.seren/services"
 HEALTH_PATH="/health"
 
-# The install root a unit lives in, or nothing. Design note: two named
-# installs on one host each run an Observatory, so a unit from one must not be
-# backfilled into the shared roster where the other lists it. The shape is
-# seren_layout's (seren-install-lib.sh): <root>/apps/<svc> + <root>/venvs/<svc>,
-# both under the SAME root. Kept in step with setup-seren-service.sh by hand -
-# neither file sources the library.
-install_root_of() {
-  local app="${1%/}" venv="${2%/}"
-  local app_up venv_up
-  app_up="$(dirname "$app")"; venv_up="$(dirname "$venv")"
-  [[ "$(basename "$app_up")" == "apps" && "$(basename "$venv_up")" == "venvs" ]] || return 0
-  [[ "$(dirname "$app_up")" == "$(dirname "$venv_up")" ]] && echo "$(dirname "$app_up")"
-  return 0
-}
+# install_root_of: the install root a unit lives in, or nothing. Shared with
+# setup-seren-service.sh so the two cannot disagree about what a root is.
+# shellcheck source=seren-layout.sh
+source "$(dirname "${BASH_SOURCE[0]}")/seren-layout.sh"
 
 # Units, whether running or not: a stopped service is still installed, and an
 # Observatory that only lists what happens to be up is a liar by omission.

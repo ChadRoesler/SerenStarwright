@@ -42,19 +42,25 @@ for a in "$@"; do
 done
 
 # -- find a Python we can build a venv with -----------------------------------
-# Same 3.10-3.12 window as the service installers: below that the typing
-# syntax here won't parse, above it some downstream deps still have no wheels.
+# Same rule as the service installers' find_python: prefer 3.12-3.10, then any
+# newer 3.x. Below 3.10 the typing syntax here won't parse. (The window was
+# 3.10-3.12 until 27 Sept 2026, when the last dependency caps were lifted.)
 PYBIN=""
 for c in python3.12 python3.11 python3.10 python3 python; do
   command -v "$c" >/dev/null 2>&1 || continue
   v="$("$c" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "")"
-  # 3.13 is NOT in this list, and it used to be: the TUI would bootstrap on a
-  # 3.13 while every installer it launches refuses one, so the first thing a
-  # 3.13-only box saw was an installer failing on Python after the TUI had
-  # happily started. Same window everywhere, or the window means nothing.
+  # Keep this in step with find_python: the TUI once bootstrapped on a 3.13
+  # while every installer it launched refused one. Same window everywhere, or
+  # the window means nothing.
   case "$v" in 3.10|3.11|3.12) PYBIN="$c"; break ;; esac
 done
-[[ -n "$PYBIN" ]] || die "No Python 3.10-3.12 found (3.13+ is not accepted by the installers yet).
+if [[ -z "$PYBIN" ]]; then
+  for c in python3.14 python3.13 python3 python; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    "$c" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null && { PYBIN="$c"; break; }
+  done
+fi
+[[ -n "$PYBIN" ]] || die "No Python 3.10 or newer found.
   Debian/Ubuntu:  sudo apt install python3 python3-venv
   Fedora:         sudo dnf install python3"
 

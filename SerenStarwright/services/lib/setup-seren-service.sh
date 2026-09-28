@@ -320,15 +320,10 @@ fi
 # The root is not a flag here: the wrappers pass --app-dir and --venv only, and
 # seren_layout (seren-install-lib.sh) already fixes their shape under a root -
 # <root>/apps/<svc> and <root>/venvs/<svc>. Both pointing into the SAME parent
-# is the root; anything else is the old layout. Prints the root, or nothing.
-install_root_of() {
-  local app="${1%/}" venv="${2%/}"
-  local app_up venv_up
-  app_up="$(dirname "$app")"; venv_up="$(dirname "$venv")"
-  [[ "$(basename "$app_up")" == "apps" && "$(basename "$venv_up")" == "venvs" ]] || return 0
-  [[ "$(dirname "$app_up")" == "$(dirname "$venv_up")" ]] && echo "$(dirname "$app_up")"
-  return 0
-}
+# is the root; anything else is the old layout. install_root_of lives in
+# seren-layout.sh, shared with seren-register-services.sh.
+# shellcheck source=seren-layout.sh
+source "$(dirname "${BASH_SOURCE[0]}")/seren-layout.sh"
 if ! $IS_MAC; then
   INSTALL_ROOT="$(install_root_of "$APP_DIR" "$VENV_DIR")"
   if [[ -n "$INSTALL_ROOT" ]]; then
