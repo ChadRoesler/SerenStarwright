@@ -179,21 +179,36 @@ jobs:
           grep -q "Nothing to do" out.txt || { echo "wrong error for no args:"; cat out.txt; exit 1; }
           echo "no-args refused with the right message"
 
-  powershell:
+  powershellexe:
     # verify-powershell.ps1 existed and was never run by CI, so "the PowerShell
     # side works" was a claim nobody had checked since it was written. This
     # runs it under BOTH engines a Windows user might have: Windows PowerShell
     # 5.1 (powershell.exe, the strict one) and PowerShell 7 (pwsh).
-    name: PowerShell installers (${{ matrix.shell }})
+    name: PowerShell installers (powershell.exe)
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
       - name: verify-powershell.ps1
-        shell: ${{ matrix.shell }}
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\SerenStarwright\verify-powershell.ps1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  pwshexe:
+    # verify-powershell.ps1 existed and was never run by CI, so "the PowerShell
+    # side works" was a claim nobody had checked since it was written. This
+    # runs it under BOTH engines a Windows user might have: Windows PowerShell
+    # 5.1 (powershell.exe, the strict one) and PowerShell 7 (pwsh).
+    name: PowerShell installers (pwsh)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify-powershell.ps1
+        shell: pwsh
         run: |
           & "$env:GITHUB_WORKSPACE\SerenStarwright\verify-powershell.ps1"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
