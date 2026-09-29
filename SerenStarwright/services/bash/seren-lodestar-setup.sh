@@ -33,6 +33,9 @@
 #                     runs it), local (run it on this box), or self (not built yet)
 #    --ripple-command CMD  For local: what runs (default: claude -p "{message}")
 #    --ripple-run-as USER  For local: whose account (default: you, the installer)
+#    --ripple-claude DIR  For local, the model is Claude Code: `claude -p` run in
+#                     DIR (where its memory MCP servers are registered) with
+#                     those tools pre-approved. Implies --ripple-target local
 #                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
@@ -82,6 +85,7 @@ UPDATES_OFF=false
 RIPPLE_TARGET=""
 RIPPLE_COMMAND=""
 RIPPLE_RUN_AS=""
+RIPPLE_CLAUDE=""
 CORP=false
 INSTANCE=""
 # Starwright's install root (~/seren/<install>): venvs, apps, stores and
@@ -128,6 +132,7 @@ while [[ $# -gt 0 ]]; do
     --ripple-target)  RIPPLE_TARGET="$2"; shift 2 ;;
     --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
     --ripple-run-as)  RIPPLE_RUN_AS="$2"; shift 2 ;;
+    --ripple-claude)  RIPPLE_CLAUDE="$2"; shift 2 ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --root)     ROOT="$2"; shift 2 ;;
@@ -138,6 +143,15 @@ while [[ $# -gt 0 ]]; do
     *)           die "unknown flag: $1  (try --help)" ;;
   esac
 done
+
+# Refused here, before anything is installed.
+RIPPLE_CLAUDE_LINES=""
+if [[ -n "$RIPPLE_CLAUDE" ]]; then
+  [[ -z "$RIPPLE_TARGET" ]] && RIPPLE_TARGET=local
+  [[ "$RIPPLE_TARGET" == local ]] || die "--ripple-claude wakes Claude Code on THIS box (--ripple-target local). For a model on node '$RIPPLE_TARGET', give that node's Observatory card --ripple-claude"
+  [[ -z "$RIPPLE_COMMAND" ]] || die "--ripple-claude writes the command itself; drop --ripple-command"
+  RIPPLE_CLAUDE_LINES="$(seren_claude_ripple_lines "$RIPPLE_CLAUDE" 2 "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")" || exit 1
+fi
 
 seren_layout "lodestar"
 CFG_PATH="$APP_DIR/seren-lodestar.yaml"
@@ -247,7 +261,10 @@ if [[ -n "$RIPPLE_TARGET" ]]; then
     printf '# Where a hippocampus'"'"'s ripple goes (a brief at bedtime, a review when\n'
     printf '# drafts wait): a node name (its Observatory runs it), local, or self.\n'
     printf 'ripple:\n  target: %s\n' "$(_yq "$RIPPLE_TARGET")"
-    if [[ "$RIPPLE_TARGET" == "local" ]]; then
+    if [[ "$RIPPLE_TARGET" == "local" && -n "$RIPPLE_CLAUDE_LINES" ]]; then
+      printf '%s\n' "$RIPPLE_CLAUDE_LINES"
+      printf '  run_as: %s\n' "$(_yq "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")"
+    elif [[ "$RIPPLE_TARGET" == "local" ]]; then
       printf '  command: %s\n' "$(_yq "${RIPPLE_COMMAND:-$RIPPLE_DEFAULT_COMMAND}")"
       # Inferred at setup: the person running the install (Chad, 28 Sept 2026).
       printf '  run_as: %s\n' "$(_yq "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")"

@@ -51,6 +51,9 @@
 #    --repo SLUG         GitHub release repo
 #    --service           Autostart via systemd/launchd
 #    --mcp               Install the [mcp] extra: the sleep's tools at /mcp for the main model
+#    --claude-mcp        Register this service with Claude Code at user scope (every
+#                        folder) as <instance>-hippocampus; the bearer is read from this
+#                        config when Claude connects. Implies --mcp
 #    --corp              Route TLS through OS trust store
 #    --instance NAME     Instance name
 #    --root DIR     Install root: venvs, apps, stores, logs in one folder
@@ -118,6 +121,7 @@ REPO=""
 INSTALL_SERVICE=false
 SERVICE_USER=""
 MCP=false
+CLAUDE_MCP=false
 CORP=false
 UPDATES_OFF=false
 INSTANCE=""
@@ -172,6 +176,7 @@ while [[ $# -gt 0 ]]; do
     --repo)         REPO="$2"; shift 2 ;;
     --service)      INSTALL_SERVICE=true; shift ;;
     --mcp)          MCP=true; shift ;;
+    --claude-mcp) CLAUDE_MCP=true MCP=true; shift ;;
     --corp)         CORP=true; shift ;;
     --no-updates)   UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
@@ -205,7 +210,7 @@ RIPPLE_CLAUDE_LINES=""
 if [[ -n "$RIPPLE_CLAUDE" ]]; then
   [[ -z "$RIPPLE" ]] && RIPPLE=script
   [[ "$RIPPLE" == script ]] || die "--ripple-claude wakes Claude Code on THIS box (a script ripple). For a model on another box, point --ripple endpoint at its Observatory or Lodestar and give that card --ripple-claude"
-  RIPPLE_CLAUDE_LINES="$(seren_claude_ripple_lines "$RIPPLE_CLAUDE" 2)" || exit 1
+  RIPPLE_CLAUDE_LINES="$(seren_claude_ripple_lines "$RIPPLE_CLAUDE" 2 "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")" || exit 1
 fi
 case "$RIPPLE" in
   ""|off|script) ;;
@@ -387,6 +392,7 @@ write_launcher "$APP_DIR" "seren-hippocampus" "$VPY" "seren_hippocampus" "$CFG_P
 
 # -- 6. optional autostart ----------------------------------------------------
 $INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-hippocampus" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
+$CLAUDE_MCP && seren_claude_mcp_register "hippocampus"
 
 # -- done -------------------------------------------------------------------
 echo

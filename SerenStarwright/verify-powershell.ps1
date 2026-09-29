@@ -609,6 +609,53 @@ $osrc = [System.IO.File]::ReadAllText((Join-Path $ScriptDir "services\powershell
 if ($osrc -match [regex]::Escape('$rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }')) {
     Good "run_as defaults to the person running the install" } else { Bad "no run_as default in the observatory card" }
 
+# -RippleClaude on the receiving cards (28 Sept 2026): the model on this box is
+# Claude Code. The command and cwd come from seren-claude-ripple.py
+# (services/tests/test-claude-ripple.sh); here, that the flag is offered and a
+# conflicting pair is refused before anything installs.
+Section "observatory + lodestar cards: -RippleClaude"
+$lode = & (Join-Path $ScriptDir "services\powershell\seren-lodestar-setup.ps1") -Describe | ConvertFrom-Json
+if ($obs.flags -contains "ripple-claude") { Good "observatory -Describe advertises ripple-claude" } else { Bad "observatory -Describe is missing ripple-claude" }
+if ($lode.flags -contains "ripple-claude") { Good "lodestar -Describe advertises ripple-claude" } else { Bad "lodestar -Describe is missing ripple-claude" }
+foreach ($case in @(
+        @{c = "seren-observatory-setup.ps1"; a = @("-RippleClaude", $env:TEMP, "-RippleCommand", "x"); w = "drop -RippleCommand"},
+        @{c = "seren-lodestar-setup.ps1"; a = @("-RippleClaude", $env:TEMP, "-RippleTarget", "desktop"); w = "give that node's Observatory card -RippleClaude"},
+        @{c = "seren-lodestar-setup.ps1"; a = @("-RippleClaude", $env:TEMP, "-RippleCommand", "x"); w = "drop -RippleCommand"})) {
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $ScriptDir "services\powershell\$($case.c)")) + $case.a
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String } finally { $ErrorActionPreference = $prevEap }
+    if ($LASTEXITCODE -ne 0 -and $out -match [regex]::Escape($case.w)) { Good "$($case.c) $($case.a[0]) $($case.a[2]) is refused ($($case.w))" }
+    else { Bad "$($case.c) $($case.a -join ' ') was not refused: $out" }
+}
+
+# -ClaudeMcp (28 Sept 2026): the five MCP cards register their service with
+# Claude Code at user scope. The registration passes a JSON entry to claude.exe,
+# and Windows PowerShell 5.1 hands embedded double quotes to a native command
+# unescaped - so the lib quotes by the CommandLineToArgvW rules itself. Proven
+# here through a real .exe (python) that prints what it received.
+Section "-ClaudeMcp: registered at user scope, the JSON intact"
+foreach ($c in "memory", "loci", "margin", "corpus-callosum", "hippocampus") {
+    $cd = & (Join-Path $ScriptDir "services\powershell\seren-$c-setup.ps1") -Describe | ConvertFrom-Json
+    if ($cd.switches -contains "claude-mcp") { Good "$c -Describe offers claude-mcp as a switch" } else { Bad "$c is missing the claude-mcp switch" }
+}
+$py = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $py) { Note "no python.exe on PATH - skipping the quoting round trip. Not a failure." }
+else { & {
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $entry = '{"type":"http","url":"http://127.0.0.1:7267/mcp","headersHelper":"\"C:\\Program Files\\py\\python.exe\" \"C:\\s p\\seren-mcp-headers.py\" \"C:\\x\\seren-memory.yaml\""}'
+    $sent = @("mcp", "add-json", "--scope", "user", "wren-memory", $entry, 'trailing\', "")
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $py.Source
+    # Python compares (5.1's ConvertFrom-Json returns an array as one object).
+    $psi.Arguments = (@("-c", "import json,os,sys; a=sys.argv[1:]; print('same' if a == json.loads(os.environ['SEREN_EXPECT']) else json.dumps(a))") + $sent |
+                      ForEach-Object { ConvertTo-SerenNativeArg $_ }) -join " "
+    $psi.EnvironmentVariables["SEREN_EXPECT"] = ConvertTo-Json -InputObject $sent -Compress
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true
+    $p = [System.Diagnostics.Process]::Start($psi); $got = $p.StandardOutput.ReadToEnd().Trim(); $p.WaitForExit()
+    if ($got -eq "same") { Good "a JSON entry with quotes, backslashes and spaces reaches the .exe byte for byte" }
+    else { Bad "native quoting mangled the arguments: sent $(ConvertTo-Json -InputObject $sent -Compress) got $got" }
+} }
+
 # -- the callosum card: only the stores it was given (25 Sept 2026) ------------
 # Chad: the callosum holds n stores, better with one of each, either alone
 # works - "im a warning message not a cop." The card wrote memory:7420 AND

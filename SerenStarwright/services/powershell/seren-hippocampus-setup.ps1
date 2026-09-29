@@ -58,6 +58,9 @@ param(
   [string] $RepoDir     = "",
   [switch] $Pypi,
   [switch] $Mcp,        # [mcp] extra: the sleep's tools at /mcp for the main model
+  # Register with Claude Code at user scope (every folder) as <instance>-hippocampus; the bearer
+  # is read from this config when Claude connects. Implies -Mcp.
+  [switch] $ClaudeMcp,
   [switch] $Corp,
   [switch] $NoUpdates,
   [string] $ServiceUser = "",
@@ -126,6 +129,7 @@ if ($RippleClaude) {
 if (($ModelServer -or $ModelPath) -and -not ($ModelServer -and $ModelPath)) {
     Die "-ModelServer and -ModelPath go together (the server and the .gguf it serves)"
 }
+if ($ClaudeMcp) { $Mcp = [switch]$true }
 $layout  = Get-SerenLayout -Root $Root -Short "hippocampus" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-hippocampus"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -234,9 +238,7 @@ switch ($Ripple) {
         if ($RippleClaude) {
             # Claude Code, read off this box: run in the project, memory tools
             # pre-approved (seren-claude-ripple.py prints the two yaml lines).
-            $helper = Join-Path $PSScriptRoot "..\lib\seren-claude-ripple.py"
-            $claudeLines = (& $vpy $helper $RippleClaude --yaml 2 2>&1 | Out-String).TrimEnd()
-            if ($LASTEXITCODE -ne 0) { Die "-RippleClaude ${RippleClaude}: $claudeLines" }
+            $claudeLines = Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $who
             $rippleLines = "`nripple:`n  # At bedtime and when drafts wait, the hippocampus wakes Claude Code.`n  type: script`n$claudeLines`n  run_as: $(ConvertTo-SerenYamlQuoted $who)"
         } else {
             $rippleLines = "`nripple:`n  # At bedtime and when drafts wait, the hippocampus asks the model.`n  type: script`n  command: $(ConvertTo-SerenYamlQuoted $cmd)`n  run_as: $(ConvertTo-SerenYamlQuoted $who)"
@@ -301,6 +303,7 @@ if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-hippoc
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($HippoHost -eq "0.0.0.0") { "127.0.0.1" } else { $HippoHost }
+if ($ClaudeMcp) { Register-SerenClaudeMcp -Short "hippocampus" -Vpy $vpy -AppDir $AppDir -CfgPath $CfgPath -Url "http://${connectHost}:$Port/mcp" -Instance $Instance }
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenHippocampus is set up +" -ForegroundColor Green

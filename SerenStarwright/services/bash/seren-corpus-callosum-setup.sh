@@ -22,6 +22,9 @@
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via systemd/launchd
 #    --mcp            Install the [mcp] extra
+#    --claude-mcp        Register this service with Claude Code at user scope (every
+#                        folder) as <instance>-corpuscallosum; the bearer is read from this
+#                        config when Claude connects. Implies --mcp
 #    --corp           Route TLS through OS trust store
 #    --instance NAME  Instance name
 #    --root DIR  Install root: venvs, apps, stores, logs in one folder
@@ -77,6 +80,7 @@ INSTALL_SERVICE=false
 # Empty = the unit runs as whoever installs it. Only meaningful with --service.
 SERVICE_USER=""
 MCP=false
+CLAUDE_MCP=false
 UPDATES_OFF=false
 CORP=false
 INSTANCE=""
@@ -134,6 +138,7 @@ while [[ $# -gt 0 ]]; do
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
+    --claude-mcp) CLAUDE_MCP=true MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
@@ -301,6 +306,7 @@ write_launcher "$APP_DIR" "seren-corpus-callosum" "$VPY" "seren_corpus_callosum"
 
 # -- 6. optional autostart ----------------------------------------------------
 $INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-corpus-callosum" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
+$CLAUDE_MCP && seren_claude_mcp_register "corpuscallosum"
 
 # -- done -------------------------------------------------------------------
 echo

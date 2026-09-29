@@ -22,6 +22,9 @@
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via systemd/launchd
 #    --mcp            Install the [mcp] extra
+#    --claude-mcp        Register this service with Claude Code at user scope (every
+#                        folder) as <instance>-loci; the bearer is read from this
+#                        config when Claude connects. Implies --mcp
 #    --vector         Install the [vector] extra (sqlite-vec + sentence-transformers)
 #    --corp           Route TLS through OS trust store
 #    --instance NAME  Instance name
@@ -73,6 +76,7 @@ INSTALL_SERVICE=false
 # Empty = the unit runs as whoever installs it. Only meaningful with --service.
 SERVICE_USER=""
 MCP=false
+CLAUDE_MCP=false
 UPDATES_OFF=false
 CORP=false
 VECTOR=false
@@ -113,6 +117,7 @@ while [[ $# -gt 0 ]]; do
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
+    --claude-mcp) CLAUDE_MCP=true MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
     --vector)    VECTOR=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
@@ -219,6 +224,7 @@ write_launcher "$APP_DIR" "seren-loci" "$VPY" "seren_loci" "$CFG_PATH"
 
 # -- 6. optional autostart ----------------------------------------------------
 $INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-loci" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
+$CLAUDE_MCP && seren_claude_mcp_register "loci"
 
 # -- done -------------------------------------------------------------------
 echo

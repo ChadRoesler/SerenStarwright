@@ -30,6 +30,10 @@
 #    --ripple-command CMD  What a ripple runs (default: claude -p "{message}")
 #    --ripple-run-as USER  Whose account it runs as (default: you, the person
 #                     running this - a root service drops to you)
+#    --ripple-claude DIR  The model is Claude Code: `claude -p` run in DIR (the
+#                     project its memory MCP servers are registered for) with
+#                     those servers' tools pre-approved - read from the ripple
+#                     user's ~/.claude.json. Implies --ripple
 #                     (it is ON by default; this never blocks install)
 #    -h, --help       This help
 # ==========================================================================
@@ -78,6 +82,7 @@ UPDATES_OFF=false
 RIPPLE=false
 RIPPLE_COMMAND=""
 RIPPLE_RUN_AS=""
+RIPPLE_CLAUDE=""
 INSTANCE=""
 # Starwright's install root (~/seren/<install>): venvs, apps, stores and
 # logs under one folder, absolute paths. Empty = the old layout.
@@ -118,6 +123,7 @@ while [[ $# -gt 0 ]]; do
     --ripple)    RIPPLE=true; shift ;;
     --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
     --ripple-run-as)  RIPPLE_RUN_AS="$2"; shift 2 ;;
+    --ripple-claude)  RIPPLE_CLAUDE="$2"; RIPPLE=true; shift 2 ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --root)     ROOT="$2"; shift 2 ;;
@@ -128,6 +134,13 @@ while [[ $# -gt 0 ]]; do
     *)           die "unknown flag: $1  (try --help)" ;;
   esac
 done
+
+# Refused here, before anything is installed.
+RIPPLE_CLAUDE_LINES=""
+if [[ -n "$RIPPLE_CLAUDE" ]]; then
+  [[ -z "$RIPPLE_COMMAND" ]] || die "--ripple-claude writes the command itself; drop --ripple-command"
+  RIPPLE_CLAUDE_LINES="$(seren_claude_ripple_lines "$RIPPLE_CLAUDE" 2 "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")" || exit 1
+fi
 
 seren_layout "observatory"
 CFG_PATH="$APP_DIR/seren-observatory.yaml"
@@ -254,7 +267,7 @@ if $RIPPLE; then
 # message; the command is this config's. Needs the Observatory's bearer.
 ripple:
   enabled: true
-  command: $(_yq "${RIPPLE_COMMAND:-$RIPPLE_DEFAULT_COMMAND}")
+$(if [[ -n "$RIPPLE_CLAUDE_LINES" ]]; then printf '%s' "$RIPPLE_CLAUDE_LINES"; else printf '  command: %s' "$(_yq "${RIPPLE_COMMAND:-$RIPPLE_DEFAULT_COMMAND}")"; fi)
   run_as: $(_yq "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")
 YAML
 fi

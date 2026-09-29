@@ -33,6 +33,10 @@ param(
   [string] $RippleTarget  = "",
   [string] $RippleCommand = "",
   [string] $RippleRunAs   = "",
+  # For local, the model is Claude Code: `claude -p` run in this project folder
+  # (where its memory MCP servers are registered) with those tools pre-approved.
+  # Implies -RippleTarget local.
+  [string] $RippleClaude  = "",
   # -- service identity (only meaningful alongside -Service) -------------------
   # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
   # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
@@ -91,6 +95,13 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\lodestar" }
+if ($RippleClaude) {
+    if (-not $RippleTarget) { $RippleTarget = "local" }
+    if ($RippleTarget -ne "local") {
+        Die "-RippleClaude wakes Claude Code on THIS box (-RippleTarget local). For a model on node '$RippleTarget', give that node's Observatory card -RippleClaude"
+    }
+    if ($RippleCommand) { Die "-RippleClaude writes the command itself; drop -RippleCommand" }
+}
 $layout  = Get-SerenLayout -Root $Root -Short "lodestar" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-lodestar"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -176,7 +187,9 @@ if ($RippleTarget) {
         $rcmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
         # Inferred at setup: the person running the install (Chad, 28 Sept 2026).
         $rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
-        $rl += "`n  command: $(ConvertTo-SerenYamlQuoted $rcmd)`n  run_as: $(ConvertTo-SerenYamlQuoted $rwho)"
+        $rcmdLines = if ($RippleClaude) { Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $rwho }
+                     else { "  command: $(ConvertTo-SerenYamlQuoted $rcmd)" }
+        $rl += "`n$rcmdLines`n  run_as: $(ConvertTo-SerenYamlQuoted $rwho)"
     }
     $rl | Add-SerenTextFile -Path $CfgPath
     Ok "Ripples route to: $RippleTarget"

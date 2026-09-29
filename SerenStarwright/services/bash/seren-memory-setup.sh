@@ -22,6 +22,9 @@
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via systemd/launchd
 #    --mcp            Install the [mcp] extra
+#    --claude-mcp        Register this service with Claude Code at user scope (every
+#                        folder) as <instance>-memory; the bearer is read from this
+#                        config when Claude connects. Implies --mcp
 #    --st             Install the [st] extra (sentence-transformers + torch) - only
 #                     needed when storage.embedding_model names a model
 #    --corp           Route TLS through OS trust store
@@ -74,6 +77,7 @@ INSTALL_SERVICE=false
 # Empty = the unit runs as whoever installs it. Only meaningful with --service.
 SERVICE_USER=""
 MCP=false
+CLAUDE_MCP=false
 ST=false
 UPDATES_OFF=false
 CORP=false
@@ -114,6 +118,7 @@ while [[ $# -gt 0 ]]; do
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
+    --claude-mcp) CLAUDE_MCP=true MCP=true; shift ;;
     --st)        ST=true; shift ;;
     --corp)      CORP=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
@@ -219,6 +224,7 @@ write_launcher "$APP_DIR" "seren-memory" "$VPY" "seren_memory" "$CFG_PATH"
 
 # -- 6. optional autostart ----------------------------------------------------
 $INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-memory" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
+$CLAUDE_MCP && seren_claude_mcp_register "memory"
 
 # -- done -------------------------------------------------------------------
 echo

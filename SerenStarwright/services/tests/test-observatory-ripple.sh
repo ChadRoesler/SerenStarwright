@@ -49,6 +49,18 @@ out="$(render RIPPLE=true RIPPLE_RUN_AS=wren RIPPLE_COMMAND="C:\\tools\\claude.e
 out="$(render RIPPLE=false | yamlget "d")"
 [[ "$out" == "{}" ]] && ok_ "without --ripple nothing is written" || bad "unset: $out"
 
+echo "== --ripple-claude"
+grep -q '"ripple-claude"' <<<"$d" && ok_ "--describe offers --ripple-claude" || bad "--describe is missing --ripple-claude"
+# The lines seren-claude-ripple.py prints (test-claude-ripple.sh proves those).
+lines='  command: ["claude", "-p", "{message}", "--allowedTools", "mcp__wren-memory"]
+  cwd: "D:\\serenDaemon\\SerenCore"'
+out="$(render RIPPLE=true RIPPLE_CLAUDE_LINES="$lines" | yamlget "(d['ripple']['command'][-1], d['ripple']['cwd'], d['ripple']['run_as'])")"
+[[ "$out" == "('mcp__wren-memory', 'D:\\\\serenDaemon\\\\SerenCore', '$me')" ]] \
+  && ok_ "Claude Code's command and cwd go in, run as the installer" || bad "claude lines: $out"
+out="$(bash "$CARD" --ripple-claude "$T" --ripple-command x 2>&1)"; rc=$?
+[[ $rc -ne 0 && "$out" == *"drop --ripple-command"* ]] \
+  && ok_ "--ripple-claude with --ripple-command is refused before anything installs" || bad "conflict: rc=$rc $out"
+
 echo
 echo "  $PASS passed, $FAILS failed"
 exit $FAILS

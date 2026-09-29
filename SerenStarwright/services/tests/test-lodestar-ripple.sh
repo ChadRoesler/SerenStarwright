@@ -42,6 +42,16 @@ out="$(render RIPPLE_TARGET=local | yamlget "d['ripple']")"
 out="$(render RIPPLE_TARGET="" | yamlget "d")"
 [[ "$out" == "{}" ]] && ok_ "no --ripple-target writes nothing" || bad "unset: $out"
 
+grep -q '"ripple-claude"' <<<"$d" && ok_ "--describe offers --ripple-claude" || bad "--describe is missing --ripple-claude"
+lines='  command: ["claude", "-p", "{message}", "--allowedTools", "mcp__wren-memory"]
+  cwd: "/home/chad/seren"'
+out="$(render RIPPLE_TARGET=local RIPPLE_CLAUDE_LINES="$lines" | yamlget "(d['ripple']['target'], d['ripple']['command'][-1], d['ripple']['cwd'], d['ripple']['run_as'])")"
+[[ "$out" == "('local', 'mcp__wren-memory', '/home/chad/seren', '$me')" ]] \
+  && ok_ "--ripple-claude: local, Claude Code's command and cwd, run as the installer" || bad "claude lines: $out"
+out="$(bash "$CARD" --ripple-claude "$T" --ripple-target desktop 2>&1)"; rc=$?
+[[ $rc -ne 0 && "$out" == *"give that node's Observatory card --ripple-claude"* ]] \
+  && ok_ "--ripple-claude with a node target is refused, and says where it belongs" || bad "node target: rc=$rc $out"
+
 echo
 echo "  $PASS passed, $FAILS failed"
 exit $FAILS
