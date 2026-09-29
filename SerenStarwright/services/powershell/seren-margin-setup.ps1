@@ -27,6 +27,9 @@ param(
   [string] $RepoDir    = "",
   [switch] $Pypi,
   [switch] $Mcp,
+  # Register with Claude Code at user scope (every folder) as <instance>-margin; the bearer
+  # is read from this config when Claude connects. Implies -Mcp.
+  [switch] $ClaudeMcp,
   [switch] $NoUpdates,
   # -- service identity (only meaningful alongside -Service) -------------------
   # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
@@ -88,6 +91,7 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\margin" }
+if ($ClaudeMcp) { $Mcp = [switch]$true }
 $layout  = Get-SerenLayout -Root $Root -Short "margin" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-margin"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -199,6 +203,7 @@ if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-margin
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($MarginHost -eq "0.0.0.0") { "127.0.0.1" } else { $MarginHost }
+if ($ClaudeMcp) { Register-SerenClaudeMcp -Short "margin" -Vpy $vpy -AppDir $AppDir -CfgPath $CfgPath -Url "http://${connectHost}:$Port/mcp" -Instance $Instance }
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenMargin is set up +" -ForegroundColor Green

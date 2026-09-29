@@ -26,6 +26,9 @@ param(
   [string] $Repo       = "",
   [switch] $Service,
   [switch] $Mcp,
+  # Register with Claude Code at user scope (every folder) as <instance>-memory; the bearer
+  # is read from this config when Claude connects. Implies -Mcp.
+  [switch] $ClaudeMcp,
   [switch] $St,         # [st] extra: sentence-transformers (+torch) for a named embedding_model
   [switch] $Corp,
   [switch] $NoUpdates,
@@ -87,6 +90,7 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\memory" }
+if ($ClaudeMcp) { $Mcp = [switch]$true }
 $layout  = Get-SerenLayout -Root $Root -Short "memory" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-memory"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -167,6 +171,7 @@ if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-memory
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($MemoryHost -eq "0.0.0.0") { "127.0.0.1" } else { $MemoryHost }
+if ($ClaudeMcp) { Register-SerenClaudeMcp -Short "memory" -Vpy $vpy -AppDir $AppDir -CfgPath $CfgPath -Url "http://${connectHost}:$Port/mcp" -Instance $Instance }
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenMemory is set up +" -ForegroundColor Green

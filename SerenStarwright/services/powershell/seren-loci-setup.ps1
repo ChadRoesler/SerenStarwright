@@ -26,6 +26,9 @@ param(
   [string] $Repo      = "",
   [switch] $Service,
   [switch] $Mcp,
+  # Register with Claude Code at user scope (every folder) as <instance>-loci; the bearer
+  # is read from this config when Claude connects. Implies -Mcp.
+  [switch] $ClaudeMcp,
   [switch] $Corp,
   [switch] $NoUpdates,
   # -- service identity (only meaningful alongside -Service) -------------------
@@ -86,6 +89,7 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\loci" }
+if ($ClaudeMcp) { $Mcp = [switch]$true }
 $layout  = Get-SerenLayout -Root $Root -Short "loci" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-loci"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -172,6 +176,7 @@ if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-loci" 
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($LociHost -eq "0.0.0.0") { "127.0.0.1" } else { $LociHost }
+if ($ClaudeMcp) { Register-SerenClaudeMcp -Short "loci" -Vpy $vpy -AppDir $AppDir -CfgPath $CfgPath -Url "http://${connectHost}:$Port/mcp" -Instance $Instance }
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  SerenLoci is set up +" -ForegroundColor Green

@@ -208,13 +208,65 @@ seren_switches_from_self() {
 # `command:` and `cwd:` yaml lines at INDENT spaces; dies with the reason when
 # the project has no MCP servers (a ripple would wake the model without its
 # memory). See seren-claude-ripple.py.
+# WHO is whose Claude Code it is - the ripple's run_as. Under sudo ~ is root's,
+# and root has no ~/.claude.json, so the settings are read from WHO's home.
 seren_claude_ripple_lines() {
-  local dir="$1" indent="${2:-2}" py="" c
+  local dir="$1" indent="${2:-2}" who="${3:-}" py="" c home="" cj=()
   for c in "${VPY:-}" python3 python; do
     [[ -n "$c" ]] && "$c" -c 'import json' >/dev/null 2>&1 && { py="$c"; break; }
   done
   [[ -n "$py" ]] || die "--ripple-claude: no python on PATH to read the Claude Code settings with"
-  "$py" "$(dirname "${BASH_SOURCE[0]}")/seren-claude-ripple.py" "$dir" --yaml "$indent"     || die "--ripple-claude $dir: see above"
+  if [[ -n "$who" && "$who" != "$(id -un)" ]]; then
+    [[ "$who" =~ ^[A-Za-z0-9._-]+$ ]] || die "--ripple-claude: not a user name: $who"
+    home="$(getent passwd "$who" 2>/dev/null | cut -d: -f6)"
+    [[ -n "$home" ]] || home="$(eval echo "~$who")"
+    cj=(--claude-json "$home/.claude.json")
+  fi
+  "$py" "$(dirname "${BASH_SOURCE[0]}")/seren-claude-ripple.py" "$dir" --yaml "$indent" ${cj[@]+"${cj[@]}"} \
+    || die "--ripple-claude $dir: see above"
+}
+
+# -- seren_claude_mcp_register SHORT - this service in Claude Code, everywhere --
+# Registers the service with Claude Code at USER scope as <instance>-SHORT
+# (wren-memory), so every folder's Claude has it. Design note: added by
+# hand from a home folder, the wren-* servers landed at Claude Code's LOCAL
+# scope - that one folder - and a Claude started anywhere else woke without its
+# memory. No token on a command line: the entry holds the URL and a
+# headersHelper - this service's python running seren-mcp-headers.py on its
+# config - so the bearer is read when Claude Code connects, by the service's
+# own rules. Registered as the person (SUDO_USER under sudo), whose Claude it
+# is. Never fails an install: no claude on PATH, or a config that person cannot
+# read, is a warning that says what to do.
+seren_claude_mcp_register() {
+  local short="$1" name="${INSTANCE:-seren}-$1" who="${SUDO_USER:-$(id -un)}"
+  local helper="$APP_DIR/seren-mcp-headers.py" url="http://${CONNECT_HOST}:${PORT}/mcp" json out
+  local run=()
+  [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]] && run=(sudo -u "$SUDO_USER" -H)
+  cp "$(dirname "${BASH_SOURCE[0]}")/seren-mcp-headers.py" "$helper" \
+    || { warn "--claude-mcp: could not copy the headers helper to $APP_DIR"; return 0; }
+  chmod 755 "$helper" 2>/dev/null || true
+  json="$("$VPY" -c 'import json, shlex, sys
+print(json.dumps({"type": "http", "url": sys.argv[1], "headersHelper": shlex.join(sys.argv[2:])}))' \
+    "$url" "$VPY" "$helper" "$CFG_PATH")" || { warn "--claude-mcp: could not build the entry"; return 0; }
+  # claude lives on the person's PATH (~/.local/bin), not root's: ask their login
+  # shell where, once, then call it directly. SEREN_CLAUDE_BIN names it outright.
+  local claude="${SEREN_CLAUDE_BIN:-}"
+  [[ -n "$claude" ]] || claude="$(${run[@]+"${run[@]}"} bash -lc 'command -v claude' 2>/dev/null | tail -n 1)"
+  if [[ -z "$claude" ]]; then
+    warn "--claude-mcp: no claude on $who's PATH. Later, as $who: claude mcp add-json --scope user $name '$json'"
+    return 0
+  fi
+  ${run[@]+"${run[@]}"} "$claude" mcp remove --scope user "$name" >/dev/null 2>&1
+  if ${run[@]+"${run[@]}"} "$claude" mcp add-json --scope user "$name" "$json" >/dev/null 2>&1; then
+    ok "Claude Code: $name registered for $who, every folder (the bearer is read from this config on connect)"
+  else
+    warn "--claude-mcp: claude mcp add-json failed for $name"; return 0
+  fi
+  # The helper runs as the person: if the service has a token, they must be able to read it.
+  out="$(${run[@]+"${run[@]}"} "$VPY" "$helper" "$CFG_PATH" 2>&1)"
+  if [[ -n "${TOKEN:-}" && "$out" != *Authorization* ]]; then
+    warn "--claude-mcp: $who cannot read the bearer from $CFG_PATH, so Claude Code will get 401s ($out). Give $who read access, or install without sudo"
+  fi
 }
 
 # -- seren_describe - the --describe payload ----------------------------------

@@ -31,6 +31,10 @@ param(
   [switch] $Ripple,
   [string] $RippleCommand = "",
   [string] $RippleRunAs   = "",
+  # The model is Claude Code: `claude -p` run in this project folder (where its
+  # memory MCP servers are registered) with those tools pre-approved - read from
+  # the ripple user's ~/.claude.json. Implies -Ripple.
+  [string] $RippleClaude  = "",
   # -- service identity (only meaningful alongside -Service) -------------------
   # Forwarded to the NSSM wrapper. The password is NOT a parameter - it rides
   # in $env:SEREN_SERVICE_PASSWORD, because on Windows a command line is
@@ -88,6 +92,10 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\observatory" }
+if ($RippleClaude) {
+    if ($RippleCommand) { Die "-RippleClaude writes the command itself; drop -RippleCommand" }
+    $Ripple = [switch]$true
+}
 $layout  = Get-SerenLayout -Root $Root -Short "observatory" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-observatory"
 $VenvDir = $layout.Venv
 $AppDir  = $layout.App
@@ -198,6 +206,8 @@ if ($Ripple) {
     function ConvertTo-SerenYamlQuoted([string] $v) { "'" + ($v -replace "'", "''") + "'" }
     $rcmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
     $rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
+    $rcmdLines = if ($RippleClaude) { Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $rwho }
+                 else { "  command: $(ConvertTo-SerenYamlQuoted $rcmd)" }
     @"
 
 # -- Ripple ---------------------------------------------------------------
@@ -206,7 +216,7 @@ if ($Ripple) {
 # message; the command is this config's. Needs the Observatory's bearer.
 ripple:
   enabled: true
-  command: $(ConvertTo-SerenYamlQuoted $rcmd)
+$rcmdLines
   run_as: $(ConvertTo-SerenYamlQuoted $rwho)
 "@ | Add-SerenTextFile -Path $CfgPath
     Ok "Ripples enabled: they run as $rwho"

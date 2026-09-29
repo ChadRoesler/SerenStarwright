@@ -395,6 +395,63 @@ function Get-SerenLayout {
 # Twin of seren_record_install in the bash library. One record per install in
 # $env:USERPROFILE\.seren\installed\<service>[@<instance>].json (or
 # $env:SEREN_INSTALLED_DIR), derived from what was installed. Never the token.
+# The ripple's command for Claude Code, read off this box: `command:` and `cwd:`
+# yaml lines at -Indent, from seren-claude-ripple.py (the bash twin is
+# seren_claude_ripple_lines). -Who is whose Claude Code it is - the ripple's
+# run_as; another account's settings are read from that account's profile.
+function Get-SerenClaudeRippleLines([string] $Vpy, [string] $Dir, [int] $Indent = 2, [string] $Who = "") {
+    $helper = Join-Path $PSScriptRoot "seren-claude-ripple.py"
+    $argList = @($helper, $Dir, "--yaml", "$Indent")
+    if ($Who -and $Who -ne $env:USERNAME) {
+        $argList += @("--claude-json", (Join-Path (Join-Path (Split-Path $env:USERPROFILE) $Who) ".claude.json"))
+    }
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { $out = (& $Vpy @argList 2>&1 | Out-String).TrimEnd() } finally { $ErrorActionPreference = $prevEap }
+    if ($LASTEXITCODE -ne 0) { Die "-RippleClaude ${Dir}: $out" }
+    return $out
+}
+
+# One argument for a native command line, quoted by the CommandLineToArgvW rules
+# (what claude.exe parses), so a JSON argument survives Windows PowerShell 5.1 -
+# which passes embedded double quotes to native commands unescaped.
+function ConvertTo-SerenNativeArg([string] $a) {
+    if ($a -and $a -notmatch '[\s"]') { return $a }
+    '"' + (($a -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+}
+
+# This service in Claude Code, at USER scope (every folder), as <instance>-Short:
+# the twin of seren_claude_mcp_register in seren-install-lib.sh, which has the
+# why. No token on a command line: the entry is the URL and a headersHelper -
+# this service's python running seren-mcp-headers.py on its config. Never fails
+# an install: no claude.exe is a warning that says what to do.
+function Register-SerenClaudeMcp([string] $Short, [string] $Vpy, [string] $AppDir, [string] $CfgPath,
+                                 [string] $Url, [string] $Instance) {
+    $name = "$(if ($Instance) { $Instance } else { 'seren' })-$Short"
+    $helper = Join-Path $AppDir "seren-mcp-headers.py"
+    try { Copy-Item (Join-Path $PSScriptRoot "seren-mcp-headers.py") $helper -Force -ErrorAction Stop }
+    catch { Warn "-ClaudeMcp: could not copy the headers helper to ${AppDir}: $_"; return }
+    $entry = [ordered]@{ type = "http"; url = $Url
+                         headersHelper = (@($Vpy, $helper, $CfgPath) | ForEach-Object { '"' + $_ + '"' }) -join " " } |
+             ConvertTo-Json -Compress
+    # SEREN_CLAUDE_BIN names it outright (tests; an unusual install).
+    $claude = if ($env:SEREN_CLAUDE_BIN) { Get-Command $env:SEREN_CLAUDE_BIN -ErrorAction SilentlyContinue }
+              else { Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 }
+    if (-not $claude -or $claude.Source -notmatch '\.exe$') {
+        Warn "-ClaudeMcp: no claude.exe on PATH. Later: claude mcp add-json --scope user $name '$entry'"
+        return
+    }
+    foreach ($argList in @(@("mcp", "remove", "--scope", "user", $name), @("mcp", "add-json", "--scope", "user", $name, $entry))) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $claude.Source
+        $psi.Arguments = ($argList | ForEach-Object { ConvertTo-SerenNativeArg $_ }) -join " "
+        $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $err = $p.StandardError.ReadToEnd(); $null = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
+        if ($argList[1] -eq "add-json" -and $p.ExitCode -ne 0) { Warn "-ClaudeMcp: claude mcp add-json failed for ${name}: $err"; return }
+    }
+    Ok "Claude Code: $name registered, every folder (the bearer is read from this config on connect)"
+}
+
 function Write-SerenInstallRecord {
     param(
         [string] $Service, [string] $ConnectHost, [int] $Port,
