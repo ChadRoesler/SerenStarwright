@@ -556,7 +556,12 @@ foreach ($case in @(@{a = @("-SleepAt", "25:00"); w = "HH:MM"}, @{a = @("-SleepE
                     @{a = @("-MaxAttempts", "11"); w = "1-10"})) {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $card) + $case.a
     # the engine running this check, so 5.1 is tested by 5.1 and 7 by 7
-    $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String
+    # Continue, not Stop, for this one call: GitHub's `shell: powershell` runs with
+    # $ErrorActionPreference = stop, and under Windows PowerShell 5.1 a native
+    # command's stderr through 2>&1 becomes error records - a card that refuses
+    # with a ValidateSet message (stderr, not Die's stdout) aborted the whole run.
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String } finally { $ErrorActionPreference = $prevEap }
     if ($LASTEXITCODE -ne 0 -and $out -match [regex]::Escape($case.w)) { Good "$($case.a -join ' ') is refused ($($case.w))" }
     else { Bad "$($case.a -join ' ') was not refused: $out" }
 }
@@ -574,7 +579,12 @@ else { Bad "ripple choices wrong: $($d.choices | ConvertTo-Json -Compress)" }
 foreach ($case in @(@{a = @("-Ripple", "carrier-pigeon"); w = "script"}, @{a = @("-Ripple", "endpoint"); w = "needs -RippleUrl"},
                     @{a = @("-ModelServer", "C:\llama\llama-server.exe"); w = "go together"})) {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $card) + $case.a
-    $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String
+    # Continue, not Stop, for this one call: GitHub's `shell: powershell` runs with
+    # $ErrorActionPreference = stop, and under Windows PowerShell 5.1 a native
+    # command's stderr through 2>&1 becomes error records - a card that refuses
+    # with a ValidateSet message (stderr, not Die's stdout) aborted the whole run.
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String } finally { $ErrorActionPreference = $prevEap }
     if ($LASTEXITCODE -ne 0 -and $out -match [regex]::Escape($case.w)) { Good "$($case.a -join ' ') is refused ($($case.w))" }
     else { Bad "$($case.a -join ' ') was not refused: $out" }
 }
@@ -638,7 +648,12 @@ if (-not $pyExe) {
         $r = Join-Path $sccTmp "root-$Name"
         $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $sccCard, "-Root", $r) + $CardArgs
         # the engine running this check, so 5.1 is tested by 5.1 and 7 by 7
-        $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String
+        # Continue, not Stop, for this one call: GitHub's `shell: powershell` runs with
+    # $ErrorActionPreference = stop, and under Windows PowerShell 5.1 a native
+    # command's stderr through 2>&1 becomes error records - a card that refuses
+    # with a ValidateSet message (stderr, not Die's stdout) aborted the whole run.
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String } finally { $ErrorActionPreference = $prevEap }
         $cfg = Join-Path $r "apps\corpus-callosum\seren-corpus-callosum.yaml"
         $text = if (Test-Path $cfg) { [System.IO.File]::ReadAllText($cfg) } else { "" }
         return @{ Rc = $LASTEXITCODE; Out = $out; Cfg = $text }
