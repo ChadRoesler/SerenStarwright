@@ -36,6 +36,9 @@ param(
   # How long a started model stays up after its last call before the hippocampus
   # stops it (default 300s; a review and a redraft reuse it).
   [int]    $KeepWarm    = 0,
+  # The cap on one answer from the small model (default 2000). Too low and
+  # answers are cut off mid-operation; keep it under the server's context.
+  [int]    $ModelMaxTokens = 0,
   # Ask the model at bedtime and when drafts wait. ValidateSet is what
   # Starwright reads to offer a dropdown (-Describe's `choices`).
   [ValidateSet("script", "endpoint", "off")]
@@ -132,6 +135,7 @@ if ($RippleClaude) {
         Die "-RippleClaude wakes Claude Code on THIS box (a script ripple). For a model on another box, point -Ripple endpoint at its Observatory or Lodestar and give that card -RippleClaude"
     }
 }
+if ($ModelMaxTokens -ne 0 -and $ModelMaxTokens -lt 256) { Die "-ModelMaxTokens wants a number of tokens, 256 or more, got '$ModelMaxTokens'" }
 if (($ModelServer -or $ModelPath) -and -not ($ModelServer -and $ModelPath)) {
     Die "-ModelServer and -ModelPath go together (the server and the .gguf it serves)"
 }
@@ -271,6 +275,7 @@ memory:
 $memoryToken
 model:
   url: "$ModelUrl"
+$(if ($ModelMaxTokens -gt 0) { "  max_tokens: $ModelMaxTokens" } else { '  # max_tokens: 2000            # the cap on one answer; too low and answers are cut off' })
 $lifecycleLines
 
 sleep:
