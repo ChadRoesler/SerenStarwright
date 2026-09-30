@@ -269,6 +269,40 @@ print(json.dumps({"type": "http", "url": sys.argv[1], "headersHelper": shlex.joi
   fi
 }
 
+# -- seren_claude_bookmark_register - Margin's bookmark at every session start --
+# Adds a SessionStart hook to the person's Claude Code settings that prints
+# Margin's bookmark (the dedication, and how many letters wait), so every
+# session - a woken ripple run included - picks up where the last left off.
+# Opt in: this is Margin reaching into someone else's software. The hook runs
+# Margin's python on seren-margin-bookmark.py (copied into the app folder) with
+# this config, so the bearer is read by Margin's rules, never from argv. The
+# settings merge is seren-claude-hook.py: idempotent, backed up, and it never
+# touches a file that is not valid JSON. Never fails an install.
+seren_claude_bookmark_register() {
+  local who="${SUDO_USER:-$(id -un)}" helper="$APP_DIR/seren-margin-bookmark.py" cmd home="" settings=()
+  local lib; lib="$(dirname "${BASH_SOURCE[0]}")"
+  local run=()
+  [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]] && run=(sudo -u "$SUDO_USER" -H)
+  cp "$lib/seren-margin-bookmark.py" "$helper" \
+    || { warn "--claude-bookmark: could not copy the bookmark helper to $APP_DIR"; return 0; }
+  chmod 755 "$helper" 2>/dev/null || true
+  cmd="$("$VPY" -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' "$VPY" "$helper" "$CFG_PATH")"
+  if [[ -n "${SEREN_CLAUDE_SETTINGS:-}" ]]; then
+    settings=(--settings "$SEREN_CLAUDE_SETTINGS")
+  elif [[ ${#run[@]} -gt 0 ]]; then
+    home="$(getent passwd "$who" 2>/dev/null | cut -d: -f6)"; [[ -n "$home" ]] || home="$(eval echo "~$who")"
+    settings=(--settings "$home/.claude/settings.json")
+  fi
+  if ${run[@]+"${run[@]}"} "$VPY" "$lib/seren-claude-hook.py" add SessionStart seren-margin-bookmark.py "$cmd" \
+       ${settings[@]+"${settings[@]}"} >/dev/null 2>"$APP_DIR/.claude-hook.err"; then
+    ok "Claude Code: every session for $who starts from Margin's bookmark (SessionStart hook)"
+  else
+    warn "--claude-bookmark: not added - $(cat "$APP_DIR/.claude-hook.err" 2>/dev/null)"
+  fi
+  rm -f "$APP_DIR/.claude-hook.err"
+  return 0
+}
+
 # -- seren_describe - the --describe payload ----------------------------------
 # Reads the SVC_* identity vars each installer sets alongside its defaults, plus
 # PORT/HOST. Must be callable before ANY work happens - see the --describe scan
@@ -814,6 +848,38 @@ seren_layout() {
   fi
 }
 
+# -- seren_options_json - the flags a card was invoked with, as a JSON map -----
+# Reads SEREN_INSTALL_ARGV (the card's argv, newline-separated - set by the
+# --describe scan loop every card runs first). --flag value -> "flag": "value";
+# a bare --flag -> "flag": true. Plumbing (--json, --describe) is left out, and
+# so is every secret: a flag ending in -token, and --password, is dropped with
+# its value. Degrades to {} when nothing was captured.
+seren_options_json() {
+  local out="" line flag val
+  [[ -n "${SEREN_INSTALL_ARGV:-}" ]] || { printf '{}'; return 0; }
+  local -a argv=()
+  while IFS= read -r line; do argv+=("$line"); done <<< "$SEREN_INSTALL_ARGV"
+  local i=0 n=${#argv[@]}
+  while (( i < n )); do
+    line="${argv[$i]}"; i=$((i+1))
+    [[ "$line" == --* ]] || continue
+    flag="${line#--}"
+    case "$flag" in json|describe) continue ;; esac
+    val=""
+    if (( i < n )) && [[ "${argv[$i]}" != --* ]]; then val="${argv[$i]}"; i=$((i+1)); fi
+    # A secret travels as a VALUE: --token X, --ripple-token X, --password X.
+    # Drop those with their value. A bare switch that merely mentions a token
+    # (--gen-token) carries nothing and records true like any switch.
+    if [[ -n "$val" ]]; then case "$flag" in *-token|token|password|service-password) continue ;; esac; fi
+    if [[ -z "$val" ]]; then
+      out+="${out:+, }\"$(_json_esc "$flag")\": true"
+    else
+      out+="${out:+, }\"$(_json_esc "$flag")\": \"$(_json_esc "$val")\""
+    fi
+  done
+  printf '{%s}' "$out"
+}
+
 # -- seren_record_install - the install ledger ---------------------------------
 # WHY: nothing on a box said what Starwright had already put there. Installing
 # the hippocampus next to an existing Memory, the front-end could not tell you
@@ -850,6 +916,13 @@ seren_record_install() {
   [[ -n "${WHEEL:-}" ]] && { source="wheel";   source_ref="$WHEEL"; }
   local has_token=false; [[ -n "$token" ]] && has_token=true
   local when; when="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
+  # The flags this card was invoked with, so a reinstall starts from them:
+  # every advanced flag (a ripple, a bedtime, a model path, a voice card...)
+  # used to be written into the yaml and then forgotten, and a reinstall
+  # opened blank - which for a switch meant off (Chad's smoke, 30 Sept 2026).
+  # Values only for flags that take one; a switch records true. NEVER a
+  # secret: any flag ending in -token, and --password, is dropped whole.
+  local options_json; options_json="$(seren_options_json)"
   cat > "$path" <<JSON
 {
   "schema_version": 1,
@@ -869,6 +942,7 @@ seren_record_install() {
   "service_user": "$(_json_esc "${SERVICE_USER:-}")",
   "has_token": ${has_token},
   "extras": {"mcp": ${MCP:-false}, "corp": ${CORP:-false}, "vector": ${VECTOR:-false}, "st": ${ST:-false}},
+  "options": ${options_json},
   "source": "$(_json_esc "$source")",
   "source_ref": "$(_json_esc "$source_ref")",
   "installed_at": "$(_json_esc "$when")",

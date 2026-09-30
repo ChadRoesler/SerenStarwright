@@ -576,6 +576,10 @@ foreach ($f in "model-server", "model-path", "model-args", "ripple", "ripple-com
 }
 if ((@($d.choices.ripple) -join ",") -eq "script,endpoint,off") { Good "-Describe offers -Ripple as a choice (from its ValidateSet)" }
 else { Bad "ripple choices wrong: $($d.choices | ConvertTo-Json -Compress)" }
+# The voice card (29 Sept 2026): opt in, a checkbox; the model writes the card.
+if ($d.switches -contains "voice-card") { Good "-VoiceCard is a switch (opt in)" } else { Bad "-VoiceCard missing or not a switch" }
+if ($src -match [regex]::Escape('if ($VoiceCard) {') -and $src -match 'enabled: true') { Good "-VoiceCard writes voice.enabled true" }
+else { Bad "-VoiceCard does not write the voice block" }
 foreach ($case in @(@{a = @("-Ripple", "carrier-pigeon"); w = "script"}, @{a = @("-Ripple", "endpoint"); w = "needs -RippleUrl"},
                     @{a = @("-ModelServer", "C:\llama\llama-server.exe"); w = "go together"})) {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $card) + $case.a
@@ -595,6 +599,35 @@ if ($qdef) {
     if ($q -eq "'C:\models\it''s-q5.gguf'") { Good "a Windows path with a quote is written as valid single-quoted YAML" }
     else { Bad "yaml quoting wrong: $q" }
 } else { Bad "ConvertTo-SerenYamlQuoted not found in the card" }
+
+# -- the install record carries the card's options (30 Sept 2026) --------------
+# Every flag the card was invoked with, minus secrets, so a reinstall starts
+# from them (Chad's smoke: a ripple, a bookmark hook and a voice card all
+# opened blank on reinstall). Written through the real lib into a scratch ledger.
+Section "install record: options, minus secrets"
+& {
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-opt-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force $tmp | Out-Null
+    $prev = $env:SEREN_INSTALLED_DIR; $env:SEREN_INSTALLED_DIR = $tmp
+    try {
+        $bound = @{ Port = 7421; ClaudeBookmark = [switch]$true; VoiceCard = [switch]$true; Token = "s3cret-no"; RippleToken = "s3cret-no2"
+                    ServicePassword = "pw-no"; Json = [switch]$true; Instance = "wren"; RippleRunAs = "Caesar"; KeepWarm = 600; MarginHost = "127.0.0.1" }
+        Write-SerenInstallRecord -Service "seren-margin" -ConnectHost "127.0.0.1" -Port 7421 -Autostart $true -Token "s3cret-no" -Bound $bound *> $null
+        $raw = Get-Content (Join-Path $tmp "seren-margin.json") -Raw
+        $o = ($raw | ConvertFrom-Json).options
+        if ($o.'claude-bookmark' -eq $true -and $o.'voice-card' -eq $true) { Good "a switch records true" } else { Bad "switches: $($o | ConvertTo-Json -Compress)" }
+        if ($o.'ripple-run-as' -eq "Caesar" -and $o.'keep-warm' -eq "600" -and $o.host -eq "127.0.0.1" -and $o.port -eq "7421") { Good "value flags record their values, under canonical names (MarginHost -> host)" }
+        else { Bad "values: $($o | ConvertTo-Json -Compress)" }
+        if (-not ($raw -match "s3cret|pw-no") -and $null -eq $o.token -and $null -eq $o.'ripple-token' -and $null -eq $o.json) { Good "no token, no password, no plumbing in the record" }
+        else { Bad "secret or plumbing leaked: $raw" }
+    } catch { Bad "options record failed: $_" }
+    finally { $env:SEREN_INSTALLED_DIR = $prev; Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+}
+$hipD = & (Join-Path $ScriptDir "services\powershell\seren-hippocampus-setup.ps1") -Describe | ConvertFrom-Json
+if ($hipD.flags -contains "keep-warm") { Good "hippocampus -Describe advertises keep-warm" } else { Bad "keep-warm missing" }
+$svcCore = [System.IO.File]::ReadAllText((Join-Path $ScriptDir "services\lib\setup-seren-service.ps1"))
+if ($svcCore -notmatch 'LogDir\s*=\s*"\$env:USERPROFILE\seren-logs"') { Good "the service core no longer defaults logs to ~\seren-logs" } else { Bad "logs still default to ~\seren-logs" }
 
 # -- the observatory card receives ripples (28 Sept 2026) ---------------------
 # The hippocampus moves to the Nano, the model stays on the desktop: the ripple
@@ -638,7 +671,26 @@ foreach ($c in "memory", "loci", "margin", "corpus-callosum", "hippocampus") {
     $cd = & (Join-Path $ScriptDir "services\powershell\seren-$c-setup.ps1") -Describe | ConvertFrom-Json
     if ($cd.switches -contains "claude-mcp") { Good "$c -Describe offers claude-mcp as a switch" } else { Bad "$c is missing the claude-mcp switch" }
 }
+$marg = & (Join-Path $ScriptDir "services\powershell\seren-margin-setup.ps1") -Describe | ConvertFrom-Json
+if ($marg.switches -contains "claude-bookmark") { Good "margin -Describe offers claude-bookmark as a switch" } else { Bad "margin is missing the claude-bookmark switch" }
 $py = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($py) { & {
+    # -ClaudeBookmark writes the SessionStart hook through seren-claude-hook.py;
+    # here into a scratch settings file, never the real one.
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-bm-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force $tmp | Out-Null
+    $prev = $env:SEREN_CLAUDE_SETTINGS; $env:SEREN_CLAUDE_SETTINGS = Join-Path $tmp "settings.json"
+    try {
+        Register-SerenClaudeBookmark -Vpy $py.Source -AppDir $tmp -CfgPath "C:\x y\seren-margin.yaml" *> $null
+        $s = Get-Content (Join-Path $tmp "settings.json") -Raw | ConvertFrom-Json
+        $c = $s.hooks.SessionStart[0].hooks[0].command
+        if ($c -match 'seren-margin-bookmark\.py' -and $c -match [regex]::Escape('"C:\x y\seren-margin.yaml"') -and
+            (Test-Path (Join-Path $tmp "seren-margin-bookmark.py"))) { Good "-ClaudeBookmark writes a SessionStart hook that runs the copied helper" }
+        else { Bad "-ClaudeBookmark hook wrong: $c" }
+    } catch { Bad "-ClaudeBookmark failed: $_" }
+    finally { $env:SEREN_CLAUDE_SETTINGS = $prev; Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+} }
 if (-not $py) { Note "no python.exe on PATH - skipping the quoting round trip. Not a failure." }
 else { & {
     . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")

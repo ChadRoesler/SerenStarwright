@@ -54,7 +54,10 @@ param(
   [string] $Description  = "",
 
   # -- logging ----------------------------------------------------------------
-  [string] $LogDir       = "$env:USERPROFILE\seren-logs",
+  # Default: a logs folder beside the app (the install root's logs\ under a
+  # root; <app dir>\logs in the old layout). ~\seren-logs was one more
+  # place to look (Chad's smoke, 30 Sept 2026).
+  [string] $LogDir       = "",
 
   # -- health check -----------------------------------------------------------
   [int]    $HealthPort    = 0,                        # 0 = read from config
@@ -159,6 +162,10 @@ except Exception as e:
   }
 }
 
+# Blank = a logs folder beside the app. Under an install root the lib passes
+# the root's logs\; in the old layout it is <app dir>\logs, so a service's
+# logs sit with its config and store rather than in ~\seren-logs.
+if (-not $LogDir) { $LogDir = Join-Path $AppDir "logs" }
 # -- ensure the log dir exists (nssm won't create it) -----------------------
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 # Log names derive from ServiceName so services + instances namespace freely.

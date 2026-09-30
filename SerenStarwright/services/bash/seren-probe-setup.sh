@@ -92,6 +92,8 @@ SVC_PACKAGE="seren-probe"
 SVC_ACCENT="#8fffb4"
 
 # --describe must answer with ZERO side effects.
+SEREN_INSTALL_ARGV="$(printf '%s
+' "$@")"     # recorded on the install record, minus secrets
 for _a in "$@"; do
   [[ "$_a" == "--describe" ]] && { seren_describe; exit 0; }
 done

@@ -29,6 +29,9 @@
 #                        (default on a node: ~/llama.cpp/build/bin/llama-server)
 #    --model-path PATH   The .gguf it serves. With a server this turns on management:
 #                        started for a sleep, stopped when idle. Host and port from --model-url
+#    --keep-warm SECS    How long a started model stays up after its last call before
+#                        the hippocampus stops it (default 300; a review and a
+#                        redraft reuse it)
 #    --model-args ARGS   The rest of the server line (default "-ngl 99 -c 8192")
 #    --ripple TYPE       Ask the model at bedtime and when drafts wait: script | endpoint | off
 #    --ripple-command C  The script ripple's command (default: claude -p "{message}")
@@ -39,6 +42,10 @@
 #                        project its memory MCP servers are registered for) with those
 #                        servers' tools pre-approved - read from ~/.claude.json. A script
 #                        ripple; implies --ripple script
+#    --voice-card        Turn on the voice card (opt in): a short text the main model
+#                        writes about itself - voice, pronouns, whose experience is
+#                        whose - carried by every draft prompt. The model writes it
+#                        (set_voice_card over MCP); this only turns it on
 #    --ripple-stdin      A script ripple sends the message on stdin, not as {message}:
 #                        for `ssh desktop claude -p` with no Lodestar or Observatory
 #    --ripple-run-as U   Whose account a script ripple runs as (default: you, the
@@ -105,12 +112,14 @@ MAX_ATTEMPTS=""
 MODEL_SERVER=""
 MODEL_PATH=""
 MODEL_ARGS=""
+KEEP_WARM=""
 RIPPLE=""
 RIPPLE_COMMAND=""
 RIPPLE_URL=""
 RIPPLE_TOKEN=""
 RIPPLE_RUN_AS=""
 RIPPLE_STDIN=false
+VOICE_CARD=false
 RIPPLE_CLAUDE=""
 REPO_DIR="$(find_upward "SerenHippocampus" || true)"   # sibling checkout (build source)
 WHEEL=""
@@ -141,6 +150,8 @@ SVC_REQUIRES="seren-memory"
 SVC_ACCENT="#c9a0dc"
 SVC_CHOICES="ripple=script|endpoint|off"
 
+SEREN_INSTALL_ARGV="$(printf '%s
+' "$@")"     # recorded on the install record, minus secrets
 for _a in "$@"; do
   [[ "$_a" == "--describe" ]] && { seren_describe; exit 0; }
 done
@@ -161,12 +172,14 @@ while [[ $# -gt 0 ]]; do
     --model-server) MODEL_SERVER="$2"; shift 2 ;;
     --model-path)   MODEL_PATH="$2"; shift 2 ;;
     --model-args)   MODEL_ARGS="$2"; shift 2 ;;
+    --keep-warm)    KEEP_WARM="$2"; shift 2 ;;
     --ripple)       RIPPLE="$2"; shift 2 ;;
     --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
     --ripple-url)   RIPPLE_URL="$2"; shift 2 ;;
     --ripple-token) RIPPLE_TOKEN="$2"; shift 2 ;;
     --ripple-run-as) RIPPLE_RUN_AS="$2"; shift 2 ;;
     --ripple-stdin) RIPPLE_STDIN=true; shift ;;
+    --voice-card) VOICE_CARD=true; shift ;;
     --ripple-claude) RIPPLE_CLAUDE="$2"; shift 2 ;;
     --repo-dir)     REPO_DIR="$2"; shift 2 ;;
     --wheel)        WHEEL="$2"; shift 2 ;;
@@ -205,6 +218,7 @@ fi
 if [[ -n "$MAX_ATTEMPTS" ]]; then
   [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ && "$MAX_ATTEMPTS" -ge 1 && "$MAX_ATTEMPTS" -le 10 ]] || die "--max-attempts wants 1-10, got '$MAX_ATTEMPTS'"
 fi
+[[ -z "$KEEP_WARM" || "$KEEP_WARM" =~ ^[0-9]+$ ]] || die "--keep-warm wants seconds, got '$KEEP_WARM'"
 # Refused here, before anything is installed, like the sleep flags above.
 RIPPLE_CLAUDE_LINES=""
 if [[ -n "$RIPPLE_CLAUDE" ]]; then
@@ -313,6 +327,8 @@ if [[ -n "$MODEL_SERVER" || -n "$MODEL_PATH" ]]; then
     model_path: $(_yq "$MODEL_PATH")"
   [[ -n "$MODEL_ARGS" ]] && MODEL_LIFECYCLE_LINES+="
     server_args: $(_yq "$MODEL_ARGS")"
+  [[ -n "$KEEP_WARM" ]] && MODEL_LIFECYCLE_LINES+="
+    keep_warm_seconds: $KEEP_WARM"
 fi
 RIPPLE_LINES=""
 RIPPLE_DEFAULT_COMMAND='claude -p "{message}"'
@@ -375,6 +391,8 @@ $([[ -n "$MAX_ATTEMPTS" ]] && printf '  max_attempts: %s' "$MAX_ATTEMPTS" || pri
 YAML
 [[ -n "$TOKEN" || -n "$MEMORY_TOKEN_LINES" ]] && chmod 600 "$CFG_PATH"
 if [[ -n "$RIPPLE_LINES" ]]; then echo "$RIPPLE_LINES" >> "$CFG_PATH"; fi
+# The voice card is opt in, and the model writes it; the config only turns it on.
+$VOICE_CARD && printf '\nvoice:\n  # The voice card: the model writes it (set_voice_card); every version is kept.\n  enabled: true\n' >> "$CFG_PATH"
 [[ -n "$RIPPLE_TOKEN" ]] && chmod 600 "$CFG_PATH"
 
 $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'

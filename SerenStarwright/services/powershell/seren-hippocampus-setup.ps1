@@ -33,6 +33,9 @@ param(
   [string] $ModelServer = "",
   [string] $ModelPath   = "",
   [string] $ModelArgs   = "",
+  # How long a started model stays up after its last call before the hippocampus
+  # stops it (default 300s; a review and a redraft reuse it).
+  [int]    $KeepWarm    = 0,
   # Ask the model at bedtime and when drafts wait. ValidateSet is what
   # Starwright reads to offer a dropdown (-Describe's `choices`).
   [ValidateSet("script", "endpoint", "off")]
@@ -47,6 +50,9 @@ param(
   # The message goes on stdin, not as {message}: for `ssh desktop claude -p`
   # when there is neither Lodestar nor an Observatory.
   [switch] $RippleStdin,
+  # Turn on the voice card (opt in): a short text the main model writes about
+  # itself, carried by every draft prompt. The model writes it (set_voice_card).
+  [switch] $VoiceCard,
   # Wake Claude Code as the model: `claude -p` run in this project folder (where
   # its memory MCP servers are registered) with those servers' tools
   # pre-approved - read from ~/.claude.json. A script ripple; implies -Ripple script.
@@ -226,6 +232,7 @@ if ($ModelServer -and $ModelPath) {
         "    server: $(ConvertTo-SerenYamlQuoted $ModelServer)`n" +
         "    model_path: $(ConvertTo-SerenYamlQuoted $ModelPath)"
     if ($ModelArgs) { $lifecycleLines += "`n    server_args: $(ConvertTo-SerenYamlQuoted $ModelArgs)" }
+    if ($KeepWarm -gt 0) { $lifecycleLines += "`n    keep_warm_seconds: $KeepWarm" }
 }
 $rippleLines = ""
 switch ($Ripple) {
@@ -281,6 +288,8 @@ $(if ($SleepEvery -gt 0) { "  interval_seconds: $([int]($SleepEvery * 3600))" } 
 $(if ($MaxAttempts -gt 0) { "  max_attempts: $MaxAttempts" } else { '  # max_attempts: 3' })
 "@ | Write-SerenTextFile -Path $CfgPath
 if ($rippleLines) { $rippleLines | Add-SerenTextFile -Path $CfgPath }
+# The voice card is opt in, and the model writes it; the config only turns it on.
+if ($VoiceCard) { "`nvoice:`n  # The voice card: the model writes it (set_voice_card); every version is kept.`n  enabled: true" | Add-SerenTextFile -Path $CfgPath }
 Ok "Config written"
 
 if ($NoUpdates) {
@@ -332,4 +341,5 @@ $doneArgs = @{
     Venv        = $VenvDir
     Config      = $CfgPath
 }
+$doneArgs["Bound"] = $PSBoundParameters
 Send-SerenDone @doneArgs

@@ -799,12 +799,15 @@ async def test_switches_are_check_boxes() -> None:
     check(mem is not None, "memory card present")
     if mem is None:
         return
-    check("no-updates" in mem.switches and "st" in mem.switches,
-          "--describe reports no-updates and st as switches: %s" % mem.switches)
+    check("claude-mcp" in mem.switches and "st" in mem.switches,
+          "--describe reports claude-mcp and st as switches: %s" % mem.switches)
     check("port" not in mem.switches and "token" not in mem.switches,
           "flags that take a value are not switches")
     for svc in services:
         check("no-updates" in svc.switches, "%s reports --no-updates as a switch" % svc.name)
+        # ...and the dialog does not offer it: update checking is cosmetic and
+        # on by default; the yaml block turns it off (Chad's smoke, 30 Sept).
+        check("no-updates" not in svc.advanced_flags, "%s keeps no-updates out of Advanced" % svc.name)
 
     app = sw.StarwrightApp(services, problems)
     async with app.run_test(size=(110, 50)) as pilot:
@@ -819,18 +822,18 @@ async def test_switches_are_check_boxes() -> None:
         check(modal is not None, "modal opened")
         if modal is None:
             return
-        check(isinstance(modal.query_one("#adv-no-updates"), Checkbox), "no-updates is a check box")
+        check(isinstance(modal.query_one("#adv-claude-mcp"), Checkbox), "claude-mcp is a check box")
         check(isinstance(modal.query_one("#adv-port"), Input), "port is still a text box")
         # Chad, 25 Sept: st "sitting as part of the advanced makes it a weird
         # hidden thing" - it is a checkbox on Memory's row now, labelled with
         # what it costs, and not in the dialog at all
         check(not modal.query("#adv-st"), "st is not in the Advanced dialog")
-        modal.query_one("#adv-no-updates", Checkbox).value = True
+        modal.query_one("#adv-claude-mcp", Checkbox).value = True
         await pilot.pause()
         await pilot.click("#ok")
         await pilot.pause(); await pilot.pause()
         cfg = app.per_service.get("seren-memory", {})
-        check(cfg.get("no-updates") is True, "a ticked switch collects as True: %r" % cfg.get("no-updates"))
+        check(cfg.get("claude-mcp") is True, "a ticked switch collects as True: %r" % cfg.get("claude-mcp"))
         row = app.screen.query_one("#f-seren-memory-st", Checkbox)
         check(str(row.label) == "st+torch" and not row.value, "st is an inline box, off, labelled st+torch: %r" % str(row.label))
         check("torch" in str(row.tooltip or ""), "its tooltip says what it pulls in")
@@ -1519,6 +1522,29 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
         inh = sw.inherited_options([rec])
         check(inh.get("venv") == str(home / "wren-seren-venvs-") and inh.get("local-system") is True
               and inh.get("service") is True, f"universal defaults from the record: {inh}")
+        # The record's options: every flag the card was given, back on the
+        # dialog (Chad's smoke, 30 Sept: a ripple, a voice card, a bookmark hook
+        # and the bedtime all opened blank on reinstall - blank meant off).
+        rec2 = sw.InstalledRecord(service="seren-hippocampus", instance="wren", host="127.0.0.1", port=7269,
+                                  venv=str(home / "venvs" / "hippocampus"), config="", app_dir=str(home / "apps" / "hippocampus"),
+                                  root=str(home), extras={"mcp": True}, has_token=True,
+                                  options={"port": "7269", "instance": "wren", "ripple": "script", "ripple-run-as": "Caesar",
+                                           "ripple-claude": "D:/serenDaemon/SerenCore", "voice-card": True, "claude-mcp": True,
+                                           "sleep-at": "03:30", "keep-warm": "600", "gen-token": True, "root": str(home),
+                                           "local-system": True, "service": True, "no-such-flag": "x"})
+        per2 = {"seren-hippocampus": {"instance": "wren"}}
+        sw.prefill_reinstall(["seren-hippocampus"], svcs, per2, [rec2])
+        c2 = per2["seren-hippocampus"]
+        want = {"ripple": "script", "ripple-run-as": "Caesar", "ripple-claude": "D:/serenDaemon/SerenCore",
+                "voice-card": True, "claude-mcp": True, "sleep-at": "03:30", "keep-warm": "600", "mcp": True}
+        missing = {k: c2.get(k) for k, v in want.items() if c2.get(k) != v}
+        check(not missing, f"every recorded flag is back on the dialog: {missing or 'all'}")
+        check("gen-token" not in c2 and "token" not in c2, "a one-time action (gen-token) is not repeated; no token")
+        check("root" not in c2 and "no-such-flag" not in c2, "the root is the setup's; a flag the card lost is dropped")
+        cmd2 = " ".join(sw.build_command(svcs["seren-hippocampus"], c2, {}))
+        check(("-Ripple script" in cmd2 or "--ripple script" in cmd2) and ("VoiceCard" in cmd2 or "--voice-card" in cmd2),
+              f"the ripple and the voice card survive a reinstall: {cmd2[-120:]}")
+        check("no-updates" not in svcs["seren-hippocampus"].advanced_flags, "no-updates is not offered in the dialog")
         # the screens: the universal inputs and the Configure note
         app = sw.StarwrightApp(services, problems, installed=[rec])
         async with app.run_test(size=(120, 50)) as pilot:

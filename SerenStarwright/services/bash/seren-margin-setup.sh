@@ -24,6 +24,9 @@
 #    --repo SLUG      GitHub release repo
 #    --service        Autostart via systemd/launchd
 #    --mcp            Install the [mcp] extra
+#    --claude-bookmark   Start every Claude Code session from Margin's bookmark (a
+#                        SessionStart hook in your Claude settings): the dedication,
+#                        and how many letters wait. Opt in
 #    --claude-mcp        Register this service with Claude Code at user scope (every
 #                        folder) as <instance>-margin; the bearer is read from this
 #                        config when Claude connects. Implies --mcp
@@ -79,6 +82,7 @@ INSTALL_SERVICE=false
 SERVICE_USER=""
 MCP=false
 CLAUDE_MCP=false
+CLAUDE_BOOKMARK=false
 UPDATES_OFF=false
 INSTANCE=""
 # Starwright's install root (~/seren/<install>): venvs, apps, stores and
@@ -101,6 +105,8 @@ SVC_ACCENT="#d1cbba"
 
 # --describe must answer with ZERO side effects: no venv, no network, no python.
 # Scanned ahead of the parse loop so no other flag can have run anything first.
+SEREN_INSTALL_ARGV="$(printf '%s
+' "$@")"     # recorded on the install record, minus secrets
 for _a in "$@"; do
   [[ "$_a" == "--describe" ]] && { seren_describe; exit 0; }
 done
@@ -120,6 +126,7 @@ while [[ $# -gt 0 ]]; do
     --gen-token) GEN_TOKEN=true; shift ;;
     --mcp)       MCP=true; shift ;;
     --claude-mcp) CLAUDE_MCP=true MCP=true; shift ;;
+    --claude-bookmark) CLAUDE_BOOKMARK=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
@@ -246,6 +253,7 @@ write_launcher "$APP_DIR" "seren-margin" "$VPY" "seren_margin" "$CFG_PATH"
 # -- 6. optional autostart ----------------------------------------------------
 $INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-margin" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"
 $CLAUDE_MCP && seren_claude_mcp_register "margin"
+$CLAUDE_BOOKMARK && seren_claude_bookmark_register
 
 # -- done -------------------------------------------------------------------
 echo

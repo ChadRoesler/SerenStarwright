@@ -381,4 +381,5 @@ $doneArgs = @{
     Venv        = $VenvDir
     Config      = $CfgPath
 }
+$doneArgs["Bound"] = $PSBoundParameters
 Send-SerenDone @doneArgs

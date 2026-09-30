@@ -39,7 +39,7 @@ param(
   [switch]    $NoDeploy,
   [hashtable] $EnvVars        = @{},
   [string]    $Description    = "",
-  [string]    $LogDir         = "$env:USERPROFILE\seren-logs",
+  [string]    $LogDir         = "",
   [int]       $HealthPort     = 0,
   [string]    $HealthPath     = "/health",
   [switch]    $NoHealthCheck,
@@ -110,6 +110,10 @@ $ExecPath = Join-Path $DeployDir $ExecName
 if (-not (Test-Path $ExecPath)) { Die "executable not found at $ExecPath after deploy" }
 $ExecPath = (Resolve-Path $ExecPath).Path
 
+# Blank = a logs folder beside the app. Under an install root the lib passes
+# the root's logs\; in the old layout it is <app dir>\logs, so a service's
+# logs sit with its config and store rather than in ~\seren-logs.
+if (-not $LogDir) { $LogDir = Join-Path $DeployDir "logs" }
 # -- 3. install the service --------------------------------------------------
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $OutLog = Join-Path $LogDir "$ServiceName.out.log"

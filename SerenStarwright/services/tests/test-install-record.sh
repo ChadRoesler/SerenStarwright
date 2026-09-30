@@ -50,6 +50,23 @@ check "the token itself is never written"            "! grep -q 's3cret' '$REC'"
 check "extras.mcp true, derived false"               "[[ \"\$(field '$REC' 'd[\"extras\"][\"mcp\"], d[\"derived\"]')\" == '(True, False)' ]]"
 check "launcher named"                               "[[ \"\$(field '$REC' 'd[\"launcher\"]')\" == '$T/seren-memory/run-seren-memory.sh' ]]"
 
+echo "== options: the flags the card was invoked with, minus secrets (30 Sept 2026)"
+(
+  export SEREN_INSTALLED_DIR="$T/ledger"
+  source "$LIB"
+  INSTANCE="wren"; VENV_DIR=""; CFG_PATH="$T/seren-hippocampus/seren-hippocampus.yaml"; APP_DIR="$T/seren-hippocampus"
+  SEREN_INSTALL_ARGV="$(printf '%s
+' --json --port 7269 --ripple script --ripple-run-as Caesar --voice-card --gen-token --model-path "C:\m\q5 k.gguf" --token s3cret-no --ripple-token s3cret-no2 --describe)"
+  seren_emit_done "seren-hippocampus" "127.0.0.1" "7269" "true" "s3cret-no" >/dev/null 2>&1
+)
+REC3="$T/ledger/seren-hippocampus@wren.json"
+check "a value flag records its value"                "[[ \"\$(field '$REC3' 'd[\"options\"][\"ripple\"], d[\"options\"][\"sleep-at\"] if \"sleep-at\" in d[\"options\"] else None')\" == \"('script', None)\" ]]"
+check "a switch records true"                         "[[ \"\$(field '$REC3' 'd[\"options\"][\"voice-card\"], d[\"options\"][\"gen-token\"]')\" == '(True, True)' ]]"
+check "a value with spaces and backslashes survives"  "[[ \"\$(field '$REC3' 'd[\"options\"][\"model-path\"]')\" == 'C:\m\q5 k.gguf' ]]"
+check "plumbing flags are left out"                   "[[ \"\$(field '$REC3' '\"json\" in d[\"options\"] or \"describe\" in d[\"options\"]')\" == 'False' ]]"
+check "a secret-carrying flag is dropped whole (gen-token, a bare switch, stays)"  "[[ \"\$(field '$REC3' 'sorted(k for k in d[\"options\"] if k in (\"token\", \"ripple-token\"))')\" == '[]' ]] && ! grep -q 's3cret' '$REC3'"
+check "no argv captured -> options is {}"             "[[ \"\$(field '$REC' 'd[\"options\"]')\" == '{}' ]]"
+
 echo "== no instance: <service>.json, and a wheel beats local"
 (
   export SEREN_INSTALLED_DIR="$T/ledger"
