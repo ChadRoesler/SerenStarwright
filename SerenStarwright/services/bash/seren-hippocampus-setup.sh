@@ -29,6 +29,9 @@
 #                        (default on a node: ~/llama.cpp/build/bin/llama-server)
 #    --model-path PATH   The .gguf it serves. With a server this turns on management:
 #                        started for a sleep, stopped when idle. Host and port from --model-url
+#    --model-max-tokens N  The cap on one answer from the small model (default 2000).
+#                        Too low and answers are cut off mid-operation; keep it
+#                        under the context the server was started with
 #    --keep-warm SECS    How long a started model stays up after its last call before
 #                        the hippocampus stops it (default 300; a review and a
 #                        redraft reuse it)
@@ -113,6 +116,7 @@ MODEL_SERVER=""
 MODEL_PATH=""
 MODEL_ARGS=""
 KEEP_WARM=""
+MODEL_MAX_TOKENS=""
 RIPPLE=""
 RIPPLE_COMMAND=""
 RIPPLE_URL=""
@@ -173,6 +177,7 @@ while [[ $# -gt 0 ]]; do
     --model-path)   MODEL_PATH="$2"; shift 2 ;;
     --model-args)   MODEL_ARGS="$2"; shift 2 ;;
     --keep-warm)    KEEP_WARM="$2"; shift 2 ;;
+    --model-max-tokens) MODEL_MAX_TOKENS="$2"; shift 2 ;;
     --ripple)       RIPPLE="$2"; shift 2 ;;
     --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
     --ripple-url)   RIPPLE_URL="$2"; shift 2 ;;
@@ -219,6 +224,7 @@ if [[ -n "$MAX_ATTEMPTS" ]]; then
   [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ && "$MAX_ATTEMPTS" -ge 1 && "$MAX_ATTEMPTS" -le 10 ]] || die "--max-attempts wants 1-10, got '$MAX_ATTEMPTS'"
 fi
 [[ -z "$KEEP_WARM" || "$KEEP_WARM" =~ ^[0-9]+$ ]] || die "--keep-warm wants seconds, got '$KEEP_WARM'"
+[[ -z "$MODEL_MAX_TOKENS" || ( "$MODEL_MAX_TOKENS" =~ ^[0-9]+$ && "$MODEL_MAX_TOKENS" -ge 256 ) ]]   || die "--model-max-tokens wants a number of tokens, 256 or more, got '$MODEL_MAX_TOKENS'"
 # Refused here, before anything is installed, like the sleep flags above.
 RIPPLE_CLAUDE_LINES=""
 if [[ -n "$RIPPLE_CLAUDE" ]]; then
@@ -373,6 +379,7 @@ ${MEMORY_TOKEN_LINES}
 
 model:
   url: "${MODEL_URL}"
+$([[ -n "$MODEL_MAX_TOKENS" ]] && printf '  max_tokens: %s' "$MODEL_MAX_TOKENS" || printf '  # max_tokens: 2000            # the cap on one answer; too low and answers are cut off')
 ${MODEL_LIFECYCLE_LINES}
 
 sleep:

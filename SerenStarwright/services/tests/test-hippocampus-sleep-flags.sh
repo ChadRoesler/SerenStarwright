@@ -117,6 +117,27 @@ out="$(yamlget "d['voice']" < "$T/voice.yaml")"
 VOICE_CARD=false CFG_PATH="$T/voice.yaml" bash -c "$vline"
 [[ ! -s "$T/voice.yaml" ]] && ok_ "without it nothing is written (keep-config keeps an earlier opt in)" || bad "voice written without the flag"
 
+echo "== --model-max-tokens and --keep-warm (30 Sept 2026)"
+# The first sleep that ran on its own lost 7 of 11 answers to a 900-token cap
+# nobody could set from the installer.
+d="$(bash "$CARD" --describe)"
+for f in model-max-tokens keep-warm; do
+  grep -q "\"$f\"" <<<"$d" && ok_ "--describe offers --$f" || bad "--describe is missing --$f"
+done
+out="$(bash "$CARD" --model-max-tokens 12 2>&1)"; rc=$?
+[[ $rc -ne 0 && "$out" == *"256 or more"* ]] && ok_ "--model-max-tokens 12 is refused before anything installs" || bad "low cap: rc=$rc $out"
+mline="$(grep -F 'MODEL_MAX_TOKENS" ]] && printf' "$CARD")"
+printf 'cat <<YAML
+model:
+  url: x
+%s
+YAML
+' "$mline" > "$T/m.sh"
+out="$(MODEL_MAX_TOKENS=4096 bash "$T/m.sh" | yamlget "d['model'].get('max_tokens')")"
+[[ "$out" == "4096" ]] && ok_ "--model-max-tokens 4096 writes model.max_tokens, in the model block" || bad "max_tokens: $out"
+out="$(MODEL_MAX_TOKENS="" bash "$T/m.sh" | yamlget "d['model'].get('max_tokens')")"
+[[ "$out" == "None" ]] && ok_ "without it the key is a comment (the config default, or the old value, applies)" || bad "unset: $out"
+
 echo
 echo "  $PASS passed, $FAILS failed"
 exit $FAILS

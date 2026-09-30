@@ -571,7 +571,7 @@ if ($src -match "# at: ""03:30""" -and $src -match "# max_attempts: 3" -and $src
 
 # The model lifecycle and the ripple (28 Sept 2026): the server + .gguf that the
 # hippocampus starts itself, and the bedtime question, offered as a dropdown.
-foreach ($f in "model-server", "model-path", "model-args", "ripple", "ripple-command", "ripple-url") {
+foreach ($f in "model-server", "model-path", "model-args", "model-max-tokens", "ripple", "ripple-command", "ripple-url") {
     if ($d.flags -contains $f) { Good "-Describe advertises $f" } else { Bad "-Describe is missing $f" }
 }
 if ((@($d.choices.ripple) -join ",") -eq "script,endpoint,off") { Good "-Describe offers -Ripple as a choice (from its ValidateSet)" }
@@ -581,7 +581,8 @@ if ($d.switches -contains "voice-card") { Good "-VoiceCard is a switch (opt in)"
 if ($src -match [regex]::Escape('if ($VoiceCard) {') -and $src -match 'enabled: true') { Good "-VoiceCard writes voice.enabled true" }
 else { Bad "-VoiceCard does not write the voice block" }
 foreach ($case in @(@{a = @("-Ripple", "carrier-pigeon"); w = "script"}, @{a = @("-Ripple", "endpoint"); w = "needs -RippleUrl"},
-                    @{a = @("-ModelServer", "C:\llama\llama-server.exe"); w = "go together"})) {
+                    @{a = @("-ModelServer", "C:\llama\llama-server.exe"); w = "go together"},
+                    @{a = @("-ModelMaxTokens", "12"); w = "256 or more"})) {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $card) + $case.a
     # Continue, not Stop, for this one call: GitHub's `shell: powershell` runs with
     # $ErrorActionPreference = stop, and under Windows PowerShell 5.1 a native
