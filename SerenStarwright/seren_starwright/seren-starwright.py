@@ -468,8 +468,12 @@ class ServiceDef:
     @property
     def advanced_flags(self) -> list[str]:
         """Everything that isn't universal, inline, or plumbing."""
+        # no-updates is not offered: update checking is cosmetic (a badge on
+        # the info route), on by default, and the yaml block turns it off for
+        # anyone who wants that. Ten cards keep the flag; the dialog does not
+        # ask about it (the smoke).
         skip = (UNIVERSAL_FLAGS | set(INLINE_FLAGS) | IDENTITY_FLAGS
-                | {"describe", "json", "help"})
+                | {"describe", "json", "help", "no-updates"})
         return [f for f in self.flags if f not in skip]
 
 
@@ -736,6 +740,12 @@ class InstalledRecord:
     extras: dict = field(default_factory=dict)   # mcp / corp / vector / st, as installed
     setup: str = ""                # the setup this install belongs to ("" = none named)
     root: str = ""                 # the install root it lives under ("" = the old layout)
+    # The flags the card was invoked with, minus secrets (a switch is True, a
+    # value flag its value): what a reinstall starts from. Every advanced flag
+    # used to be written into the yaml and forgotten, so a reinstall opened
+    # blank - which for a switch meant off (the smoke).
+    options: dict = field(default_factory=dict)
+    has_token: bool = False        # the card wrote a bearer (never the token itself)
 
     @property
     def label(self) -> str:
@@ -913,7 +923,10 @@ def installed_ledger(home: Optional[Path] = None, probe_os: Optional[bool] = Non
                     service_user=str(d.get("service_user") or ""),
                     local_system=(bool(d["local_system"]) if "local_system" in d else None),
                     autostart=bool(d.get("autostart", False)),
-                    setup=str(d.get("setup") or ""), root=str(d.get("root") or ""))
+                    setup=str(d.get("setup") or ""), root=str(d.get("root") or ""),
+                    has_token=bool(d.get("has_token", False)),
+                    options={str(k): v for k, v in (d.get("options") or {}).items()
+                             if isinstance(v, (str, int, float, bool))} if isinstance(d.get("options"), dict) else {})
             except (OSError, ValueError, TypeError):
                 continue
             if not rec.service:
@@ -1256,6 +1269,19 @@ def prefill_reinstall(selected: list[str], svcs: dict[str, ServiceDef], per_serv
         for extra, on in (rec.extras or {}).items():
             if on and extra in svc.flags:
                 cfg.setdefault(extra, True)
+        # Every flag the card was given last time, as it was given: a ripple,
+        # a bedtime, a model path, a voice card, a bookmark hook. Identity and
+        # the universal ones are decided above and by the universal section;
+        # a secret is never on the record; a one-time action (gen-token) is
+        # not repeated; a flag the card no longer has is dropped.
+        for flag, v in (rec.options or {}).items():
+            if flag not in svc.flags or flag in cfg or flag in IDENTITY_FLAGS or flag in UNIVERSAL_FLAGS:
+                continue
+            if flag in ("gen-token", "instance", "service", "json", "describe") or flag.endswith("-token"):
+                continue
+            if v in (None, "", False):
+                continue
+            cfg[flag] = True if v is True or (svc.is_switch(flag) and v) else v
         if rec.config:
             if "host" in svc.flags and "host" not in cfg:
                 h = config_value(rec.config, "server", "host")
@@ -2127,9 +2153,20 @@ class AdvancedModal(ModalScreen[dict]):
                     if flag in folded:
                         continue
                     if flag in ("gen-token",):
-                        yield Checkbox("generate a bearer token",
+                        has = bool(rec is not None and getattr(rec, "has_token", False))
+                        if has:
+                            yield Static("bearer token: ●●●●●●●● (set - kept on reinstall)",
+                                         classes="modal-sub")
+                        yield Checkbox("rotate the bearer token (generate a new one)" if has
+                                       else "generate a bearer token",
                                        value=bool(self.current.get(flag)),
                                        id=f"adv-{flag}")
+                        continue
+                    if flag == "token" and rec is not None and getattr(rec, "has_token", False):
+                        # Set already: the box is for a NEW value; blank keeps the old one.
+                        yield Label("token (blank = keep the existing one)")
+                        yield Input(value=str(self.current.get(flag, "")), password=True,
+                                    placeholder="●●●●●●●●", id=f"adv-{flag}")
                         continue
                     if self.svc.is_switch(flag):
                         # A switch is a check box. As a text box it produced
@@ -2156,6 +2193,10 @@ class AdvancedModal(ModalScreen[dict]):
                         default = str(self.svc.default_port)
                     elif flag == "host":
                         default = self.svc.default_host
+                    elif flag == "ripple-run-as":
+                        # The card defaults to the installer; blank means the
+                        # service account, the same rule as the identity boxes.
+                        default = "(blank = the service account)"
                     yield Label(flag)
                     # Empty value + the default as PLACEHOLDER, not as a
                     # pre-filled value. Pre-filling meant opening this dialog

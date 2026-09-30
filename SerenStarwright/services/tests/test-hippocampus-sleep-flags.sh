@@ -106,6 +106,17 @@ out="$(block RIPPLE=script | yamlget "d['ripple'].get('stdin')")"
 [[ "$out" == "None" ]] && ok_ "without --ripple-stdin no stdin line is written" || bad "stdin default: $out"
 bash "$CARD" --describe | grep -q '"choices":{"ripple":\["script","endpoint","off"\]}'   && ok_ "--describe offers the ripple as a choice" || bad "no ripple choices in --describe"
 
+echo "== --voice-card (opt in; 29 Sept 2026)"
+bash "$CARD" --describe | grep -q '"switches":\[[^]]*"voice-card"' && ok_ "--voice-card is a switch (a checkbox in the TUI)" || bad "--voice-card is not a switch"
+vline="$(grep -E '^\$VOICE_CARD && printf' "$CARD")"
+: > "$T/voice.yaml"
+VOICE_CARD=true CFG_PATH="$T/voice.yaml" bash -c "$vline"
+out="$(yamlget "d['voice']" < "$T/voice.yaml")"
+[[ "$out" == "{'enabled': True}" ]] && ok_ "--voice-card: voice.enabled true, and no card text (the model writes that)" || bad "voice: $out"
+: > "$T/voice.yaml"
+VOICE_CARD=false CFG_PATH="$T/voice.yaml" bash -c "$vline"
+[[ ! -s "$T/voice.yaml" ]] && ok_ "without it nothing is written (keep-config keeps an earlier opt in)" || bad "voice written without the flag"
+
 echo
 echo "  $PASS passed, $FAILS failed"
 exit $FAILS

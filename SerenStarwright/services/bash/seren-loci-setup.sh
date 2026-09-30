@@ -101,6 +101,8 @@ SVC_ACCENT="#5bc8e8"
 
 # --describe must answer with ZERO side effects: no venv, no network, no python.
 # Scanned ahead of the parse loop so no other flag can have run anything first.
+SEREN_INSTALL_ARGV="$(printf '%s
+' "$@")"     # recorded on the install record, minus secrets
 for _a in "$@"; do
   [[ "$_a" == "--describe" ]] && { seren_describe; exit 0; }
 done

@@ -452,12 +452,52 @@ function Register-SerenClaudeMcp([string] $Short, [string] $Vpy, [string] $AppDi
     Ok "Claude Code: $name registered, every folder (the bearer is read from this config on connect)"
 }
 
+# Margin's bookmark at every Claude Code session start: the twin of
+# seren_claude_bookmark_register in seren-install-lib.sh, which has the why.
+# Opt in; never fails an install; the bearer never reaches a command line.
+function Register-SerenClaudeBookmark([string] $Vpy, [string] $AppDir, [string] $CfgPath) {
+    $helper = Join-Path $AppDir "seren-margin-bookmark.py"
+    try { Copy-Item (Join-Path $PSScriptRoot "seren-margin-bookmark.py") $helper -Force -ErrorAction Stop }
+    catch { Warn "-ClaudeBookmark: could not copy the bookmark helper to ${AppDir}: $_"; return }
+    $cmd = (@($Vpy, $helper, $CfgPath) | ForEach-Object { '"' + $_ + '"' }) -join " "
+    $argList = @((Join-Path $PSScriptRoot "seren-claude-hook.py"), "add", "SessionStart", "seren-margin-bookmark.py", $cmd)
+    if ($env:SEREN_CLAUDE_SETTINGS) { $argList += @("--settings", $env:SEREN_CLAUDE_SETTINGS) }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Vpy
+    $psi.Arguments = ($argList | ForEach-Object { ConvertTo-SerenNativeArg $_ }) -join " "
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $err = $p.StandardError.ReadToEnd(); $null = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
+    if ($p.ExitCode -eq 0) { Ok "Claude Code: every session starts from Margin's bookmark (SessionStart hook)" }
+    else { Warn "-ClaudeBookmark: not added - $err" }
+}
+
+# The flags a card was invoked with, as an ordered map for the install record:
+# the twin of seren_options_json in the bash library, which has the why. Takes
+# the card's $PSBoundParameters and its -Describe params map (native name ->
+# canonical flag), so the record speaks the same flag names on both engines.
+# A switch records true; a value flag its value. NEVER a secret: any parameter
+# whose name ends in Token, and the password, are dropped whole.
+function Get-SerenOptions([hashtable] $Bound) {
+    $out = [ordered] @{}
+    if (-not $Bound) { return $out }
+    foreach ($name in @($Bound.Keys)) {
+        if ($name -match 'Token$' -or $name -match 'Password$' -or $name -in @('Json', 'Describe')) { continue }
+        $flag = ConvertTo-SerenFlagName $name
+        $v = $Bound[$name]
+        if ($v -is [switch] -or $v -is [bool]) { if ([bool] $v) { $out[$flag] = $true } }
+        elseif ($null -ne $v -and "$v" -ne "") { $out[$flag] = [string] $v }
+    }
+    return $out
+}
+
 function Write-SerenInstallRecord {
     param(
         [string] $Service, [string] $ConnectHost, [int] $Port,
         [bool] $Autostart, [string] $Token,
         [bool] $Mcp = $false, [bool] $Corp = $false, [bool] $Vector = $false, [bool] $St = $false,
-        [string] $Venv = "", [string] $Config = "", [string] $Package = ""
+        [string] $Venv = "", [string] $Config = "", [string] $Package = "",
+        [hashtable] $Bound = $null
     )
     $dir = $env:SEREN_INSTALLED_DIR
     if (-not $dir) { $dir = Join-Path $env:USERPROFILE ".seren\installed" }
@@ -510,11 +550,12 @@ function Write-SerenInstallRecord {
         local_system   = [bool] (Get-Variable -Name LocalSystem -ValueOnly -ErrorAction SilentlyContinue)
         has_token      = $hasToken
         extras         = [ordered] @{ mcp = $Mcp; corp = $Corp; vector = $Vector; st = $St }
+        options        = (Get-SerenOptions -Bound $Bound)
         source         = $source
         source_ref     = $sourceRef
         installed_at   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
         setup          = [string] $env:SEREN_SETUP
-        installer      = (Split-Path -Leaf $MyInvocation.PSCommandPath)
+        installer      = $(if ($MyInvocation.PSCommandPath) { Split-Path -Leaf $MyInvocation.PSCommandPath } else { "" })
         platform       = "Windows"
         derived        = $false
     }
@@ -530,13 +571,13 @@ function Send-SerenDone {
         [string] $Service, [string] $ConnectHost, [int] $Port,
         [bool] $Autostart, [string] $Token,
         [bool] $Mcp = $false, [bool] $Corp = $false, [bool] $Vector = $false, [bool] $St = $false,
-        [string] $Venv = "", [string] $Config = ""
+        [string] $Venv = "", [string] $Config = "", [hashtable] $Bound = $null
     )
     $hasToken = $false
     if ($Token) { $hasToken = $true }
     # The ledger first: written whether or not anyone asked for -Json.
     Write-SerenInstallRecord -Service $Service -ConnectHost $ConnectHost -Port $Port -Autostart $Autostart `
-        -Token $Token -Mcp $Mcp -Corp $Corp -Vector $Vector -St $St -Venv $Venv -Config $Config
+        -Token $Token -Mcp $Mcp -Corp $Corp -Vector $Vector -St $St -Venv $Venv -Config $Config -Bound $Bound
     Send-SerenEvent -EventName "done" -Data @{
         ok        = $true
         service   = $Service
