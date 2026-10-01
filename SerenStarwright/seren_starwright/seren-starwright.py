@@ -1524,6 +1524,54 @@ def reinstall_notes(selected: list[str], overrides: dict[str, dict],
     return out
 
 
+def _bare_account(a: str) -> str:
+    """One account, however Windows spells it: with a leading dot-backslash,
+    with this machine's name in front, or bare."""
+    a = (a or "").strip()
+    if a.startswith(".\\"):
+        a = a[2:]
+    box = os.environ.get("COMPUTERNAME", "")
+    if box and a.lower().startswith(box.lower() + "\\"):
+        a = a[len(box) + 1:]
+    return a.lower()
+
+
+def identity_problems(selected: list[str], svcs: dict[str, "ServiceDef"], per_service: dict[str, dict],
+                      universal: dict, installed: list["InstalledRecord"],
+                      passwords: Optional[dict] = None, password: str = "") -> list[str]:
+    """Windows services that would CHANGE the account they run as with no
+    password to do it with. Seen 30 Sept 2026: five cards were sent
+    -ServiceUser with a blank password, the service core refused, every card
+    reported success, and the services kept LocalSystem while their install
+    records said otherwise. A service that already runs as the account asked
+    for needs no password (the core leaves its logon alone). Empty off Windows:
+    a systemd User= is a name, there is no credential."""
+    if not IS_WINDOWS:
+        return []
+    out: list[str] = []
+    for n in selected:
+        svc = svcs[n]
+        cfg = per_service.get(n, {})
+        if "service-user" not in svc.flags:
+            continue
+        if not (cfg.get("service") or universal.get("service")):
+            continue                                       # not installed as a service
+        if cfg.get("local-system") or (universal.get("local-system") and not cfg.get("service-user")):
+            continue                                       # LocalSystem needs no credential
+        account = str(cfg.get("service-user") or universal.get("service-user") or default_service_account())
+        if (passwords or {}).get(n) or password:
+            continue
+        inst = str(cfg.get("instance") or "")
+        rec = next((r for r in installed if r.service == n and r.instance == inst), None)
+        if rec is not None and rec.local_system is False and _bare_account(rec.service_user) == _bare_account(account):
+            continue                                       # already runs as that account
+        now = ("LocalSystem" if rec is not None and rec.local_system
+               else (rec.service_user if rec is not None and rec.service_user else ""))
+        out.append(f"{svc.display}: running it as {account} needs that account's Windows password"
+                   + (f" (it runs as {now} now, and would stay that way)" if now else ""))
+    return out
+
+
 def port_conflicts(selected: list[str], svcs: dict[str, ServiceDef],
                    overrides: dict[str, dict],
                    installed: Optional[list[InstalledRecord]] = None) -> list[str]:
@@ -2461,6 +2509,13 @@ class ConfigScreen(Screen):
             if warn:
                 self.query_one("#cfg-warn", Static).update(
                     "  ".join(warn) + "  - change a port under Configure")
+                return
+            ident = identity_problems(self.app.selected, self.app.svc_map, self.app.per_service,   # type: ignore[attr-defined]
+                                      self.app.universal, self.app.installed,                       # type: ignore[attr-defined]
+                                      self.app.service_passwords, self.app.service_password)        # type: ignore[attr-defined]
+            if ident:
+                self.query_one("#cfg-warn", Static).update(
+                    "  ".join(ident) + "  - type the password in the Service account box, or tick LocalSystem")
                 return
             st = getattr(self.app, "setup", None)
             if st is not None:

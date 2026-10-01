@@ -989,7 +989,16 @@ function Setup-Autostart {
         $logArg = @{}
         $logDir = Get-Variable -Name SerenLogDir -Scope Global -ValueOnly -ErrorAction SilentlyContinue
         if ($logDir) { $logArg["LogDir"] = $logDir }
+        $global:LASTEXITCODE = 0
         & $wrapper -Instance $suffix -AppDir $AppDir @venvArg @idArg @logArg
+        # The wrapper's failure used to pass unnoticed: on 30 Sept 2026 five
+        # cards asked for -ServiceUser with no password, the core refused, and
+        # every card went on to report success and record an account the
+        # service never got (it kept LocalSystem). Say it.
+        if ($LASTEXITCODE -ne 0) {
+            Warn "THE SERVICE STEP FAILED (the error is above). $ServiceName is installed and configured, but its Windows service was NOT updated: it keeps the account and settings it had. Fix the cause and run the install again."
+            $global:SerenServiceStepFailed = $true
+        }
     } else {
         Warn "setup-$shortName-service.ps1 + setup-seren-service.ps1 not found."
         Warn "Keep the shared setup scripts together and run (elevated):"
