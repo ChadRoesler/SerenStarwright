@@ -694,6 +694,25 @@ Copy-Item $CfgPath $bak; (Get-Item $bak).LastWriteTime = Get-Date
 if (((Get-Date) - (Get-Item $bak).LastWriteTime).TotalSeconds -lt 60) { Good "a backup of a config last edited three hours ago is seconds old" } else { Bad "the backup kept the config's age" }
 Remove-Item $tmpB, $bak -Force -ErrorAction SilentlyContinue
 
+# The password is put to Windows before the working service is touched (30 Sept
+# 2026: a mistyped one took Loci down - it was only found when the NEW service
+# would not start, after the old one had been removed). Asked here about an
+# account that does not exist, so no real account collects a failed logon.
+Section "service core: the password is checked first, and a failed start says why"
+$fn = [regex]::Match($coreSrc, '(?s)function Test-SerenLogon.*?\r?\n  \}\r?\n\}\r?\n')
+if ($fn.Success) {
+    Invoke-Expression $fn.Value
+    $why = Test-SerenLogon ".\seren-no-such-user-zz9" "not-the-password"
+    if ($why -match "1326") { Good "Windows is asked, and its reason comes back: $why" } else { Bad "the logon check did not refuse a made-up account: '$why'" }
+} else { Bad "Test-SerenLogon not found in the service core" }
+$iCheck = $coreSrc.IndexOf('$refused = Test-SerenLogon')
+$iRemove = $coreSrc.IndexOf('& $nssm remove $ServiceName confirm')
+if ($iCheck -gt 0 -and $iRemove -gt $iCheck) { Good "the check runs before the existing service is removed" } else { Bad "the password is checked after the service is removed (or not at all)" }
+if ($coreSrc -match "NOTHING WAS CHANGED") { Good "a refusal says nothing was changed" } else { Bad "a refused password does not say the service is untouched" }
+if ($coreSrc -match [regex]::Escape('try { & $nssm start $ServiceName 2>&1 | Out-Null } finally { $ErrorActionPreference = $prevEap }') -and
+    $coreSrc -match "Windows would not start it") { Good "a failed start is reported with Windows' reason, not a NativeCommandError" }
+else { Bad "nssm start can still kill the script under EAP Stop" }
+
 # -- the observatory card receives ripples (28 Sept 2026) ---------------------
 # The hippocampus moves to the Nano, the model stays on the desktop: the ripple
 # crosses boxes, and this card turns the receiving end on.

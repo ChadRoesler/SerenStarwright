@@ -1684,6 +1684,78 @@ def identity_problems(selected: list[str], svcs: dict[str, "ServiceDef"], per_se
     return out
 
 
+def _split_account(account: str) -> tuple[str, Optional[str]]:
+    """(user, domain) the way LogonUser wants them: a leading dot-backslash or
+    a bare name is this machine ('.'), user@domain carries its own domain."""
+    a = (account or "").strip()
+    if "\\" in a:
+        domain, user = a.split("\\", 1)
+        return user, (domain or ".")
+    if "@" in a:
+        return a, None
+    return a, "."
+
+
+def windows_logon_error(account: str, password: str) -> str:
+    """"" when Windows accepts this account and password, else Windows' own
+    reason. LogonUser changes nothing. Error 1385 means the credential is right
+    and only this KIND of logon is refused - a service logon is another kind -
+    so it counts as accepted. A check that cannot run does not block."""
+    if not IS_WINDOWS:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user, domain = _split_account(account)
+        advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+        advapi.LogonUserW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                      wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        advapi.LogonUserW.restype = wintypes.BOOL
+        token = wintypes.HANDLE()
+        if advapi.LogonUserW(user, domain, password, 3, 0, ctypes.byref(token)):
+            ctypes.WinDLL("kernel32").CloseHandle(token)
+            return ""
+        code = ctypes.get_last_error()
+        if code == 1385:
+            return ""
+        return f"{ctypes.FormatError(code).strip()} (Windows error {code})"
+    except Exception:                                    # noqa: BLE001
+        return ""
+
+
+def credential_problems(selected: list[str], svcs: dict[str, "ServiceDef"], per_service: dict[str, dict],
+                        universal: dict, passwords: Optional[dict] = None, password: str = "",
+                        logon=None) -> list[str]:
+    """The passwords about to be handed to Windows services, checked with
+    Windows before anything runs. 30 Sept 2026: a mistyped password was only
+    found when the new service would not start - after the working one had been
+    removed - and Loci was down. Each account and password pair is asked once."""
+    if not IS_WINDOWS:
+        return []
+    logon = logon or windows_logon_error
+    asked: dict[tuple[str, str], str] = {}
+    out: list[str] = []
+    for n in selected:
+        svc = svcs[n]
+        cfg = per_service.get(n, {})
+        if "service-user" not in svc.flags or not (cfg.get("service") or universal.get("service")):
+            continue
+        if cfg.get("local-system") or (universal.get("local-system") and not cfg.get("service-user")):
+            continue
+        pw = (passwords or {}).get(n) or password
+        if not pw:
+            continue                                       # identity_problems speaks to a missing one
+        account = str(cfg.get("service-user") or universal.get("service-user") or default_service_account())
+        if "\\" not in account and "@" not in account:
+            account = ".\\" + account
+        key = (account.lower(), pw)
+        if key not in asked:
+            asked[key] = logon(account, pw)
+            if asked[key]:
+                out.append(f"Windows refused the password for {account}: {asked[key]}")
+    return out
+
+
 def port_conflicts(selected: list[str], svcs: dict[str, ServiceDef],
                    overrides: dict[str, dict],
                    installed: Optional[list[InstalledRecord]] = None) -> list[str]:
@@ -2628,6 +2700,14 @@ class ConfigScreen(Screen):
             if ident:
                 self.query_one("#cfg-warn", Static).update(
                     "  ".join(ident) + "  - type the password in the Service account box, or tick LocalSystem")
+                return
+            creds = credential_problems(self.app.selected, self.app.svc_map, self.app.per_service,   # type: ignore[attr-defined]
+                                        self.app.universal, self.app.service_passwords,               # type: ignore[attr-defined]
+                                        self.app.service_password)                                    # type: ignore[attr-defined]
+            if creds:
+                self.query_one("#cfg-warn", Static).update(
+                    "  ".join(creds) + "  - it wants the account's own password (not a PIN or Windows "
+                    "Hello). Nothing has been changed.")
                 return
             st = getattr(self.app, "setup", None)
             if st is not None:
