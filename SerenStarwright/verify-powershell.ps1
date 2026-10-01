@@ -576,6 +576,22 @@ foreach ($f in "model-server", "model-path", "model-args", "model-max-tokens", "
 }
 if ((@($d.choices.ripple) -join ",") -eq "script,endpoint,off") { Good "-Describe offers -Ripple as a choice (from its ValidateSet)" }
 else { Bad "ripple choices wrong: $($d.choices | ConvertTo-Json -Compress)" }
+# The tend cycle (30 Sept 2026): a redraft starts the small model, so on a box
+# where it shares memory with the main model it must not run on a timer.
+if ((@($d.choices.'tend-cycle') -join ",") -eq "on,off") { Good "-Describe offers -TendCycle as a choice: on | off" }
+else { Bad "tend-cycle choices wrong: $($d.choices | ConvertTo-Json -Compress)" }
+if ($d.flags -contains "tend-every") { Good "-Describe advertises tend-every" } else { Bad "-Describe is missing tend-every" }
+foreach ($case in @(@{a = @("-TendEvery", "5"); w = "60 or more"}, @{a = @("-TendCycle", "off", "-TendEvery", "600"); w = "there is no timer"},
+                    @{a = @("-TendCycle", "maybe"); w = "on"})) {
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $card) + $case.a
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String } finally { $ErrorActionPreference = $prevEap }
+    if ($LASTEXITCODE -ne 0 -and $out -match [regex]::Escape($case.w)) { Good "$($case.a -join ' ') is refused ($($case.w))" }
+    else { Bad "$($case.a -join ' ') was not refused: $out" }
+}
+if ($src -match [regex]::Escape("tend_cycle: `$(if (`$TendCycle -eq 'off') { 'false' } else { 'true' })") -and
+    $src -match [regex]::Escape('tend_interval_seconds: $TendEvery')) { Good "-TendCycle / -TendEvery write tend_cycle and tend_interval_seconds" }
+else { Bad "the tend flags are not written into the sleep block" }
 # The voice card (29 Sept 2026): opt in, a checkbox; the model writes the card.
 if ($d.switches -contains "voice-card") { Good "-VoiceCard is a switch (opt in)" } else { Bad "-VoiceCard missing or not a switch" }
 if ($src -match [regex]::Escape('if ($VoiceCard) {') -and $src -match 'enabled: true') { Good "-VoiceCard writes voice.enabled true" }

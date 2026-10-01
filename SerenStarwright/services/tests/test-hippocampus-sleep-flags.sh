@@ -104,7 +104,7 @@ out="$(block RIPPLE=script RIPPLE_STDIN=true RIPPLE_COMMAND='ssh desktop claude 
 [[ "$out" == "('ssh desktop claude -p', True)" ]] && ok_ "--ripple-stdin: the message goes on stdin (ssh with no Lodestar or Observatory)" || bad "stdin: $out"
 out="$(block RIPPLE=script | yamlget "d['ripple'].get('stdin')")"
 [[ "$out" == "None" ]] && ok_ "without --ripple-stdin no stdin line is written" || bad "stdin default: $out"
-bash "$CARD" --describe | grep -q '"choices":{"ripple":\["script","endpoint","off"\]}'   && ok_ "--describe offers the ripple as a choice" || bad "no ripple choices in --describe"
+bash "$CARD" --describe | grep -q '"ripple":\["script","endpoint","off"\]'   && ok_ "--describe offers the ripple as a choice" || bad "no ripple choices in --describe"
 
 echo "== --voice-card (opt in; 29 Sept 2026)"
 bash "$CARD" --describe | grep -q '"switches":\[[^]]*"voice-card"' && ok_ "--voice-card is a switch (a checkbox in the TUI)" || bad "--voice-card is not a switch"
@@ -137,6 +137,29 @@ out="$(MODEL_MAX_TOKENS=4096 bash "$T/m.sh" | yamlget "d['model'].get('max_token
 [[ "$out" == "4096" ]] && ok_ "--model-max-tokens 4096 writes model.max_tokens, in the model block" || bad "max_tokens: $out"
 out="$(MODEL_MAX_TOKENS="" bash "$T/m.sh" | yamlget "d['model'].get('max_tokens')")"
 [[ "$out" == "None" ]] && ok_ "without it the key is a comment (the config default, or the old value, applies)" || bad "unset: $out"
+
+echo "== --tend-cycle and --tend-every (30 Sept 2026)"
+# A redraft starts the small model. On a box where it shares memory with the
+# main model, that must not happen on a timer.
+d="$(bash "$CARD" --describe)"
+grep -q '"tend-cycle":\["on","off"\]' <<<"$d" && ok_ "--tend-cycle is a choice: on | off" || bad "tend-cycle choices: $d"
+grep -q '"tend-every"' <<<"$d" && ok_ "--describe offers --tend-every" || bad "--describe is missing --tend-every"
+for bad_args in "--tend-cycle maybe|on or off" "--tend-every 5|60 or more" "--tend-cycle off --tend-every 600|there is no timer"; do
+  out="$(bash "$CARD" ${bad_args%%|*} 2>&1)"; rc=$?
+  [[ $rc -ne 0 && "$out" == *"${bad_args##*|}"* ]] && ok_ "${bad_args%%|*} is refused (${bad_args##*|})" || bad "${bad_args%%|*}: rc=$rc $out"
+done
+grep -F 'TEND_CYCLE" ]] && printf' "$CARD" > "$T/tend.lines"; grep -F 'TEND_EVERY" ]] && printf' "$CARD" >> "$T/tend.lines"
+{ printf 'cat <<YAML
+sleep:
+  mode: thread
+'; cat "$T/tend.lines"; printf 'YAML
+'; } > "$T/tend.sh"
+out="$(TEND_CYCLE=off TEND_EVERY="" bash "$T/tend.sh" | yamlget "(d['sleep'].get('tend_cycle'), d['sleep'].get('tend_interval_seconds'))")"
+[[ "$out" == "(False, None)" ]] && ok_ "--tend-cycle off writes tend_cycle: false" || bad "off: $out"
+out="$(TEND_CYCLE=on TEND_EVERY=900 bash "$T/tend.sh" | yamlget "(d['sleep'].get('tend_cycle'), d['sleep'].get('tend_interval_seconds'))")"
+[[ "$out" == "(True, 900)" ]] && ok_ "--tend-cycle on --tend-every 900 writes both" || bad "on: $out"
+out="$(TEND_CYCLE="" TEND_EVERY="" bash "$T/tend.sh" | yamlget "sorted(d['sleep'])")"
+[[ "$out" == "['mode']" ]] && ok_ "neither given: both stay comments (the defaults, or the old values, apply)" || bad "unset: $out"
 
 echo
 echo "  $PASS passed, $FAILS failed"

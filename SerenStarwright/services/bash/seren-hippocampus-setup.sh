@@ -25,6 +25,11 @@
 #    --sleep-at HH:MM    Bedtime at a wall-clock time (a sleep still waits for a brief)
 #    --sleep-every HOURS ...or bedtime every N hours after the last sleep (default ~20)
 #    --max-attempts N    The draft cap: attempts per chain, 1-10 (default 3)
+#    --tend-cycle on|off Redraft denied operations on a timer (on, the default), or
+#                        only at sleep time - bedtime passing, or a new brief (off).
+#                        Off is for a box where the small model and the main model
+#                        share memory: a redraft starts the small model
+#    --tend-every SECS   With the tend cycle on: how often (default 600)
 #    --model-server PATH The llama-server the hippocampus starts when a sleep needs it
 #                        (default on a node: ~/llama.cpp/build/bin/llama-server)
 #    --model-path PATH   The .gguf it serves. With a server this turns on management:
@@ -112,6 +117,8 @@ MODEL_URL="http://localhost:8090/v1"
 SLEEP_AT=""
 SLEEP_EVERY=""
 MAX_ATTEMPTS=""
+TEND_CYCLE=""
+TEND_EVERY=""
 MODEL_SERVER=""
 MODEL_PATH=""
 MODEL_ARGS=""
@@ -152,7 +159,7 @@ SVC_GROUP="brain"
 SVC_PACKAGE="seren-hippocampus"
 SVC_REQUIRES="seren-memory"
 SVC_ACCENT="#c9a0dc"
-SVC_CHOICES="ripple=script|endpoint|off"
+SVC_CHOICES="ripple=script|endpoint|off tend-cycle=on|off"
 
 SEREN_INSTALL_ARGV="$(printf '%s
 ' "$@")"     # recorded on the install record, minus secrets
@@ -173,6 +180,8 @@ while [[ $# -gt 0 ]]; do
     --sleep-at)     SLEEP_AT="$2"; shift 2 ;;
     --sleep-every)  SLEEP_EVERY="$2"; shift 2 ;;
     --max-attempts) MAX_ATTEMPTS="$2"; shift 2 ;;
+    --tend-cycle)   TEND_CYCLE="$2"; shift 2 ;;
+    --tend-every)   TEND_EVERY="$2"; shift 2 ;;
     --model-server) MODEL_SERVER="$2"; shift 2 ;;
     --model-path)   MODEL_PATH="$2"; shift 2 ;;
     --model-args)   MODEL_ARGS="$2"; shift 2 ;;
@@ -224,6 +233,10 @@ if [[ -n "$MAX_ATTEMPTS" ]]; then
   [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ && "$MAX_ATTEMPTS" -ge 1 && "$MAX_ATTEMPTS" -le 10 ]] || die "--max-attempts wants 1-10, got '$MAX_ATTEMPTS'"
 fi
 [[ -z "$KEEP_WARM" || "$KEEP_WARM" =~ ^[0-9]+$ ]] || die "--keep-warm wants seconds, got '$KEEP_WARM'"
+case "$TEND_CYCLE" in ""|on|off) ;; *) die "--tend-cycle wants on or off, got '$TEND_CYCLE'" ;; esac
+[[ -z "$TEND_EVERY" || ( "$TEND_EVERY" =~ ^[0-9]+$ && "$TEND_EVERY" -ge 60 ) ]] \
+  || die "--tend-every wants seconds, 60 or more, got '$TEND_EVERY'"
+[[ "$TEND_CYCLE" == off && -n "$TEND_EVERY" ]] && die "--tend-every is how often the tend cycle redrafts; with --tend-cycle off there is no timer"
 [[ -z "$MODEL_MAX_TOKENS" || ( "$MODEL_MAX_TOKENS" =~ ^[0-9]+$ && "$MODEL_MAX_TOKENS" -ge 256 ) ]]   || die "--model-max-tokens wants a number of tokens, 256 or more, got '$MODEL_MAX_TOKENS'"
 # Refused here, before anything is installed, like the sleep flags above.
 RIPPLE_CLAUDE_LINES=""
@@ -395,6 +408,12 @@ $([[ -n "$SLEEP_EVERY_SECONDS" ]] && printf '  interval_seconds: %s' "$SLEEP_EVE
   # The draft cap: attempts per chain before the last is terminal (the reviewer
   # may then edit on approve; a denial ends the chain). 1-10.
 $([[ -n "$MAX_ATTEMPTS" ]] && printf '  max_attempts: %s' "$MAX_ATTEMPTS" || printf '  # max_attempts: 3')
+  # The tend cycle: redrafting what the reviewer denied starts the small model.
+  # true = on a timer (tend_interval_seconds). false = only at sleep time
+  # (bedtime passing, or a new brief) - for a box where the small model and the
+  # main model share memory.
+$([[ -n "$TEND_CYCLE" ]] && printf '  tend_cycle: %s' "$([[ "$TEND_CYCLE" == off ]] && echo false || echo true)" || printf '  # tend_cycle: true')
+$([[ -n "$TEND_EVERY" ]] && printf '  tend_interval_seconds: %s' "$TEND_EVERY" || printf '  # tend_interval_seconds: 600')
 YAML
 [[ -n "$TOKEN" || -n "$MEMORY_TOKEN_LINES" ]] && chmod 600 "$CFG_PATH"
 if [[ -n "$RIPPLE_LINES" ]]; then echo "$RIPPLE_LINES" >> "$CFG_PATH"; fi
