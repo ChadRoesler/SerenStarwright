@@ -245,6 +245,9 @@ if ($RunAsLocalSystem) {
 } else {
   $account = $ServiceUser
   if (-not $account) { $account = ".\$env:USERNAME" }
+  # Windows wants DOMAIN\user, .\user or user@domain. A bare 'alice' is none of
+  # them: say .\alice, which is what was meant.
+  if ($account -notmatch '[\\@]') { $account = ".\$account" }
   $plain = $env:SEREN_SERVICE_PASSWORD
   # Already runs as this account and no new password was given: leave the
   # logon alone. A reinstall used to need the password every time, and

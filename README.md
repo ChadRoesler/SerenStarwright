@@ -285,6 +285,27 @@ python seren-starwright.py --installed          # the ledger as a table
 python seren-starwright.py --installed --json
 ```
 
+The record also keeps the flags the card was run with (never a secret), so a
+reinstall starts from them, and the account Windows says the service runs as,
+which is not always the one that was asked for.
+
+## What an install said
+
+Every run from the TUI is kept, because "what did the service step print?" has
+to have an answer the next day:
+
+- **the run**, in `~/.seren/logs/install-<date>-<time>.log`: every card, in
+  order, with each card's command line, its steps and warnings, its own output,
+  and its exit code, a time on every line;
+- **a copy of each card's part** in the logs folder of the install it belongs
+  to (`<install root>/logs/`, or `<app dir>/logs/` in the old layout), beside
+  that instance's service logs. One instance misbehaving is one folder to read.
+
+The files hold exactly what the log pane showed: the same lines, with secrets
+masked the same way. They are written as the run goes, so a crash mid-install
+still leaves everything up to it. The last 20 of each are kept, and the run
+ends by naming them. A log that cannot be written never stops an install.
+
 ## Setups
 
 A setup is who or what a group of installs is for: your own brain, a local model's, a

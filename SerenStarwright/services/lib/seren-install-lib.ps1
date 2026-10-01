@@ -491,6 +491,32 @@ function Get-SerenOptions([hashtable] $Bound) {
     return $out
 }
 
+# The Windows service a card's install is, by the wrappers' naming: Seren +
+# the short name in PascalCase + the name suffix (SerenHippocampus-wren).
+function Get-SerenServiceName([string] $Service) {
+    $short = $Service -replace "^seren-", ""
+    $pascal = (($short -split "-") | ForEach-Object { if ($_) { $_.Substring(0, 1).ToUpper() + $_.Substring(1) } }) -join ""
+    $suffix = Get-Variable -Name SerenSvcSuffix -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+    if ($null -eq $suffix) { $suffix = [string] (Get-Variable -Name Instance -Scope Global -ValueOnly -ErrorAction SilentlyContinue) }
+    return "Seren$pascal$suffix"
+}
+
+# The account Windows says that service runs as ("LocalSystem", ".\alice"...),
+# or "" when there is no such service.
+function Get-SerenServiceAccount([string] $Service) {
+    try {
+        $name = Get-SerenServiceName $Service
+        return [string] (Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop).StartName
+    } catch { return "" }
+}
+
+# One account, however Windows spells it: with a leading dot-backslash, with
+# this machine's name in front, or bare.
+function Test-SerenSameAccount([string] $a, [string] $b) {
+    $bare = { param($x) ($x -replace '^\.\\', '') -replace ('^' + [regex]::Escape($env:COMPUTERNAME) + '\\'), '' }
+    return ((& $bare $a) -ieq (& $bare $b))
+}
+
 function Write-SerenInstallRecord {
     param(
         [string] $Service, [string] $ConnectHost, [int] $Port,
@@ -531,6 +557,24 @@ function Write-SerenInstallRecord {
     if ($Token) { $hasToken = $true }
     $launcher = ""
     if ($appDir) { $launcher = Join-Path $appDir "run-$Service.ps1" }
+    # The account: what WINDOWS says the service runs as, not what was asked.
+    # Twice on 30 Sept 2026 five cards recorded service_user 'alice' while the
+    # services ran as LocalSystem - the swap had not taken, and the record was
+    # the only thing anyone read. Asked and actual differing is said out loud.
+    $askedUser = [string] (Get-Variable -Name ServiceUser -ValueOnly -ErrorAction SilentlyContinue)
+    $askedSystem = [bool] (Get-Variable -Name LocalSystem -ValueOnly -ErrorAction SilentlyContinue)
+    $recUser = $askedUser; $recSystem = $askedSystem
+    if ($Autostart) {
+        $actual = Get-SerenServiceAccount -Service $Service
+        if ($actual) {
+            $recSystem = ($actual -ieq "LocalSystem")
+            $recUser = if ($recSystem) { "" } else { $actual }
+            $wanted = if ($askedSystem) { "LocalSystem" } elseif ($askedUser) { $askedUser } else { "" }
+            if ($wanted -and -not (Test-SerenSameAccount $wanted $actual)) {
+                Warn "ASKED TO RUN AS $wanted, BUT WINDOWS SAYS $Service RUNS AS $actual. The account was not changed (the service step above says why). The install record says $actual."
+            }
+        }
+    }
     $rec = [ordered] @{
         schema_version = 1
         service        = $Service
@@ -546,8 +590,8 @@ function Write-SerenInstallRecord {
         root           = [string] (Get-Variable -Name SerenRoot -Scope Global -ValueOnly -ErrorAction SilentlyContinue)
         launcher       = $launcher
         autostart      = $Autostart
-        service_user   = [string] (Get-Variable -Name ServiceUser -ValueOnly -ErrorAction SilentlyContinue)
-        local_system   = [bool] (Get-Variable -Name LocalSystem -ValueOnly -ErrorAction SilentlyContinue)
+        service_user   = $recUser
+        local_system   = $recSystem
         has_token      = $hasToken
         extras         = [ordered] @{ mcp = $Mcp; corp = $Corp; vector = $Vector; st = $St }
         options        = (Get-SerenOptions -Bound $Bound)

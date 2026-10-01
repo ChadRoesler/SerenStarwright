@@ -250,8 +250,8 @@ switch -Wildcard ($cardCheck) {
 Step "Writing config at $CfgPath"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 if (Test-Path $CfgPath) {
-  $bak = "$CfgPath.bak.$([int][double]::Parse((Get-Date -UFormat %s)))"
-  Copy-Item $CfgPath $bak
+  $bak = "$CfgPath.bak.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+  Copy-Item $CfgPath $bak; (Get-Item $bak).LastWriteTime = Get-Date   # its own time: Copy-Item keeps the config's, and keep-config reads a backup's age from it
   Warn "Existing config backed up to $(Split-Path $bak -Leaf)"
 }
 @"

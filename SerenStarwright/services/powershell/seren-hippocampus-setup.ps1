@@ -227,8 +227,8 @@ if ($GenToken) { $Token = & $vpy -c "import secrets; print(secrets.token_urlsafe
 # A reinstall keeps the existing bearer unless -Token / -GenToken say otherwise.
 if (-not $Token -and -not $GenToken) { $Token = Get-SerenReusedToken -Path $CfgPath }
 if (Test-Path $CfgPath) {
-  $bak = "$CfgPath.bak.$([int][double]::Parse((Get-Date -UFormat %s)))"
-  Copy-Item $CfgPath $bak
+  $bak = "$CfgPath.bak.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+  Copy-Item $CfgPath $bak; (Get-Item $bak).LastWriteTime = Get-Date   # its own time: Copy-Item keeps the config's, and keep-config reads a backup's age from it
   Warn "Existing config backed up to $(Split-Path $bak -Leaf)"
 }
 $serverToken = if ($Token) { "  bearer_token: `"$Token`"`n" } else { "" }

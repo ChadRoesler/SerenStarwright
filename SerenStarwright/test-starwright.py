@@ -1622,6 +1622,101 @@ async def test_local_wheelhouse_option() -> None:
               "clearing it hands precedence back to the tag")
 
 
+
+async def test_install_log_is_kept() -> None:
+    """30 Sept 2026: an account swap failed on two installs running and the
+    only record of why was the log pane, gone with the window. Every run is
+    kept now - a run log, and a copy of each card's part in its instance's own
+    logs folder - holding what the pane showed, secrets masked the same way."""
+    print("\n== The install log is kept")
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="sw-ilog-"))
+    runs, inst_a, inst_b = tmp / "runs", tmp / "wren" / "logs", tmp / "other" / "logs"
+
+    # -- the log itself, fed through the one write path ----------------------
+    class Pane:                                          # stands in for the RichLog
+        def __init__(self): self.rows = []
+        def write(self, c): self.rows.append(c)
+    secrets = sw.SecretRegistry(); secrets.add("hunter2-password")
+    ilog = sw.InstallLog(base=runs)
+    pane = Pane()
+    log = sw.RedactingLog(pane, secrets, sink=ilog)
+    ilog.line("header")
+    ilog.begin("Seren Memory")
+    log.write("[bold]$ powershell -File seren-memory-setup.ps1 -Port 7267[/]")
+    log.write(sw.Text("the password is hunter2-password, said the card"))
+    log.write("[yellow]! THE SERVICE STEP FAILED[/]")
+    a = ilog.end(inst_a)
+    ilog.begin("Seren Loci")
+    log.write("  loci line [1/5]")
+    b = ilog.end(inst_b)
+    ilog.begin("node prep")
+    log.write("no instance for this one")
+    check(ilog.end(None) is None, "a job with no instance folder gets no copy")
+    ilog.close()
+    run = ilog.path.read_text(encoding="utf-8")
+    check(ilog.path.parent == runs and ilog.path.name.startswith("install-") and ilog.path.suffix == ".log",
+          f"a run log named for when it ran: {ilog.path.name}")
+    check("$ powershell -File seren-memory-setup.ps1 -Port 7267" in run and "[bold]" not in run,
+          "the command line is in it, without the pane's markup")
+    check("hunter2-password" not in run and "THE SERVICE STEP FAILED" in run, "secrets masked as in the pane; warnings kept")
+    check(all(len(l) > 9 and l[2] == ":" and l[5] == ":" for l in run.splitlines()), "every line carries its time")
+    ta, tb = a.read_text(encoding="utf-8"), b.read_text(encoding="utf-8")
+    check(a.parent == inst_a and "===== Seren Memory =====" in ta and "loci line" not in ta and "header" not in ta,
+          "the instance copy holds that card's part only")
+    check("loci line [1/5]" in tb and "Seren Memory" not in tb, "another instance gets its own")
+    check("hunter2-password" not in ta, "the copy is masked too")
+    check(ilog.copies == [a, b], "the run knows where its copies went")
+    # the last KEEP are kept
+    for i in range(sw.InstallLog.KEEP + 5):
+        (runs / f"install-20000101-0000{i:02d}.log").write_text("old", encoding="utf-8")
+    sw.InstallLog(base=runs).close()
+    check(len(list(runs.glob("install-*.log"))) == sw.InstallLog.KEEP, f"only the last {sw.InstallLog.KEEP} run logs are kept")
+    # a log that cannot be written never stops an install
+    blocked = tmp / "a-file"; blocked.write_text("x", encoding="utf-8")
+    dead = sw.InstallLog(base=blocked / "logs")
+    dead.begin("x"); dead.line("y")
+    check(dead.path is None and dead.end(blocked / "inst") is None, "an unwritable log folder is not an error")
+    check(sw._instance_log_dir({"root": str(tmp / "wren")}) == inst_a and sw._instance_log_dir({}) is None,
+          "under a root the copy goes to <root>/logs; no root, not known up front")
+
+    # -- through the real install screen, with a real process ----------------
+    os.environ["SEREN_LOG_DIR"] = str(tmp / "screen-runs")
+    services, problems = sw.discover()
+    app = sw.StarwrightApp(services, problems)
+    app.secrets.add("s3cret-from-the-box")
+    card = ("import sys, json; "
+            "print(json.dumps({'event': 'step', 'msg': 'Installing the autostart service'})); "
+            "print('ERROR: Cannot prompt for a password, s3cret-from-the-box', file=sys.stderr); "
+            "print(json.dumps({'event': 'warn', 'msg': 'THE SERVICE STEP FAILED'})); "
+            "print(json.dumps({'event': 'done', 'ok': True, 'url': 'http://127.0.0.1:7269', 'config': r'%s'}))"
+            % str(tmp / "old-layout" / "seren-x.yaml"))
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.jobs = [sw.Job(label="Seren Hippocampus", cmd=[sys.executable, "-c", card], log_dir=tmp / "wren2" / "logs"),
+                        sw.Job(label="Old Layout", cmd=[sys.executable, "-c", card])]
+            await app.push_screen(sw.InstallScreen())
+            await pilot.pause()
+            await app.screen._run_all()
+            await pilot.pause()
+            ilog2 = app.install_log
+        text = ilog2.path.read_text(encoding="utf-8")
+        check("Seren Starwright install" in text and "order: Seren Hippocampus -> Old Layout" in text, "the run log opens with when, where and the order")
+        check("Installing the autostart service" in text and "THE SERVICE STEP FAILED" in text
+              and "Cannot prompt for a password" in text, "events AND the card's own stderr are in it")
+        check("s3cret-from-the-box" not in text, "a secret the card printed is masked in the file")
+        check("Seren Hippocampus: exit 0" in text, "each card's exit code is recorded")
+        c1 = tmp / "wren2" / "logs" / ilog2.path.name
+        c2 = tmp / "old-layout" / "logs" / ilog2.path.name
+        check(c1.is_file() and "THE SERVICE STEP FAILED" in c1.read_text(encoding="utf-8"), "the copy is in the install root's logs folder")
+        check(c2.is_file() and "Old Layout" in c2.read_text(encoding="utf-8"),
+              "in the old layout it goes beside the config the card named")
+        check("install log:" in text, "the run says where its log is")
+    finally:
+        os.environ.pop("SEREN_LOG_DIR", None)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 async def main() -> int:
     await test_discovery()
     await test_nothing_dropped()
@@ -1655,6 +1750,7 @@ async def main() -> int:
     await test_switches_are_check_boxes()
     await test_advanced_values_can_be_changed_and_cleared()
     await test_a_choice_flag_is_a_dropdown()
+    await test_install_log_is_kept()
 
     print("\n" + "=" * 46)
     if FAIL:
