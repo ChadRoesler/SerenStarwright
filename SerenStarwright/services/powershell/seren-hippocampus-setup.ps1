@@ -28,6 +28,13 @@ param(
   [string] $SleepAt     = "",
   [double] $SleepEvery  = 0,
   [int]    $MaxAttempts = 0,
+  # The tend cycle: redraft denied operations on a timer (on, the default), or
+  # only at sleep time - bedtime passing, or a new brief (off). Off is for a box
+  # where the small model and the main model share memory. ValidateSet is what
+  # -Describe reads to offer it as a choice.
+  [ValidateSet("on", "off")]
+  [string] $TendCycle   = "",
+  [int]    $TendEvery   = 0,      # with the cycle on: seconds between redrafts (default 600)
   # The model the hippocampus starts when a sleep needs it: the server and the
   # .gguf it serves (both, or neither). Host and port come from -ModelUrl.
   [string] $ModelServer = "",
@@ -128,6 +135,8 @@ if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\hippocampus" }
 if ($SleepAt -and $SleepAt -notmatch '^([01]?[0-9]|2[0-3]):[0-5][0-9]$') { Die "-SleepAt wants HH:MM (local time), got '$SleepAt'" }
 if ($SleepEvery -ne 0 -and ($SleepEvery * 3600) -lt 600) { Die "-SleepEvery wants hours (at least 0.17, ten minutes), got '$SleepEvery'" }
 if ($MaxAttempts -ne 0 -and ($MaxAttempts -lt 1 -or $MaxAttempts -gt 10)) { Die "-MaxAttempts wants 1-10, got '$MaxAttempts'" }
+if ($TendEvery -ne 0 -and $TendEvery -lt 60) { Die "-TendEvery wants seconds, 60 or more, got '$TendEvery'" }
+if ($TendCycle -eq "off" -and $TendEvery -ne 0) { Die "-TendEvery is how often the tend cycle redrafts; with -TendCycle off there is no timer" }
 if ($Ripple -eq "endpoint" -and -not $RippleUrl) { Die "-Ripple endpoint needs -RippleUrl" }
 if ($RippleClaude) {
     if (-not $Ripple) { $Ripple = "script" }
@@ -291,6 +300,12 @@ $(if ($SleepEvery -gt 0) { "  interval_seconds: $([int]($SleepEvery * 3600))" } 
   # The draft cap: attempts per chain before the last is terminal (the reviewer
   # may then edit on approve; a denial ends the chain). 1-10.
 $(if ($MaxAttempts -gt 0) { "  max_attempts: $MaxAttempts" } else { '  # max_attempts: 3' })
+  # The tend cycle: redrafting what the reviewer denied starts the small model.
+  # true = on a timer (tend_interval_seconds). false = only at sleep time
+  # (bedtime passing, or a new brief) - for a box where the small model and the
+  # main model share memory.
+$(if ($TendCycle) { "  tend_cycle: $(if ($TendCycle -eq 'off') { 'false' } else { 'true' })" } else { '  # tend_cycle: true' })
+$(if ($TendEvery -gt 0) { "  tend_interval_seconds: $TendEvery" } else { '  # tend_interval_seconds: 600' })
 "@ | Write-SerenTextFile -Path $CfgPath
 if ($rippleLines) { $rippleLines | Add-SerenTextFile -Path $CfgPath }
 # The voice card is opt in, and the model writes it; the config only turns it on.
