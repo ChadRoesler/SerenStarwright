@@ -1545,6 +1545,29 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
         check(("-Ripple script" in cmd2 or "--ripple script" in cmd2) and ("VoiceCard" in cmd2 or "--voice-card" in cmd2),
               f"the ripple and the voice card survive a reinstall: {cmd2[-120:]}")
         check("no-updates" not in svcs["seren-hippocampus"].advanced_flags, "no-updates is not offered in the dialog")
+        # The account: a switch with no password is stopped BEFORE install.
+        # 30 Sept 2026: five cards were sent -ServiceUser with a blank password,
+        # the core refused, every card reported success, and the services kept
+        # LocalSystem while their records said alice.
+        hip = svcs["seren-hippocampus"]
+        sys_rec = sw.InstalledRecord(service="seren-hippocampus", instance="wren", port=7269, local_system=True)
+        usr_rec = sw.InstalledRecord(service="seren-hippocampus", instance="wren", port=7269, local_system=False,
+                                     service_user=".\\alice")
+        want = {"seren-hippocampus": {"instance": "wren", "service": True}}
+        args = (["seren-hippocampus"], svcs, want, {"service-user": "alice"})
+        if sw.IS_WINDOWS and "service-user" in hip.flags:
+            p1 = sw.identity_problems(*args, [sys_rec])
+            check(len(p1) == 1 and "needs that account's Windows password" in p1[0] and "LocalSystem now" in p1[0],
+                  f"LocalSystem -> alice with no password is stopped, and says what it runs as: {p1}")
+            check(sw.identity_problems(*args, [sys_rec], {}, "hunter2") == [], "with the password it goes ahead")
+            check(sw.identity_problems(*args, [usr_rec]) == [], "already runs as that account: no password needed")
+            check(sw.identity_problems(["seren-hippocampus"], svcs, want, {"local-system": True}, [sys_rec]) == [],
+                  "LocalSystem needs no credential")
+            check(sw.identity_problems(["seren-hippocampus"], svcs, {"seren-hippocampus": {"instance": "wren"}},
+                                       {"service-user": "alice"}, [sys_rec]) == [], "not installed as a service: nothing to ask")
+            check(sw._bare_account(".\\alice") == sw._bare_account("alice"), "one account, however Windows spells it")
+        else:
+            check(sw.identity_problems(*args, [sys_rec]) == [], "off Windows there is no credential to ask for")
         # the screens: the universal inputs and the Configure note
         app = sw.StarwrightApp(services, problems, installed=[rec])
         async with app.run_test(size=(120, 50)) as pilot:

@@ -246,8 +246,17 @@ if ($RunAsLocalSystem) {
   $account = $ServiceUser
   if (-not $account) { $account = ".\$env:USERNAME" }
   $plain = $env:SEREN_SERVICE_PASSWORD
+  # Already runs as this account and no new password was given: leave the
+  # logon alone. A reinstall used to need the password every time, and
+  # without one it died here - after the package and config were updated.
+  $current = [string] (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue).StartName
+  # ".\alice", "THISBOX\alice" and "alice" are one account.
+  $bare = { param($a) ($a -replace '^\.\\', '') -replace ('^' + [regex]::Escape($env:COMPUTERNAME) + '\\'), '' }
+  $already = $current -and ((& $bare $current) -ieq (& $bare $account))
 
-  if (-not $plain) {
+  if (-not $plain -and $already) {
+    Ok "service already runs as $account - its logon is left as it is"
+  } elseif (-not $plain) {
     # IsOutputRedirected is the honest test for "will anyone SEE a prompt":
     # false in a real console, true the moment a parent process is reading our
     # stdout - which is exactly when prompting fails. UserInteractive reports
@@ -276,6 +285,7 @@ if ($RunAsLocalSystem) {
     Step "Setting the service to run as $account (credential supplied by the environment)"
   }
 
+  if ($plain) {
   & $nssm set $ServiceName ObjectName "$account" "$plain" | Out-Null
   $rc = $LASTEXITCODE
   $plain = $null   # don't leave it lying around
@@ -285,6 +295,7 @@ if ($RunAsLocalSystem) {
          "       The service exists but will not start until this is fixed: nssm edit $ServiceName")
   }
   Ok "service will run as $account"
+  }
 }
 
 # -- let the Observatory drive it, and tell it the service exists -------------

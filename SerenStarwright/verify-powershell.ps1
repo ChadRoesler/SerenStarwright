@@ -630,6 +630,22 @@ if ($hipD.flags -contains "keep-warm") { Good "hippocampus -Describe advertises 
 $svcCore = [System.IO.File]::ReadAllText((Join-Path $ScriptDir "services\lib\setup-seren-service.ps1"))
 if ($svcCore -notmatch 'LogDir\s*=\s*"\$env:USERPROFILE\seren-logs"') { Good "the service core no longer defaults logs to ~\seren-logs" } else { Bad "logs still default to ~\seren-logs" }
 
+# A failed service step is said (30 Sept 2026): five cards reported success while
+# the core had refused to change the account. And a service that already runs
+# as the account asked for needs no password.
+$libSrc = [System.IO.File]::ReadAllText((Join-Path $ScriptDir "services\lib\seren-install-lib.ps1"))
+if ($libSrc -match "THE SERVICE STEP FAILED" -and $libSrc -match [regex]::Escape('if ($LASTEXITCODE -ne 0) {')) { Good "Setup-Autostart reports a failed service step" }
+else { Bad "Setup-Autostart does not check the service step" }
+$coreSrc = [System.IO.File]::ReadAllText((Join-Path $ScriptDir "services\lib\setup-seren-service.ps1"))
+if ($coreSrc -match "its logon is left as it is" -and $coreSrc -match [regex]::Escape('if (-not $plain -and $already)')) { Good "the service core leaves a logon that is already the account asked for" }
+else { Bad "the service core still needs a password for an unchanged account" }
+$bareLine = ($coreSrc -split "`n" | Where-Object { $_ -match '^\s*\$bare = ' } | Select-Object -First 1)
+if ($bareLine) {
+    Invoke-Expression $bareLine.Trim()
+    if (((& $bare ".\alice") -ieq (& $bare "alice")) -and ((& $bare "$env:COMPUTERNAME\alice") -ieq "alice") -and -not ((& $bare "LocalSystem") -ieq "alice")) { Good "the account comparison treats .\user, BOX\user and user as one" }
+    else { Bad "the account comparison is wrong: $bareLine" }
+} else { Bad "no account comparison in the service core" }
+
 # -- the observatory card receives ripples (28 Sept 2026) ---------------------
 # The hippocampus moves to the Nano, the model stays on the desktop: the ripple
 # crosses boxes, and this card turns the receiving end on.
