@@ -130,8 +130,8 @@ Sanity-Check -Vpy $vpy -Module "seren_observatory" -AssetRelPath "viewer/ui/body
 Step "Writing config at $CfgPath"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 if (Test-Path $CfgPath) {
-  $bak = "$CfgPath.bak.$([int][double]::Parse((Get-Date -UFormat %s)))"
-  Copy-Item $CfgPath $bak; Warn "Backed up to $(Split-Path $bak -Leaf)"
+  $bak = "$CfgPath.bak.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+  Copy-Item $CfgPath $bak; (Get-Item $bak).LastWriteTime = Get-Date   # its own time: Copy-Item keeps the config's, and keep-config reads a backup's age from it; Warn "Backed up to $(Split-Path $bak -Leaf)"
 }
 if ($GenToken) { $Token = & $vpy -c "import secrets; print(secrets.token_urlsafe(32))" }
 # Under a root the config also names the roster, <root>\manifests - the same

@@ -662,6 +662,38 @@ if ($bareLine) {
     else { Bad "the account comparison is wrong: $bareLine" }
 } else { Bad "no account comparison in the service core" }
 
+# The record says what Windows says, and a backup carries its own time (30 Sept
+# 2026, the second dev install): five records said service_user 'Caesar' while
+# the services ran as LocalSystem, and a hand-set max_tokens was dropped because
+# Copy-Item keeps the config's modified time and keep-config read the backup's
+# age from it.
+Section "install record: the account Windows says; backups: their own time"
+& {
+    . (Join-Path $ScriptDir "services\lib\seren-install-lib.ps1")
+    $global:Instance = "wren"; $global:SerenSvcSuffix = "-wren"
+    if ((Get-SerenServiceName "seren-corpus-callosum") -eq "SerenCorpusCallosum-wren") { Good "the service name is the wrappers' (SerenCorpusCallosum-wren)" }
+    else { Bad "service name wrong: $(Get-SerenServiceName 'seren-corpus-callosum')" }
+    if ((Test-SerenSameAccount ".\caesar" "Caesar") -and (Test-SerenSameAccount "$env:COMPUTERNAME\Caesar" "caesar") -and -not (Test-SerenSameAccount "LocalSystem" "Caesar")) { Good "accounts compare by who they are, not how they are spelled" }
+    else { Bad "Test-SerenSameAccount is wrong" }
+    if ((Get-SerenServiceAccount "seren-no-such-service-here") -eq "") { Good "no such service: no account, no error" } else { Bad "a missing service returned an account" }
+    Remove-Variable -Name Instance, SerenSvcSuffix -Scope Global -ErrorAction SilentlyContinue
+}
+if ($libSrc -match "ASKED TO RUN AS" -and $libSrc -match [regex]::Escape('service_user   = $recUser')) { Good "the record takes the account from Windows and says when it is not what was asked" }
+else { Bad "the record still writes the account that was asked for" }
+if ($coreSrc -match [regex]::Escape('if ($account -notmatch ''[\\@]'') { $account = ".\$account" }')) { Good "a bare account name gets its .\ prefix" }
+else { Bad "a bare account name is passed to nssm as it is" }
+$unstamped = @(Get-ChildItem (Join-Path $ScriptDir "services\powershell\seren-*-setup.ps1") | Where-Object {
+    $t = [System.IO.File]::ReadAllText($_.FullName)
+    ($t -match 'Copy-Item \$CfgPath \$bak') -and -not ($t -match [regex]::Escape('(Get-Item $bak).LastWriteTime = Get-Date')) })
+if ($unstamped.Count -eq 0) { Good "every card stamps its config backup with the time it was made" }
+else { Bad "backups keep the config's modified time in: $($unstamped.Name -join ', ')" }
+$tmpB = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-bak-" + [Guid]::NewGuid().ToString("N") + ".yaml")
+"a: 1" | Set-Content $tmpB; (Get-Item $tmpB).LastWriteTime = (Get-Date).AddHours(-3)
+$CfgPath = $tmpB; $bak = "$CfgPath.bak.test"
+Copy-Item $CfgPath $bak; (Get-Item $bak).LastWriteTime = Get-Date
+if (((Get-Date) - (Get-Item $bak).LastWriteTime).TotalSeconds -lt 60) { Good "a backup of a config last edited three hours ago is seconds old" } else { Bad "the backup kept the config's age" }
+Remove-Item $tmpB, $bak -Force -ErrorAction SilentlyContinue
+
 # -- the observatory card receives ripples (28 Sept 2026) ---------------------
 # The hippocampus moves to the Nano, the model stays on the desktop: the ripple
 # crosses boxes, and this card turns the receiving end on.

@@ -406,9 +406,13 @@ class RedactingLog:
     past the redaction.
     """
 
-    def __init__(self, log: RichLog, secrets: SecretRegistry) -> None:
+    def __init__(self, log: RichLog, secrets: SecretRegistry,
+                 sink: Optional["InstallLog"] = None) -> None:
         self._log = log
         self._secrets = secrets
+        # The kept copy (InstallLog). Fed here, AFTER redaction, so the file
+        # holds exactly what the pane showed and nothing the pane hid.
+        self._sink = sink
 
     def write(self, content: Any) -> None:
         if isinstance(content, Text):
@@ -418,8 +422,106 @@ class RedactingLog:
             # the ANSI styling Text.from_ansi just parsed. That's a fair price
             # on a redacted line and a pointless one on every other line.
             self._log.write(Text(cleaned) if cleaned != plain else content)
+            if self._sink is not None:
+                self._sink.line(cleaned)
             return
-        self._log.write(self._secrets.redact(str(content)))
+        cleaned = self._secrets.redact(str(content))
+        self._log.write(cleaned)
+        if self._sink is not None:
+            self._sink.line(_plain(cleaned))
+
+
+def _plain(markup: str) -> str:
+    """A pane line without its Rich markup, for the log file."""
+    try:
+        return Text.from_markup(markup).plain
+    except Exception:                                    # noqa: BLE001 - odd brackets: keep the line as it is
+        return markup
+
+
+class InstallLog:
+    """Every install run, kept.
+
+    WHY: on 30 Sept 2026 an account swap failed on two installs running, and
+    the only record of why was this screen's log pane - gone when the window
+    closed. Neither Chad nor Wren could say what the service step had printed.
+
+    One file per run in ~/.seren/logs (SEREN_LOG_DIR overrides, for tests),
+    written line by line as the run goes, so a crash mid-install still leaves
+    everything up to it. And a COPY of each card's part in that install's own
+    logs folder - <install root>/logs under a root, <app dir>/logs in the old
+    layout - because that is where someone looks when one instance misbehaves
+    (Chad: 'that way we can disect a specific instances log'). The last KEEP of
+    each are kept. Lines arrive already redacted (RedactingLog). A log that
+    cannot be written never stops an install.
+    """
+
+    KEEP = 20
+
+    def __init__(self, base: Optional[Path] = None) -> None:
+        self.stamp = time.strftime("%Y%m%d-%H%M%S")
+        self.path: Optional[Path] = None
+        self.copies: list[Path] = []
+        self._fh: Any = None
+        self._job: Optional[list[str]] = None
+        d = base or Path(os.environ.get("SEREN_LOG_DIR") or (Path.home() / ".seren" / "logs"))
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            self.path = d / f"install-{self.stamp}.log"
+            self._fh = open(self.path, "a", encoding="utf-8")
+            self._prune(d)
+        except OSError:
+            self.path, self._fh = None, None
+
+    @classmethod
+    def _prune(cls, d: Path) -> None:
+        for old in sorted(d.glob("install-*.log"))[:-cls.KEEP]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+    def line(self, text: str) -> None:
+        for part in (str(text).splitlines() or [""]):
+            row = f"{time.strftime('%H:%M:%S')} {part}"
+            if self._job is not None:
+                self._job.append(row)
+            if self._fh is not None:
+                try:
+                    self._fh.write(row + "\n")
+                    self._fh.flush()
+                except OSError:
+                    pass
+
+    def begin(self, label: str) -> None:
+        """A card starts: its lines are also gathered for its instance's copy."""
+        self._job = []
+        self.line(f"===== {label} =====")
+
+    def end(self, log_dir: Optional[Path]) -> Optional[Path]:
+        """A card finished: write its part into log_dir, and say where."""
+        rows, self._job = self._job, None
+        if not rows or log_dir is None:
+            return None
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            p = log_dir / f"install-{self.stamp}.log"
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write("\n".join(rows) + "\n")
+            self._prune(log_dir)
+            if p not in self.copies:
+                self.copies.append(p)
+            return p
+        except OSError:
+            return None
+
+    def close(self) -> None:
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+            self._fh = None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -538,6 +640,16 @@ class Job:
     # command lines are readable by other processes on Windows and this screen
     # echoes every command it runs into the log.
     env: Optional[dict[str, str]] = None
+    # Where this card's part of the install log is copied: the logs folder of
+    # the install it belongs to. None = not known up front (the old layout,
+    # where it is read off the card's done event) or not a service (node prep).
+    log_dir: Optional[Path] = None
+
+
+def _instance_log_dir(cfg: dict) -> Optional[Path]:
+    """<install root>/logs for a service being installed under a root."""
+    root = str(cfg.get("root") or "").strip()
+    return Path(os.path.expanduser(root)) / "logs" if root else None
 
 
 def _installer_dir() -> Path:
@@ -2535,7 +2647,8 @@ class ConfigScreen(Screen):
                     cmd=build_command(self.app.svc_map[n],     # type: ignore[attr-defined]
                                       self.app.per_service.get(n, {}),  # type: ignore[attr-defined]
                                       self.app.universal),     # type: ignore[attr-defined]
-                    env=self._job_env(n))
+                    env=self._job_env(n),
+                    log_dir=_instance_log_dir(self.app.per_service.get(n, {})))   # type: ignore[attr-defined]
                 for n in self.app.selected                     # type: ignore[attr-defined]
             ]
             self.app.push_screen(InstallScreen())
@@ -3162,34 +3275,58 @@ class InstallScreen(Screen):
     async def _run_all(self) -> None:
         # Wrapped once, here, and passed down. Every write below - the echoed
         # command line, the JSON events, the raw stderr - goes through it.
+        ilog = InstallLog()
+        self.app.install_log = ilog                      # type: ignore[attr-defined]
         log = RedactingLog(self.query_one("#log", RichLog),
-                           self.app.secrets)             # type: ignore[attr-defined]
+                           self.app.secrets, sink=ilog)  # type: ignore[attr-defined]
         bar = self.query_one("#bar", ProgressBar)
         cur = self.query_one("#current", Static)
         jobs: list[Job] = list(self.app.jobs)            # type: ignore[attr-defined]
         bar.update(total=max(1, len(jobs)), progress=0)
+        ilog.line(f"Seren Starwright install - {time.strftime('%Y-%m-%d %H:%M:%S %z')} - "
+                  f"{platform.node()} ({platform.system()} {platform.release()})")
+        ilog.line("order: " + " -> ".join(j.label for j in jobs))
         failures = 0
         for i, job in enumerate(jobs, 1):
             cur.update(f"[{i}/{len(jobs)}]  {job.label}")
+            self._done_config = ""
+            ilog.begin(job.label)
             log.write(f"[bold]$ {' '.join(job.cmd)}[/]")
             rc = await self._run_one(job, log)
+            ilog.line(f"{job.label}: exit {rc}")
             if rc != 0:
                 failures += 1
                 log.write(f"[red]{job.label} failed (exit {rc}) - stopping[/]")
+                ilog.end(self._job_log_dir(job))
                 # Stop on failure: later services may depend on this one, and
                 # cascading a broken dependency produces a confusing pile of
                 # errors instead of one clear cause.
                 break
+            ilog.end(self._job_log_dir(job))
             bar.advance(1)
         cur.update("Done" if not failures else "Stopped on failure")
         log.write("[green]Rip it and win. 🌭🔧[/]" if not failures
                   else "[red]Fix the above and run again.[/]")
+        if ilog.path is not None:
+            log.write(f"[dim]install log: {ilog.path}[/]")
+            for copy in ilog.copies:
+                log.write(f"[dim]  and in the instance: {copy}[/]")
+        ilog.close()
         self.query_one("#run", Button).disabled = False
+
+    def _job_log_dir(self, job: Job) -> Optional[Path]:
+        """The logs folder of the install this card belongs to: known up front
+        under an install root, else beside the config its done event named."""
+        if job.log_dir is not None:
+            return job.log_dir
+        cfg = getattr(self, "_done_config", "")
+        return Path(cfg).parent / "logs" if cfg else None
 
     def _render_event(self, label: str, ev: dict, log: "RedactingLog") -> None:
         """One vocabulary for both halves of the stack."""
         kind = ev.get("event")
         if kind == "done":
+            self._done_config = str(ev.get("config") or "")   # where the old layout keeps this card's log
             log.write(f"[green]✓ {label} → {ev.get('url','')}"
                       f"{'  (autostart)' if ev.get('autostart') else ''}[/]")
         elif kind == "error":
