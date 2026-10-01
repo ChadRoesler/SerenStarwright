@@ -1568,6 +1568,37 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
             check(sw._bare_account(".\\Caesar") == sw._bare_account("caesar"), "one account, however Windows spells it")
         else:
             check(sw.identity_problems(*args, [sys_rec]) == [], "off Windows there is no credential to ask for")
+        # The password is put to Windows BEFORE anything runs. 30 Sept 2026: a
+        # mistyped one was only found when the new service would not start -
+        # after the working one had been removed - and Loci was down. The
+        # Windows call is stood in for here: a test never makes a real failed
+        # logon against the account of whoever runs it.
+        asked: list[tuple[str, str]] = []
+
+        def fake_logon(account, pw):
+            asked.append((account, pw))
+            return "" if pw == "the-right-one" else "The user name or password is incorrect. (Windows error 1326)"
+        two = ["seren-hippocampus", "seren-memory"]
+        both = {n: {"instance": "wren", "service": True} for n in two}
+        uni = {"service-user": "Caesar"}
+        if sw.IS_WINDOWS and "service-user" in hip.flags:
+            bad = sw.credential_problems(two, svcs, both, uni, {}, "typo", logon=fake_logon)
+            check(len(bad) == 1 and "Windows refused the password for .\\Caesar" in bad[0] and "1326" in bad[0],
+                  f"a wrong password is refused before anything runs, with Windows' reason: {bad}")
+            check(asked == [(".\\Caesar", "typo")], f"one account and password is asked once, with its prefix: {asked}")
+            check(sw.credential_problems(two, svcs, both, uni, {}, "the-right-one", logon=fake_logon) == [], "the right one goes ahead")
+            n_before = len(asked)
+            check(sw.credential_problems(two, svcs, both, {"local-system": True}, {}, "typo", logon=fake_logon) == []
+                  and sw.credential_problems(two, svcs, both, uni, {}, "", logon=fake_logon) == [] and len(asked) == n_before,
+                  "LocalSystem, or no password at all, asks Windows nothing")
+            per_pw = sw.credential_problems(two, svcs, both, uni, {"seren-memory": "typo"}, "the-right-one", logon=fake_logon)
+            check(len(per_pw) == 1, "a per-service password is checked on its own")
+        else:
+            check(sw.credential_problems(two, svcs, both, uni, {}, "typo", logon=fake_logon) == [] and asked == [],
+                  "off Windows nothing is asked")
+        check(sw._split_account(".\\Caesar") == ("Caesar", ".") and sw._split_account("Caesar") == ("Caesar", ".")
+              and sw._split_account("BOX\\caesar") == ("caesar", "BOX") and sw._split_account("c@d.com") == ("c@d.com", None),
+              "an account is split the way LogonUser wants it")
         # the screens: the universal inputs and the Configure note
         app = sw.StarwrightApp(services, problems, installed=[rec])
         async with app.run_test(size=(120, 50)) as pilot:

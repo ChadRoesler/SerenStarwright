@@ -92,6 +92,37 @@ function Ok($m)  { Write-Host "  + $m"   -ForegroundColor Green }
 function Warn($m){ Write-Host "  ! $m"   -ForegroundColor Yellow }
 function Die($m) { Write-Host "ERROR: $m" -ForegroundColor Red; exit 1 }
 
+# "" when Windows accepts this account and password, else Windows' own reason.
+# Asked with LogonUser, which changes nothing. Error 1385 means the credential
+# is right and only this KIND of logon is not allowed; a service logon is a
+# different kind (nssm grants it below), so that counts as accepted. If the
+# check itself cannot run, it does not block: the start below will say.
+function Test-SerenLogon([string] $Account, [string] $Password) {
+  try {
+    if (-not ("Seren.LogonCheck" -as [type])) {
+      Add-Type -Namespace Seren -Name LogonCheck -MemberDefinition @'
+[DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+static extern bool LogonUser(string user, string domain, string password, int type, int provider, out System.IntPtr token);
+[DllImport("kernel32.dll")]
+static extern bool CloseHandle(System.IntPtr handle);
+public static int Check(string user, string domain, string password) {
+    System.IntPtr token;
+    if (LogonUser(user, domain, password, 3, 0, out token)) { CloseHandle(token); return 0; }
+    return System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+}
+'@
+    }
+    $domain = "."; $user = $Account
+    if ($Account -match '^(.+)\\(.+)$') { $domain = $Matches[1]; $user = $Matches[2] }
+    elseif ($Account -match '@') { $domain = $null }
+    $code = [Seren.LogonCheck]::Check($user, $domain, $Password)
+    if ($code -eq 0 -or $code -eq 1385) { return "" }
+    return ((New-Object System.ComponentModel.Win32Exception $code).Message + " (Windows error $code)")
+  } catch {
+    return ""
+  }
+}
+
 if (-not $DisplayName) { $DisplayName = $ServiceName }
 if (-not $Description) { $Description = "$ServiceName - seren constellation service" }
 
@@ -172,6 +203,25 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $OutLog = Join-Path $LogDir "$ServiceName.out.log"
 $ErrLog = Join-Path $LogDir "$ServiceName.err.log"
 Ok "logs:    $OutLog / $(Split-Path $ErrLog -Leaf)"
+
+# -- the password, checked BEFORE anything is touched -------------------------
+# A wrong password used to be found out LAST: the working service was removed, a
+# new one installed and handed the bad credential, and only `nssm start` failed
+# - which left the service down (30 Sept 2026: a mistyped password took Loci
+# offline). Windows is asked first, and a refusal changes nothing.
+if (-not $RunAsLocalSystem -and $env:SEREN_SERVICE_PASSWORD) {
+  $preAccount = $ServiceUser
+  if (-not $preAccount) { $preAccount = ".\$env:USERNAME" }
+  if ($preAccount -notmatch '[\\@]') { $preAccount = ".\$preAccount" }
+  $refused = Test-SerenLogon $preAccount $env:SEREN_SERVICE_PASSWORD
+  if ($refused) {
+    Die ("Windows refused the password for '$preAccount': $refused`n" +
+         "       NOTHING WAS CHANGED: the existing service is as it was.`n" +
+         "       Windows wants the account's own password - not a PIN or Windows Hello, and for`n" +
+         "       a Microsoft account the online password. Or run the service as LocalSystem.")
+  }
+  Ok "Windows accepts the password for $preAccount"
+}
 
 # -- clean reinstall if a service by this name exists ------------------------
 $exists = (& sc.exe query $ServiceName) 2>$null | Select-String "SERVICE_NAME"
@@ -375,8 +425,24 @@ try {
 
 # -- start + health check + show the error if it sulks ------------------------
 Step "Starting $ServiceName"
-& $nssm start $ServiceName 2>$null | Out-Null
+# Continue for this one call: under Windows PowerShell 5.1 with EAP Stop, a
+# native command's stderr is a terminating error even behind a redirect. A
+# start that failed killed this script on the spot with a raw
+# NativeCommandError, before it could say why (30 Sept 2026: a logon failure).
+$prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+try { & $nssm start $ServiceName 2>&1 | Out-Null } finally { $ErrorActionPreference = $prevEap }
 Start-Sleep -Seconds 6
+$svcNow = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+if ($svcNow -and $svcNow.State -eq "Stopped") {
+  # Windows wrote the reason to the System log. Show that, not a stack trace.
+  $evt = Get-WinEvent -FilterHashtable @{ LogName = "System"; ProviderName = "Service Control Manager"; StartTime = (Get-Date).AddMinutes(-2) } -ErrorAction SilentlyContinue |
+         Where-Object { $_.Id -in 7038, 7000, 7041 -and $_.Message -match [regex]::Escape($ServiceName) } | Select-Object -First 1
+  $reason = if ($evt) { ($evt.Message -replace '\s+', ' ').Trim() } else { "Windows gave no reason in the System log." }
+  Die ("$ServiceName is installed but Windows would not start it:`n" +
+       "       $reason`n" +
+       "       It is set to run as $($svcNow.StartName) and is STOPPED. Run the install again with the`n" +
+       "       right password, or as LocalSystem.")
+}
 if ($NoHealthCheck -or $HealthPort -eq 0) {
   Warn "Health check skipped. Eyeball it yourself:"
   & sc.exe query $ServiceName | Select-String "STATE" | ForEach-Object { Write-Host "    $_" }
