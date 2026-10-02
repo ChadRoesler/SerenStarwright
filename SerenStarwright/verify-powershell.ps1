@@ -643,6 +643,12 @@ Section "install record: options, minus secrets"
 }
 $hipD = & (Join-Path $ScriptDir "services\powershell\seren-hippocampus-setup.ps1") -Describe | ConvertFrom-Json
 if ($hipD.flags -contains "keep-warm") { Good "hippocampus -Describe advertises keep-warm" } else { Bad "keep-warm missing" }
+# The Nano floor (1 Oct 2026): one model in memory at a time.
+if ($hipD.switches -contains "model-handover") { Good "-ModelHandover is a switch" } else { Bad "-ModelHandover missing or not a switch" }
+$hipSrc = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot "services\powershell\seren-hippocampus-setup.ps1"))
+if ($hipSrc -match 'if \(\$ModelHandover\) \{ \$lifecycleLines \+= "`n    handover: true" \}' -and $hipSrc -match 'elseif \(\$ModelHandover\)') {
+    Good "-ModelHandover writes lifecycle.handover, and is refused with no model to manage"
+} else { Bad "-ModelHandover is not written into the lifecycle block" }
 $svcCore = [System.IO.File]::ReadAllText((Join-Path $ScriptDir "services\lib\setup-seren-service.ps1"))
 if ($svcCore -notmatch 'LogDir\s*=\s*"\$env:USERPROFILE\seren-logs"') { Good "the service core no longer defaults logs to ~\seren-logs" } else { Bad "logs still default to ~\seren-logs" }
 
