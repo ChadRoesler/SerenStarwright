@@ -43,6 +43,10 @@ param(
   # How long a started model stays up after its last call before the hippocampus
   # stops it (default 300s; a review and a redraft reuse it).
   [int]    $KeepWarm    = 0,
+  # For a box that cannot hold two models at once (a Nano): stop the small
+  # model BEFORE the main model is poked to review, instead of keeping it warm.
+  # Needs -ModelServer and -ModelPath (it only stops a server it started).
+  [switch] $ModelHandover,
   # The cap on one answer from the small model (default 2000). Too low and
   # answers are cut off mid-operation; keep it under the server's context.
   [int]    $ModelMaxTokens = 0,
@@ -246,6 +250,10 @@ if ($ModelServer -and $ModelPath) {
         "    model_path: $(ConvertTo-SerenYamlQuoted $ModelPath)"
     if ($ModelArgs) { $lifecycleLines += "`n    server_args: $(ConvertTo-SerenYamlQuoted $ModelArgs)" }
     if ($KeepWarm -gt 0) { $lifecycleLines += "`n    keep_warm_seconds: $KeepWarm" }
+    # One model in memory at a time: the small one goes before the main one is poked.
+    if ($ModelHandover) { $lifecycleLines += "`n    handover: true" }
+} elseif ($ModelHandover) {
+    Die "-ModelHandover stops the small model before a review; it needs -ModelServer and -ModelPath (the hippocampus only stops a server it started)"
 }
 $rippleLines = ""
 switch ($Ripple) {

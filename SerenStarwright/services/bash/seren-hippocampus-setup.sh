@@ -40,6 +40,10 @@
 #    --keep-warm SECS    How long a started model stays up after its last call before
 #                        the hippocampus stops it (default 300; a review and a
 #                        redraft reuse it)
+#    --model-handover    For a box that cannot hold two models at once (a Nano):
+#                        stop the small model BEFORE the main model is poked to
+#                        review, instead of keeping it warm. Needs --model-server
+#                        and --model-path (it only stops a server it started)
 #    --model-args ARGS   The rest of the server line (default "-ngl 99 -c 8192")
 #    --ripple TYPE       Ask the model at bedtime and when drafts wait: script | endpoint | off
 #    --ripple-command C  The script ripple's command (default: claude -p "{message}")
@@ -123,6 +127,7 @@ MODEL_SERVER=""
 MODEL_PATH=""
 MODEL_ARGS=""
 KEEP_WARM=""
+MODEL_HANDOVER=false
 MODEL_MAX_TOKENS=""
 RIPPLE=""
 RIPPLE_COMMAND=""
@@ -186,6 +191,7 @@ while [[ $# -gt 0 ]]; do
     --model-path)   MODEL_PATH="$2"; shift 2 ;;
     --model-args)   MODEL_ARGS="$2"; shift 2 ;;
     --keep-warm)    KEEP_WARM="$2"; shift 2 ;;
+    --model-handover) MODEL_HANDOVER=true; shift ;;
     --model-max-tokens) MODEL_MAX_TOKENS="$2"; shift 2 ;;
     --ripple)       RIPPLE="$2"; shift 2 ;;
     --ripple-command) RIPPLE_COMMAND="$2"; shift 2 ;;
@@ -348,6 +354,11 @@ if [[ -n "$MODEL_SERVER" || -n "$MODEL_PATH" ]]; then
     server_args: $(_yq "$MODEL_ARGS")"
   [[ -n "$KEEP_WARM" ]] && MODEL_LIFECYCLE_LINES+="
     keep_warm_seconds: $KEEP_WARM"
+  # One model in memory at a time: the small one goes before the main one is poked.
+  [[ "${MODEL_HANDOVER:-false}" == true ]] && MODEL_LIFECYCLE_LINES+="
+    handover: true"
+elif [[ "${MODEL_HANDOVER:-false}" == true ]]; then
+  die "--model-handover stops the small model before a review; it needs --model-server and --model-path (the hippocampus only stops a server it started)"
 fi
 RIPPLE_LINES=""
 RIPPLE_DEFAULT_COMMAND='claude -p "{message}"'

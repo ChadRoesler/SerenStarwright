@@ -117,6 +117,19 @@ out="$(yamlget "d['voice']" < "$T/voice.yaml")"
 VOICE_CARD=false CFG_PATH="$T/voice.yaml" bash -c "$vline"
 [[ ! -s "$T/voice.yaml" ]] && ok_ "without it nothing is written (keep-config keeps an earlier opt in)" || bad "voice written without the flag"
 
+echo "== --model-handover (1 Oct 2026)"
+# The Nano floor: one model in memory at a time. The hippocampus stops its own
+# model before the main one is poked; the flag is how an install says so.
+d="$(bash "$CARD" --describe)"
+grep -q '"model-handover"' <<<"$d" && ok_ "--describe offers --model-handover" || bad "--describe is missing --model-handover"
+out="$(bash "$CARD" --model-handover 2>&1)"; rc=$?
+[[ $rc -ne 0 && "$out" == *"needs --model-server and --model-path"* ]] \
+  && ok_ "--model-handover with no model to manage is refused before anything installs" || bad "handover alone: rc=$rc $out"
+out="$(block MODEL_SERVER=/opt/llama-server MODEL_PATH=/m/q5.gguf MODEL_HANDOVER=true | yamlget "d['model']['lifecycle'].get('handover')")"
+[[ "$out" == "True" ]] && ok_ "with a managed model it writes lifecycle.handover: true" || bad "handover: $out"
+out="$(block MODEL_SERVER=/opt/llama-server MODEL_PATH=/m/q5.gguf | yamlget "'handover' in d['model']['lifecycle']")"
+[[ "$out" == "False" ]] && ok_ "without the flag nothing is written (keep-config keeps an earlier choice)" || bad "handover unset: $out"
+
 echo "== --model-max-tokens and --keep-warm (30 Sept 2026)"
 # The first sleep that ran on its own lost 7 of 11 answers to a 900-token cap
 # nobody could set from the installer.
