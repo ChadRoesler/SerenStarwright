@@ -140,6 +140,7 @@ if ($SleepAt -and $SleepAt -notmatch '^([01]?[0-9]|2[0-3]):[0-5][0-9]$') { Die "
 if ($SleepEvery -ne 0 -and ($SleepEvery * 3600) -lt 600) { Die "-SleepEvery wants hours (at least 0.17, ten minutes), got '$SleepEvery'" }
 if ($MaxAttempts -ne 0 -and ($MaxAttempts -lt 1 -or $MaxAttempts -gt 10)) { Die "-MaxAttempts wants 1-10, got '$MaxAttempts'" }
 if ($TendEvery -ne 0 -and $TendEvery -lt 60) { Die "-TendEvery wants seconds, 60 or more, got '$TendEvery'" }
+if ($ModelHandover -and -not ($ModelServer -and $ModelPath)) { Die "-ModelHandover stops the small model before a review; it needs -ModelServer and -ModelPath (the hippocampus only stops a server it started)" }
 if ($TendCycle -eq "off" -and $TendEvery -ne 0) { Die "-TendEvery is how often the tend cycle redrafts; with -TendCycle off there is no timer" }
 if ($Ripple -eq "endpoint" -and -not $RippleUrl) { Die "-Ripple endpoint needs -RippleUrl" }
 if ($RippleClaude) {

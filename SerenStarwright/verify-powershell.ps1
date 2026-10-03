@@ -719,6 +719,28 @@ if ($coreSrc -match [regex]::Escape('try { & $nssm start $ServiceName 2>&1 | Out
     $coreSrc -match "Windows would not start it") { Good "a failed start is reported with Windows' reason, not a NativeCommandError" }
 else { Bad "nssm start can still kill the script under EAP Stop" }
 
+# A config holding a token is locked with icacls, not with python pasted a
+# Windows path (2 Oct 2026: os.chmod('C:\Users\...') is a SyntaxError - \U -
+# and it killed the Lodestar install on Windows PowerShell 5.1).
+Section "cards: a token-bearing config is locked without python and never fails the install"
+$pasted = Get-ChildItem (Join-Path $ScriptDir "services\powershell") -Filter "seren-*-setup.ps1" |
+    Where-Object { [System.IO.File]::ReadAllText($_.FullName) -match "-c\s+""[^""]*'\$\w*Path'" }
+if (-not $pasted) { Good "no card pastes a path into python source" } else { Bad "a path is pasted into python source in: $($pasted.Name -join ', ')" }
+$pf = Join-Path $env:TEMP ("seren-protect-" + [guid]::NewGuid().ToString("N") + ".yaml")
+"server:`n  bearer_token: x" | Set-Content -LiteralPath $pf
+try {
+    $ErrorActionPreference = "Stop"
+    Protect-SerenConfig -Path $pf -ServiceUser ""
+    $acl = (icacls $pf | Out-String)
+    if ($acl -match [regex]::Escape($env:USERNAME) -and $acl -match "SYSTEM" -and $acl -notmatch "\(I\)") { Good "the file is readable by the installer and SYSTEM, with inheritance off" }
+    else { Bad "unexpected ACL after Protect-SerenConfig: $acl" }
+    if ((Get-Content -LiteralPath $pf -Raw) -match "bearer_token") { Good "the installer can still read it" } else { Bad "the installer was locked out of its own config" }
+    Protect-SerenConfig -Path (Join-Path $env:TEMP "seren-no-such-file.yaml") -ServiceUser ""
+    Protect-SerenConfig -Path $pf -ServiceUser "seren-no-such-user-zz9" 3>$null
+    Good "a missing file or an unknown service account is a warning, not a failed install"
+} catch { Bad "Protect-SerenConfig threw under EAP Stop: $($_.Exception.Message)" }
+finally { Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue }
+
 # -- the observatory card receives ripples (28 Sept 2026) ---------------------
 # The hippocampus moves to the Nano, the model stays on the desktop: the ripple
 # crosses boxes, and this card turns the receiving end on.

@@ -159,7 +159,7 @@ server:
 runtime:
   inject_bearer_token: true$tlsBlock
 "@ | Write-SerenTextFile -Path $CfgPath
-if ($Token) { & $vpy -c "import os,stat; os.chmod('$CfgPath', 0o600)" 2>$null }
+if ($Token) { Protect-SerenConfig -Path $CfgPath -ServiceUser $ServiceUser }
 Ok "Config written"
 
 if ($NoUpdates) {

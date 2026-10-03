@@ -150,7 +150,7 @@ storage:
 }
 # Without a root there is no storage block: SerenProbe keeps its topology state and results under
 # ~/.seren-probe/ on its own and reads no db_path.
-if ($Token) { & $vpy -c "import os,stat; os.chmod('$CfgPath', 0o600)" 2>$null }
+if ($Token) { Protect-SerenConfig -Path $CfgPath -ServiceUser $ServiceUser }
 Ok "Config written"
 
 if ($NoUpdates) {

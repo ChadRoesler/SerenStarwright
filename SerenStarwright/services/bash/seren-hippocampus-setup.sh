@@ -239,6 +239,10 @@ if [[ -n "$MAX_ATTEMPTS" ]]; then
   [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ && "$MAX_ATTEMPTS" -ge 1 && "$MAX_ATTEMPTS" -le 10 ]] || die "--max-attempts wants 1-10, got '$MAX_ATTEMPTS'"
 fi
 [[ -z "$KEEP_WARM" || "$KEEP_WARM" =~ ^[0-9]+$ ]] || die "--keep-warm wants seconds, got '$KEEP_WARM'"
+# Checked here, with the other flags, so it is refused before a wheel is built
+# or a venv made (it used to sit below the build, where a CI box with no
+# checkout died on something else first).
+[[ "$MODEL_HANDOVER" == true && -z "$MODEL_SERVER" && -z "$MODEL_PATH" ]]   && die "--model-handover stops the small model before a review; it needs --model-server and --model-path (the hippocampus only stops a server it started)"
 case "$TEND_CYCLE" in ""|on|off) ;; *) die "--tend-cycle wants on or off, got '$TEND_CYCLE'" ;; esac
 [[ -z "$TEND_EVERY" || ( "$TEND_EVERY" =~ ^[0-9]+$ && "$TEND_EVERY" -ge 60 ) ]] \
   || die "--tend-every wants seconds, 60 or more, got '$TEND_EVERY'"
