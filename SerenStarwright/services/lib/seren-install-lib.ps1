@@ -414,6 +414,42 @@ function Get-SerenClaudeRippleLines([string] $Vpy, [string] $Dir, [int] $Indent 
 # One argument for a native command line, quoted by the CommandLineToArgvW rules
 # (what claude.exe parses), so a JSON argument survives Windows PowerShell 5.1 -
 # which passes embedded double quotes to native commands unescaped.
+# A config that holds a bearer token: keep other accounts on the box out of
+# it. The NTFS equivalent of chmod 600 - which is what three cards used to
+# call, through python, with the path pasted into the code:
+#     os.chmod('C:\Users\alice\seren\...', 0o600)
+# In a Python string \U starts a unicode escape, so every path under
+# C:\Users was a SyntaxError; Windows PowerShell 5.1 turned that stderr into
+# a terminating error and the install died after writing the config (Lodestar,
+# 2 Oct 2026). And where it did run, chmod changes nothing on NTFS but the
+# read-only bit.
+#
+# Who keeps access: the installing user, the account the service runs as,
+# SYSTEM and Administrators (both can read any file anyway, and a service
+# running as LocalSystem must still read its own config: an Observatory locked
+# to the installer alone failed closed on 26 Sept 2026). Never fails an
+# install: a lock that cannot be set is a warning.
+function Protect-SerenConfig([string] $Path, [string] $ServiceUser = "") {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try {
+        # "$_" on each line: under Windows PowerShell 5.1 a native command's
+        # stderr arrives as ErrorRecords, and Out-String prints the whole
+        # record (position, category) into the warning.
+        $say = { param($o) (($o | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) -join " ") }
+        $out = & icacls $Path /inheritance:r /grant:r "${env:USERNAME}:(R,W)" /grant:r "*S-1-5-18:(R)" /grant:r "*S-1-5-32-544:(F)" 2>&1   # SYSTEM, Administrators
+        if ($LASTEXITCODE -ne 0) { Warn "could not restrict who can read $Path ($(& $say $out)) - it holds the bearer token"; return }
+        # The service's own account, on its own: an account Windows does not
+        # know must not undo the lock above.
+        if ($ServiceUser -and -not (Test-SerenSameAccount $ServiceUser $env:USERNAME)) {
+            $out = & icacls $Path /grant:r "${ServiceUser}:(R)" 2>&1
+            if ($LASTEXITCODE -ne 0) { Warn "could not let $ServiceUser read $Path ($(& $say $out)) - the service runs as that account and needs to" }
+        }
+    } catch {
+        Warn "could not restrict who can read $Path ($($_.Exception.Message)) - it holds the bearer token"
+    } finally { $ErrorActionPreference = $prev }
+}
+
 function ConvertTo-SerenNativeArg([string] $a) {
     if ($a -and $a -notmatch '[\s"]') { return $a }
     '"' + (($a -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
