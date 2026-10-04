@@ -42,8 +42,6 @@
     <Folder Include="nodes\nano\" />
     <Folder Include="nodes\spark\" />
     <Folder Include="nodes\xavier\" />
-    <Folder Include=".github\" />
-    <Folder Include=".github\workflows\" />
     <Folder Include="services\tests\" />
   </ItemGroup>
   <!-- ONLY the Python is enumerated, on purpose.
@@ -59,12 +57,16 @@
        costs a tree entry, not a broken build. -->
   <ItemGroup>
     <Compile Include="seren_starwright\seren-starwright.py" />
+    <Compile Include="services\lib\seren-claude-hook.py" />
+    <Compile Include="services\lib\seren-claude-ripple.py" />
+    <Compile Include="services\lib\seren-keep-config.py" />
+    <Compile Include="services\lib\seren-margin-bookmark.py" />
+    <Compile Include="services\lib\seren-mcp-headers.py" />
     <Compile Include="test-starwright.py" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="nodes\lib\build-prebuilts.sh" />
     <Content Include="nodes\lib\common.sh" />
-    <Content Include="nodes\lib\seren-sudoers-update.sh" />
+    <Content Include="nodes\lib\seren-systemctl" />
     <Content Include="nodes\lib\seren-wipe.sh" />
     <Content Include="nodes\nano\build.sh" />
     <Content Include="nodes\nano\chroma.sh" />
@@ -75,13 +77,20 @@
     <Content Include="nodes\nano\llama.sh" />
     <Content Include="nodes\nano\msmoe.sh" />
     <Content Include="nodes\nano\prebuilts.sh" />
+    <Content Include="nodes\nano\whisper.sh" />
     <Content Include="nodes\spark\chroma.sh" />
     <Content Include="nodes\spark\comfy.sh" />
     <Content Include="nodes\spark\foundation.sh" />
     <Content Include="nodes\spark\kokoro.sh" />
     <Content Include="nodes\spark\llama.sh" />
     <Content Include="nodes\spark\msmoe.sh" />
+    <Content Include="nodes\spark\prebuilts.sh" />
+    <Content Include="nodes\spark\whisper.sh" />
+    <Content Include="nodes\tests\test-kokoro-install.sh" />
+    <Content Include="nodes\tests\test-llama-install.sh" />
     <Content Include="nodes\tests\test-prebuilts-fetch.sh" />
+    <Content Include="nodes\tests\test-whisper-install.sh" />
+    <Content Include="nodes\tests\test-wipe.sh" />
     <Content Include="nodes\xavier\build.sh" />
     <Content Include="nodes\xavier\chroma.sh" />
     <Content Include="nodes\xavier\comfy.sh" />
@@ -91,6 +100,7 @@
     <Content Include="nodes\xavier\llama.sh" />
     <Content Include="nodes\xavier\msmoe.sh" />
     <Content Include="nodes\xavier\prebuilts.sh" />
+    <Content Include="nodes\xavier\whisper.sh" />
     <Content Include="services\bash\seren-corpus-callosum-setup.sh" />
     <Content Include="services\bash\seren-hippocampus-setup.sh" />
     <Content Include="services\bash\seren-loci-setup.sh" />
@@ -113,6 +123,7 @@
     <Content Include="services\bash\setup-workbench-service.sh" />
     <Content Include="services\lib\seren-install-lib.ps1" />
     <Content Include="services\lib\seren-install-lib.sh" />
+    <Content Include="services\lib\seren-layout.sh" />
     <Content Include="services\lib\seren-register-services.sh" />
     <Content Include="services\lib\setup-seren-dotnet-service.ps1" />
     <Content Include="services\lib\setup-seren-dotnet-service.sh" />
@@ -139,9 +150,18 @@
     <Content Include="services\powershell\setup-probe-service.ps1" />
     <Content Include="services\powershell\setup-theatre-service.ps1" />
     <Content Include="services\powershell\setup-workbench-service.ps1" />
+    <Content Include="services\tests\test-callosum-stores.sh" />
+    <Content Include="services\tests\test-claude-bookmark.sh" />
+    <Content Include="services\tests\test-claude-mcp.sh" />
+    <Content Include="services\tests\test-claude-ripple.sh" />
+    <Content Include="services\tests\test-hippocampus-sleep-flags.sh" />
     <Content Include="services\tests\test-install-record.sh" />
+    <Content Include="services\tests\test-install-root.sh" />
     <Content Include="services\tests\test-keep-config.sh" />
     <Content Include="services\tests\test-local-wheelhouse.sh" />
+    <Content Include="services\tests\test-lodestar-ripple.sh" />
+    <Content Include="services\tests\test-manifests-dir.sh" />
+    <Content Include="services\tests\test-observatory-ripple.sh" />
     <Content Include="services\tests\test-sibling-config.sh" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />

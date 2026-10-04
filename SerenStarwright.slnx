@@ -17,7 +17,6 @@
     <File Path=".gitattributes" />
     <File Path=".gitignore" />
     <File Path=".starwright-root" />
-    <File Path=".github/dependabot.yml" />
     <File Path="LICENSE" />
     <File Path="README.md" />
     <File Path="SECURITY.md" />
