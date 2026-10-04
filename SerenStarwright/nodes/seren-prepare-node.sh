@@ -122,6 +122,9 @@ INSTALL_CORAL=false
 # needs is a CUDA torch staged per platform, which is what this side of
 # Starwright already does - see <platform>/msmoe.sh for why it is not a service.
 INSTALL_MSMOE=false
+# Install only the interpreter Starwright itself needs, then exit. Set by
+# --bootstrap-python; nothing else in prep runs with it.
+BOOTSTRAP_PYTHON=false
 
 usage() {
     cat <<EOF
@@ -232,6 +235,13 @@ while [[ $# -gt 0 ]]; do
                 echo "       To rename deliberately:  --rename ${2:-NAME}" >&2
                 exit 1
             fi
+            # Starwright's own contract, matched in here for the same reason:
+            # a case branch would be advertised to the TUI as a node flag. The
+            # TUI passes this BEFORE it can draw anything - see the bootstrap
+            # block below.
+            if [ "$1" = "--bootstrap-python" ]; then
+                BOOTSTRAP_PYTHON=true; shift; continue
+            fi
             echo "Unknown option: $1" >&2; usage; exit 1 ;;
     esac
 done
@@ -256,7 +266,7 @@ $INSTALL_CHROMADB && ANY_COMPONENT=true
 $INSTALL_CORAL    && ANY_COMPONENT=true
 $INSTALL_MSMOE    && ANY_COMPONENT=true
 
-if ! $ANY_COMPONENT && [ "$FORCE_PREP" != "true" ] && [ -z "$TARGET_HOSTNAME" ]; then
+if ! $ANY_COMPONENT && [ "$FORCE_PREP" != "true" ] && [ -z "$TARGET_HOSTNAME" ] && ! $BOOTSTRAP_PYTHON; then
     echo "ERROR: Nothing to do. Give a component (-l/-k/-c/-d/-m/--coral or --all)," >&2
     echo "       or --prep to prepare the box, or --rename NAME." >&2
     usage
@@ -323,7 +333,9 @@ node_provisioned && NODE_WAS_PROVISIONED=true
 # Neither --prep nor --no-prep: prep iff this machine has never been prepared.
 # That is the whole point of the change - a first run on bare hardware still
 # just works, and every run after it leaves the box's foundation alone.
-if [ -n "$FORCE_PREP" ]; then
+if $BOOTSTRAP_PYTHON; then
+    RUN_PREP=false
+elif [ -n "$FORCE_PREP" ]; then
     RUN_PREP="$FORCE_PREP"
 elif $NODE_WAS_PROVISIONED; then
     RUN_PREP=false
@@ -342,7 +354,9 @@ echo -e "${GREEN}[SEREN]${NC} Phase state    → $STATE_FILE"
 # The two facts most worth knowing BEFORE anything touches the box, printed to
 # the console rather than buried in the log: is the foundation about to be
 # rebuilt, and is this machine about to change its name.
-if $RUN_PREP; then
+if $BOOTSTRAP_PYTHON; then
+    echo -e "${GREEN}[SEREN]${NC} Base prep      → not run (--bootstrap-python: only the Python Starwright needs)"
+elif $RUN_PREP; then
     if $NODE_WAS_PROVISIONED; then
         echo -e "${GREEN}[SEREN]${NC} Base prep      → RE-RUNNING (--prep)"
     else
@@ -384,7 +398,9 @@ exec >> "$LOG_FILE" 2>&1
 log "Platform:        $PLATFORM ($JP_FAMILY, kernel $KERNEL_VER)"
 log "Target user:     $TARGET_USER"
 log "Hostname:        $(hostname)$([ -n "$TARGET_HOSTNAME" ] && echo " -> RENAMING to $TARGET_HOSTNAME" || echo " (unchanged)")"
-if $RUN_PREP; then
+if $BOOTSTRAP_PYTHON; then
+    log "Base prep:       not run (--bootstrap-python)"
+elif $RUN_PREP; then
     log "Base prep:       RUNNING"
 elif $NODE_WAS_PROVISIONED; then
     log "Base prep:       skipped (prepared $(seren_state_get _provisioned_at))"
@@ -406,6 +422,34 @@ if ! seren_state_init "$STATE_FILE"; then
     fail "Cannot create phase state at $STATE_FILE"
     fail "Prep would re-run every phase on every invocation without it."
     exit 1
+fi
+
+# ─────────────────────────────────────────────────────────────
+# --bootstrap-python: the interpreter Starwright needs, and nothing else
+# ─────────────────────────────────────────────────────────────
+# The TUI needs Python 3.10+, and a Xavier (jp5) ships 3.8 - the 3.10 it ends
+# up with is installed by the foundation phases the TUI exists to launch. So
+# on an old interpreter Starwright calls this before it draws anything, then
+# re-runs itself under the result.
+#
+# It runs the platform's own tracked phases, so the real prep that follows sees
+# them done and skips them. It grants nothing, renames nothing, trims nothing
+# and does NOT mark the node provisioned: the box is exactly as unprepared as
+# it was, with one more interpreter on it.
+if $BOOTSTRAP_PYTHON; then
+    # shellcheck disable=SC1091
+    source "$PLATFORM_DIR/foundation.sh"
+    if declare -F run_bootstrap_python >/dev/null; then
+        if ! $USE_BUILD_FLAG && [ -f "$PLATFORM_DIR/prebuilts.sh" ]; then
+            # shellcheck disable=SC1091
+            source "$PLATFORM_DIR/prebuilts.sh"
+            run_prebuilts_download_foundation
+        fi
+        run_bootstrap_python
+    else
+        info "Nothing to bootstrap on $PLATFORM - its Python is native"
+    fi
+    exit 0
 fi
 
 # ─────────────────────────────────────────────────────────────

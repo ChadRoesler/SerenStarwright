@@ -122,7 +122,14 @@ for pair in \
   mkdir -p "$dst"
   # Only the installer surface. Not seren-starwright.py (it IS the archive) and
   # not the TUI's own launcher/builder - nothing in here should re-bundle.
-  find "$src" -maxdepth 1 -type f \( -name "*.sh" -o -name "*.ps1" -o -name "*.py" \) \
+  #
+  # EXTENSIONLESS FILES ARE PART OF THAT SURFACE (! -name "*.*"). The filter
+  # used to be the three extensions alone, which silently left out
+  # nodes/lib/seren-systemctl - so node prep from a .pyz died at its first
+  # phase with "lib/seren-systemctl is missing beside this script", on exactly
+  # the bare box the archive exists for. Logs and state files have a dot in
+  # their names and stay out.
+  find "$src" -maxdepth 1 -type f \( -name "*.sh" -o -name "*.ps1" -o -name "*.py" -o ! -name "*.*" \) \
        ! -name "seren-starwright.py" -exec cp {} "$dst/" \;
 done
 

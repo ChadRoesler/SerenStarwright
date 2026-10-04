@@ -94,16 +94,53 @@ if "--version" in sys.argv or "-V" in sys.argv:
     raise SystemExit(0)
 
 
-try:
-    from rich.text import Text
-    from textual.app import App, ComposeResult
-    from textual.containers import (Horizontal, Vertical, VerticalScroll, Center, Grid)
-    from textual.screen import ModalScreen, Screen
-    from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label, Select,
-                                 ProgressBar, RadioButton, RadioSet, RichLog,
-                                 Rule, Static)
-except ImportError:
-    sys.exit("ERROR: textual is required.  pip install textual")
+# ── interpreter floor ──────────────────────────────────────────────────────
+# Also BEFORE the textual import, because the import is what dies. A Xavier
+# (jp5) ships Python 3.8 and `python3` stays 3.8 for the life of the box; the
+# bundled textual needs newer, and on 3.8 it fails deep inside
+# typing_extensions with an AttributeError the ImportError handler below never
+# sees. Node prep installs python3.10 beside the system one, so:
+#
+#   a newer interpreter exists   re-run under it, silently (every run after prep)
+#   none does                    skip the import; _bootstrap_python() below
+#                                installs one once the scripts are located
+MIN_PYTHON = (3, 10)
+PYTHON_TOO_OLD = sys.version_info < MIN_PYTHON
+
+
+def _newer_python() -> Optional[str]:
+    """An interpreter Starwright can run on, or None. /usr/local/bin is checked
+    by hand: that is where prep's altinstall lands, and it is not always on the
+    PATH of the shell that started us."""
+    for name in ("python3.12", "python3.11", "python3.10"):
+        found = shutil.which(name)
+        if not found and os.access("/usr/local/bin/" + name, os.X_OK):
+            found = "/usr/local/bin/" + name
+        if found:
+            return found
+    return None
+
+
+def _reexec(python: str) -> None:
+    sys.stdout.flush()
+    os.execv(python, [python] + sys.argv)
+
+
+if PYTHON_TOO_OLD:
+    _newer = _newer_python()
+    if _newer:
+        _reexec(_newer)
+else:
+    try:
+        from rich.text import Text
+        from textual.app import App, ComposeResult
+        from textual.containers import (Horizontal, Vertical, VerticalScroll, Center, Grid)
+        from textual.screen import ModalScreen, Screen
+        from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label, Select,
+                                     ProgressBar, RadioButton, RadioSet, RichLog,
+                                     Rule, Static)
+    except ImportError:
+        sys.exit("ERROR: textual is required.  pip install textual")
 
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -250,6 +287,40 @@ IS_BUNDLED = BUNDLE_DIR in BASE_DIR.parts
 LAYOUT = _read_layout(BASE_DIR)
 SERVICES_DIR = BASE_DIR / LAYOUT.get("services", "services")
 NODES_DIR = BASE_DIR / LAYOUT.get("nodes", "nodes")
+
+
+def _bootstrap_python() -> None:
+    """Get an interpreter Starwright can run on, then re-run under it.
+
+    Only reached on a Python below MIN_PYTHON with nothing newer installed -
+    a fresh Xavier. The install itself is node prep's (--bootstrap-python runs
+    just its SQLite and Python phases); this asks first, because it is sudo
+    and /usr/local, and never returns.
+    """
+    need = ".".join(str(n) for n in MIN_PYTHON)
+    prep = NODES_DIR / "seren-prepare-node.sh"
+    print(f"Starwright needs Python {need}+. This box's python3 is "
+          f"{platform.python_version()} and nothing newer is installed.")
+    if IS_WINDOWS or not prep.is_file() or not shutil.which("bash"):
+        sys.exit(f"Install Python {need} or newer, then run this again.")
+    manual = f"bash {prep} --bootstrap-python"
+    print(f"Node prep can install Python {need} now (needs sudo; about a "
+          "minute from the prebuilt on a Xavier).")
+    if not sys.stdin.isatty():
+        sys.exit(f"Run:  {manual}\nthen run this again.")
+    if input("Install it now? [Y/n] ").strip().lower() not in ("", "y", "yes"):
+        sys.exit(f"Nothing installed. To do it yourself:  {manual}")
+    rc = subprocess.call(["bash", str(prep), "--bootstrap-python"])
+    newer = _newer_python()
+    if rc != 0 or not newer:
+        sys.exit(f"Python bootstrap failed (exit {rc}). "
+                 f"Log: {NODES_DIR / 'seren-setup.log'}\n"
+                 f"On a box that is not a Jetson, install Python {need}+ yourself.")
+    _reexec(newer)
+
+
+if PYTHON_TOO_OLD:
+    _bootstrap_python()
 
 # Group keys come from --describe; the display names live HERE rather than
 # being repeated in each service's describe output. Three services all

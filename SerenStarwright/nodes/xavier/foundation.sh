@@ -371,3 +371,15 @@ run_foundation() {
     run_phase "04_xavier_cmake"     "Phase 4 - CMake"              phase_xavier_cmake
     run_phase "05_xavier_cuda"      "Phase 5 - CUDA 12.2 + compat" phase_xavier_cuda
 }
+
+# ─────────────────────────────────────────────────────────────
+# Bootstrap entry point - called by seren-prepare-node.sh --bootstrap-python
+# ─────────────────────────────────────────────────────────────
+# jp5 ships Python 3.8 and Starwright's TUI cannot start on it, so these two
+# phases have to be runnable before the TUI. Same keys as run_foundation, so
+# the prep that follows skips them. SQLite comes along for the reason given
+# there: the Python tarball's rpath expects it in /usr/local/lib.
+run_bootstrap_python() {
+    run_phase "02_xavier_sqlite"    "Phase 2 - SQLite 3.45"        phase_xavier_sqlite
+    run_phase "03_xavier_python310" "Phase 3 - Python 3.10"        phase_xavier_python310
+}

@@ -153,8 +153,15 @@ try {
         $dstDir = Join-Path $bundle $p.To
         New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
         # Only the installer surface, and only the top level of each dir.
+        #
+        # EXTENSIONLESS FILES ARE PART OF THAT SURFACE. The filter used to be
+        # the three extensions alone, which silently left out
+        # nodes\lib\seren-systemctl - so node prep from a .pyz died at its
+        # first phase with "lib/seren-systemctl is missing beside this script",
+        # on exactly the bare box the archive exists for. Logs and state files
+        # have an extension and stay out.
         Get-ChildItem $srcDir -File | Where-Object {
-            ($_.Extension -eq ".sh" -or $_.Extension -eq ".ps1" -or $_.Extension -eq ".py")
+            ($_.Extension -eq ".sh" -or $_.Extension -eq ".ps1" -or $_.Extension -eq ".py" -or $_.Extension -eq "")
         } | ForEach-Object {
             Copy-Item $_.FullName $dstDir -Force
             $bundled++
