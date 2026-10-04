@@ -150,8 +150,9 @@ bash nodes/seren-prepare-node.sh --prep                           # re-run prep 
 ```
 
 The two irreversible parts of prep are opt-in by flag: `--trim-os` (remove the
-desktop, docker and snap) and `--wipe-nvme` (reformat an NVMe that is not
-ext4). Without them prep skips the trim and stops on a non-ext4 disk. Prebuilt
+desktop, docker and snap) and `--wipe-nvme` (wipe and reformat the NVMe,
+whatever is on it). Without them prep skips the trim, keeps an ext4 NVMe as it
+is and stops on a non-ext4 one. Prebuilt
 artifacts come from the `SerenSystemPrebuilts` releases, tagged
 `YYYYMMDD_<platform>` (`--tag 20260916_xavier-jp5` to pin one).
 

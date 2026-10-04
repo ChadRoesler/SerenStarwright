@@ -53,8 +53,9 @@ the `phase_sudoers` block of `nodes/seren-prepare-node.sh` before you accept
 it.
 
 **Two things prep does are irreversible and each needs its own flag.**
-`--trim-os` removes the desktop, docker and snap; `--wipe-nvme` reformats an
-NVMe that is not already ext4. Without the flag prep skips the trim and
+`--trim-os` removes the desktop, docker and snap; `--wipe-nvme` wipes and
+reformats the NVMe whatever is on it (never the disk the OS boots from).
+Without the flag prep skips the trim, mounts an ext4 NVMe untouched and
 *stops* on a non-ext4 disk, saying what it found. In the TUI the trim is a
 visible pre-ticked box and the wipe is a box that asks you to type the device
 name.

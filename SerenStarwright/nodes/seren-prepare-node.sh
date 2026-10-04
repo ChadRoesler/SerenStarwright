@@ -37,7 +37,7 @@
 #       --build           Build artifacts from source instead of downloading prebuilts
 #       --tag TAG         Pin to a prebuilt release tag (e.g. 20260916_xavier-jp5)
 #       --trim-os         CONSENT: remove the desktop, docker and snap (headless node)
-#       --wipe-nvme       CONSENT: wipe and format the NVMe if it is not already ext4
+#       --wipe-nvme       CONSENT: wipe and re-prepare the NVMe, whatever is on it
 #   -h, --help            Show this help
 #
 # Examples:
@@ -158,9 +158,12 @@ Options:
       --tag TAG         Pin to a prebuilt release tag (YYYYMMDD_<platform>)
       --trim-os         Remove the desktop, docker and snap: this becomes a
                         headless node. Prep SKIPS the OS trim without it.
-      --wipe-nvme       If nvme0n1p1 is missing or not ext4, wipe the disk and
-                        make a fresh ext4. Without it, a non-ext4 NVMe STOPS
-                        the run and says so. An ext4 NVMe is mounted either way.
+      --wipe-nvme       Wipe the NVMe and make a fresh ext4, WHATEVER is on it,
+                        including a disk an earlier prep set up (models, pip
+                        packages and swap go with it). Runs prep to do so.
+                        Never the disk the OS boots from. Without it an ext4
+                        NVMe is mounted and kept, and a non-ext4 one STOPS the
+                        run and says so.
       --no-max-power    Skip MAXN power mode + jetson_clocks (default: ON).
                         Jetson platforms only — a node without nvpmodel skips
                         this phase anyway. Use on passively-cooled or
@@ -176,6 +179,7 @@ Examples:
   Pinned release:       $0 -l -k -d --tag 20260916_xavier-jp5
   Fanless / battery:    $0 -l -k --no-max-power
   Dedicated node:       $0 --prep --trim-os --wipe-nvme --rename nano-edge
+  Clean NVMe again:     $0 --wipe-nvme
 EOF
 }
 
@@ -266,10 +270,19 @@ $INSTALL_CHROMADB && ANY_COMPONENT=true
 $INSTALL_CORAL    && ANY_COMPONENT=true
 $INSTALL_MSMOE    && ANY_COMPONENT=true
 
-if ! $ANY_COMPONENT && [ "$FORCE_PREP" != "true" ] && [ -z "$TARGET_HOSTNAME" ] && ! $BOOTSTRAP_PYTHON; then
+if ! $ANY_COMPONENT && [ "$FORCE_PREP" != "true" ] && [ -z "$TARGET_HOSTNAME" ] && ! $BOOTSTRAP_PYTHON && ! $WIPE_NVME; then
     echo "ERROR: Nothing to do. Give a component (-l/-k/-c/-d/-m/--coral or --all)," >&2
-    echo "       or --prep to prepare the box, or --rename NAME." >&2
+    echo "       or --prep to prepare the box, or --rename NAME, or --wipe-nvme." >&2
     usage
+    exit 1
+fi
+
+# The wipe happens inside prep's NVMe phase, so asking for one while forbidding
+# prep is asking for nothing - and silently doing nothing with a flag that
+# destructive is the worst of the available answers.
+if $WIPE_NVME && [ "$FORCE_PREP" = "false" ]; then
+    echo "ERROR: --wipe-nvme and --no-prep contradict each other. The wipe is part" >&2
+    echo "       of prep; drop one of them." >&2
     exit 1
 fi
 
@@ -335,6 +348,10 @@ node_provisioned && NODE_WAS_PROVISIONED=true
 # just works, and every run after it leaves the box's foundation alone.
 if $BOOTSTRAP_PYTHON; then
     RUN_PREP=false
+elif $WIPE_NVME; then
+    # Re-preparing the disk IS prep, on a prepared node too. Every other phase
+    # still skips itself as done; the platform module forgets only the NVMe's.
+    RUN_PREP=true
 elif [ -n "$FORCE_PREP" ]; then
     RUN_PREP="$FORCE_PREP"
 elif $NODE_WAS_PROVISIONED; then
@@ -358,7 +375,7 @@ if $BOOTSTRAP_PYTHON; then
     echo -e "${GREEN}[SEREN]${NC} Base prep      → not run (--bootstrap-python: only the Python Starwright needs)"
 elif $RUN_PREP; then
     if $NODE_WAS_PROVISIONED; then
-        echo -e "${GREEN}[SEREN]${NC} Base prep      → RE-RUNNING (--prep)"
+        echo -e "${GREEN}[SEREN]${NC} Base prep      → RE-RUNNING ($($WIPE_NVME && [ "$FORCE_PREP" != "true" ] && echo '--wipe-nvme: the NVMe phase only' || echo '--prep'))"
     else
         echo -e "${GREEN}[SEREN]${NC} Base prep      → running (this node has no prep record)"
     fi
@@ -385,7 +402,7 @@ if $RUN_PREP; then
         echo -e "${GREEN}[SEREN]${NC} OS trim        → skipped (pass --trim-os to make this a headless node)"
     fi
     if $WIPE_NVME; then
-        echo -e "${YELLOW}[SEREN]${NC} NVMe           → WILL WIPE nvme0n1 if it is not already ext4 (--wipe-nvme)"
+        echo -e "${YELLOW}[SEREN]${NC} NVMe           → WILL BE WIPED and re-prepared, whatever is on it (--wipe-nvme)"
     else
         echo -e "${GREEN}[SEREN]${NC} NVMe           → mount if ext4; a non-ext4 disk stops the run (--wipe-nvme to format)"
     fi
@@ -409,7 +426,7 @@ else
 fi
 log "Build mode:      $($USE_BUILD_FLAG && echo 'BUILD FROM SOURCE' || echo 'prebuilt download')"
 log "OS trim:         $($TRIM_OS && echo 'YES (--trim-os)' || echo 'no')"
-log "NVMe wipe:       $($WIPE_NVME && echo 'ALLOWED (--wipe-nvme)' || echo 'not allowed')"
+log "NVMe wipe:       $($WIPE_NVME && echo 'YES (--wipe-nvme)' || echo 'no')"
 log "Max power:       $($SKIP_MAX_POWER && echo 'SKIPPED (--no-max-power)' || echo 'ON (MAXN + jetson_clocks)')"
 log "Services:        llama=$INSTALL_LLAMA kokoro=$INSTALL_KOKORO whisper=$INSTALL_WHISPER comfy=$INSTALL_COMFYUI chroma=$INSTALL_CHROMADB coral=$INSTALL_CORAL msmoe=$INSTALL_MSMOE"
 

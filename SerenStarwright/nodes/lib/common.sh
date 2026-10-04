@@ -499,6 +499,122 @@ phase_skip_if_done() {
     fi
     return 1
 }
+# Forget a phase so the next run_phase runs it again. Absent key is a no-op.
+phase_unmark() {
+    local key="$1"
+    local tmp; tmp="$(mktemp)"
+    jq "del(.\"$key\")" "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+# seren_nvme_prepare DEV PART - get /dev/PART mounted at /mnt/nvme as ext4.
+#
+# PREPARE OR RE-PREPARE, and --wipe-nvme is what picks:
+#
+#   without it   prepare. An ext4 disk is mounted with everything on it kept;
+#                a disk that is not ext4 (or not partitioned) STOPS the run.
+#   with it      re-prepare. The disk is wiped, repartitioned and formatted
+#                whatever is on it - ext4, mounted, in use as swap - and then
+#                mounted empty.
+#
+# The flag used to mean only "you may format it if it is not ext4", so a disk
+# carrying a previous install's ext4 came through --wipe-nvme with every old
+# model and package still on it, and there was no way to ask for a clean one.
+#
+# One copy for every platform. There were three, and the Spark's had drifted:
+# it formatted a non-ext4 disk without asking for the flag at all.
+seren_nvme_prepare() {
+    local dev="$1" part="$2"
+    local wipe="${WIPE_NVME:-false}" need_format=false
+
+    if [ "$wipe" = "true" ]; then
+        # NEVER the disk the OS is running from. An Orin Nano booted from NVMe
+        # has its root on nvme0n1, and the flag must not be able to reach it.
+        local root_src root_disk
+        root_src=$(findmnt -n -o SOURCE / 2>/dev/null || echo "")
+        root_disk=$(lsblk -no PKNAME "$root_src" 2>/dev/null || echo "")
+        if [ "$dev" = "$root_disk" ] || lsblk -nro MOUNTPOINT "/dev/$dev" 2>/dev/null | grep -qx '/'; then
+            fail "--wipe-nvme refused: /dev/$dev holds the root filesystem ($root_src)."
+            fail "Run without --wipe-nvme to leave it as it is."
+            return 1
+        fi
+        warn "--wipe-nvme: re-preparing /dev/$dev - everything on it is erased"
+        need_format=true
+    elif mount | grep -q "/mnt/nvme"; then
+        return 0
+    elif ! lsblk | grep -q "$part"; then
+        log "No $part partition - it needs creating"
+        need_format=true
+    elif ! sudo blkid "/dev/$part" | grep -q 'TYPE="ext4"'; then
+        local current_fs
+        current_fs=$(sudo blkid "/dev/$part" -o value -s TYPE 2>/dev/null || echo "unknown")
+        warn "$part has filesystem '$current_fs' (expected ext4)"
+        need_format=true
+    fi
+
+    if $need_format && [ "$wipe" != "true" ]; then
+        # STOP, do not format. The disk is not ext4 (or not partitioned),
+        # and nobody said it could be wiped. Say exactly what would happen
+        # and how to allow it, on the console as well as in the log.
+        local dev_state
+        dev_state="$(lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT "/dev/$dev" 2>/dev/null | sed 's/^/      /')"
+        echo -e "${RED}[SEREN]${NC} NVMe /dev/$dev is not an ext4 data disk and --wipe-nvme was not given." >&3 2>/dev/null || true
+        echo -e "${RED}[SEREN]${NC} Prep will NOT format it. Current state:" >&3 2>/dev/null || true
+        echo "$dev_state" >&3 2>/dev/null || true
+        echo -e "${RED}[SEREN]${NC} If this disk is yours to erase, re-run with --wipe-nvme (everything on it is lost)." >&3 2>/dev/null || true
+        fail "NVMe needs formatting and --wipe-nvme was not given. Refusing to wipe /dev/$dev."
+        return 1
+    fi
+
+    if $need_format; then
+        # Let go of it first: a re-prepare usually finds the disk mounted and
+        # carrying the swapfile. A busy mount stops the run rather than being
+        # forced - something is still using the disk and should be stopped.
+        local sw mp
+        for sw in $(swapon --show=NAME --noheadings 2>/dev/null | grep '^/mnt/nvme' || true); do
+            sudo swapoff "$sw"
+        done
+        for mp in $(lsblk -nro MOUNTPOINT "/dev/$dev" 2>/dev/null | grep '^/' || true); do
+            if ! sudo umount "$mp"; then
+                fail "Cannot unmount $mp - something is still using the NVMe."
+                fail "Stop the seren services on this node, then run again."
+                return 1
+            fi
+        done
+        # Wipe ALL signatures from disk + partition before recreating, otherwise
+        # leftover NTFS/MBR fragments confuse blkid + the kernel.
+        sudo wipefs -a "/dev/$dev" 2>/dev/null || true
+        sudo wipefs -a "/dev/$part" 2>/dev/null || true
+        sudo parted "/dev/$dev" --script mklabel gpt
+        sudo parted "/dev/$dev" --script mkpart primary ext4 0% 100%
+        sleep 2
+        sudo partprobe "/dev/$dev" 2>/dev/null || true
+        sudo mkfs.ext4 -F "/dev/$part"
+    fi
+
+    sudo mkdir -p /mnt/nvme
+    sudo mount "/dev/$part" /mnt/nvme
+    sudo chown "$TARGET_USER":"$TARGET_USER" /mnt/nvme
+
+    # Update fstab - replace any existing nvme line (might be wrong fstype)
+    if grep -q "/dev/$part" /etc/fstab; then
+        sudo sed -i "\|/dev/$part|d" /etc/fstab
+    fi
+    echo "/dev/$part /mnt/nvme ext4 defaults 0 2" | sudo tee -a /etc/fstab >/dev/null
+
+    # After a re-prepare ~/.local/{lib,bin} are symlinks from the last prep,
+    # pointing into a disk that is now empty. Give them their targets back, or
+    # the relocation that follows reads a dangling link as "nothing here" and
+    # nests a second link inside the directory it then creates.
+    if [ "$wipe" = "true" ]; then
+        local sub
+        for sub in lib bin; do
+            if [ -L "/home/$TARGET_USER/.local/$sub" ]; then
+                sudo -u "$TARGET_USER" mkdir -p "/mnt/nvme/pip-packages/$sub"
+            fi
+        done
+    fi
+    return 0
+}
 
 # Foundation phase wrapper - respects state tracking
 run_phase() {

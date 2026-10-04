@@ -238,57 +238,8 @@ phase_xavier_nvme() {
         return 0
     fi
 
-    # Mount NVMe at /mnt/nvme
-    if ! mount | grep -q "/mnt/nvme"; then
-        # Check partition exists AND is recognizable as ext4. A partition that
-        # exists but has stale NTFS/other signatures will fail to mount and
-        # we'd rather wipe + reformat than have downstream phases blow up.
-        local NEED_FORMAT=false
-        if ! lsblk | grep -q nvme0n1p1; then
-            log "No nvme0n1p1 partition - creating fresh"
-            NEED_FORMAT=true
-        elif ! sudo blkid /dev/nvme0n1p1 | grep -q 'TYPE="ext4"'; then
-            local CURRENT_FS
-            CURRENT_FS=$(sudo blkid /dev/nvme0n1p1 -o value -s TYPE 2>/dev/null || echo "unknown")
-            warn "nvme0n1p1 has filesystem '$CURRENT_FS' (expected ext4) - reformatting"
-            NEED_FORMAT=true
-        fi
-
-        if $NEED_FORMAT && [ "${WIPE_NVME:-false}" != "true" ]; then
-            # STOP, do not format. The disk is not ext4 (or not partitioned),
-            # and nobody said it could be wiped. Say exactly what would happen
-            # and how to allow it, on the console as well as in the log.
-            local dev_state
-            dev_state="$(lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT /dev/nvme0n1 2>/dev/null | sed 's/^/      /')"
-            echo -e "${RED}[SEREN]${NC} NVMe /dev/nvme0n1 is not an ext4 data disk and --wipe-nvme was not given." >&3 2>/dev/null || true
-            echo -e "${RED}[SEREN]${NC} Prep will NOT format it. Current state:" >&3 2>/dev/null || true
-            echo "$dev_state" >&3 2>/dev/null || true
-            echo -e "${RED}[SEREN]${NC} If this disk is yours to erase, re-run with --wipe-nvme (everything on it is lost)." >&3 2>/dev/null || true
-            fail "NVMe needs formatting and --wipe-nvme was not given. Refusing to wipe /dev/nvme0n1."
-            return 1
-        fi
-        if $NEED_FORMAT; then
-            # Wipe ALL signatures from disk + partition before recreating, otherwise
-            # leftover NTFS/MBR fragments confuse blkid + the kernel.
-            sudo wipefs -a /dev/nvme0n1 2>/dev/null || true
-            sudo wipefs -a /dev/nvme0n1p1 2>/dev/null || true
-            sudo parted /dev/nvme0n1 --script mklabel gpt
-            sudo parted /dev/nvme0n1 --script mkpart primary ext4 0% 100%
-            sleep 2
-            sudo partprobe /dev/nvme0n1 2>/dev/null || true
-            sudo mkfs.ext4 -F /dev/nvme0n1p1
-        fi
-
-        sudo mkdir -p /mnt/nvme
-        sudo mount /dev/nvme0n1p1 /mnt/nvme
-        sudo chown "$TARGET_USER":"$TARGET_USER" /mnt/nvme
-
-        # Update fstab - replace any existing nvme line (might be wrong fstype)
-        if grep -q '/dev/nvme0n1p1' /etc/fstab; then
-            sudo sed -i '\|/dev/nvme0n1p1|d' /etc/fstab
-        fi
-        echo '/dev/nvme0n1p1 /mnt/nvme ext4 defaults 0 2' | sudo tee -a /etc/fstab >/dev/null
-    fi
+    # Mount NVMe at /mnt/nvme - prepare, or with --wipe-nvme re-prepare.
+    seren_nvme_prepare nvme0n1 nvme0n1p1
 
     # 16GB swap on NVMe (eMMC swap wears the chip out fast)
     if ! swapon --show | grep -q nvme; then
@@ -367,6 +318,13 @@ run_foundation() {
     # about target dirs existing, so without phase 6 first, pip errors out.
     # The phase IDs stay numbered as-is to preserve compat with state files
     # from existing installs - only execution order changes.
+    # --wipe-nvme re-prepares the disk even on a node that has done this
+    # before. CMake goes with it: it is a pip --user install, and ~/.local
+    # lives on the disk being wiped.
+    if [ "${WIPE_NVME:-false}" = "true" ]; then
+        phase_unmark "06_xavier_nvme"
+        phase_unmark "04_xavier_cmake"
+    fi
     run_phase "06_xavier_nvme"      "Phase 6 - NVMe + swap + pip"  phase_xavier_nvme
     run_phase "04_xavier_cmake"     "Phase 4 - CMake"              phase_xavier_cmake
     run_phase "05_xavier_cuda"      "Phase 5 - CUDA 12.2 + compat" phase_xavier_cuda

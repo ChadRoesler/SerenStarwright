@@ -2957,9 +2957,10 @@ class ConfirmWipeModal(ModalScreen[bool]):
         with Vertical(id="modal"):
             yield Static("Wipe the NVMe?", classes="modal-title")
             yield Static(
-                f"If /dev/{self.device} is not already an ext4 data disk, prep will "
-                f"wipe every signature on it, repartition it and format it. Everything "
-                f"on it is lost. An ext4 disk is left alone either way.",
+                f"Prep will wipe every signature on /dev/{self.device}, repartition it "
+                f"and format it, whatever is on it now. Everything on it is lost, "
+                f"including models and packages from an earlier prep. The disk the "
+                f"OS boots from is refused.",
                 classes="modal-sub")
             yield Label(f"type  {self.device}  to allow it")
             yield Input(placeholder=self.device, id="wipe-confirm")
@@ -3146,7 +3147,7 @@ class PrepareNodeScreen(Screen):
                                        "(this becomes a headless node)",
                                        value=True, id="np-trimos")
                     if node.supports("wipe-nvme"):
-                        yield Checkbox("wipe and format the NVMe if it is not already ext4 "
+                        yield Checkbox("wipe and re-prepare the NVMe: everything on it is erased "
                                        "(asks you to type the device name)",
                                        value=False, id="np-wipenvme")
                 yield Static("", id="cfg-warn")
@@ -3188,7 +3189,7 @@ class PrepareNodeScreen(Screen):
             if not allowed:
                 self.query_one("#cfg-warn", Static).update(
                     "NVMe wipe not allowed - the device name was not typed. "
-                    "A non-ext4 NVMe will stop the run instead.")
+                    "An ext4 NVMe is kept as it is; a non-ext4 one stops the run.")
             else:
                 self.query_one("#cfg-warn", Static).update("")
             self._wipe_confirmed = bool(allowed)

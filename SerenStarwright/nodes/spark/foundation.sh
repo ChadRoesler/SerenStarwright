@@ -224,38 +224,8 @@ phase_spark_nvme() {
     NVME_PART="${NVME_DEV}p1"
     log "NVMe target: /dev/$NVME_PART (root is on $ROOT_SRC, leaving it alone)"
 
-    # Mount NVMe at /mnt/nvme if not already mounted
-    if ! mount | grep -q "/mnt/nvme"; then
-        local NEED_FORMAT=false
-        if ! lsblk | grep -q "$NVME_PART"; then
-            log "No $NVME_PART partition - creating fresh"
-            NEED_FORMAT=true
-        elif ! sudo blkid "/dev/$NVME_PART" | grep -q 'TYPE="ext4"'; then
-            local CURRENT_FS
-            CURRENT_FS=$(sudo blkid "/dev/$NVME_PART" -o value -s TYPE 2>/dev/null || echo "unknown")
-            warn "/dev/$NVME_PART has filesystem '$CURRENT_FS' (expected ext4) - reformatting"
-            NEED_FORMAT=true
-        fi
-
-        if $NEED_FORMAT; then
-            sudo wipefs -a "/dev/$NVME_DEV" 2>/dev/null || true
-            sudo wipefs -a "/dev/$NVME_PART" 2>/dev/null || true
-            sudo parted "/dev/$NVME_DEV" --script mklabel gpt
-            sudo parted "/dev/$NVME_DEV" --script mkpart primary ext4 0% 100%
-            sleep 2
-            sudo partprobe "/dev/$NVME_DEV" 2>/dev/null || true
-            sudo mkfs.ext4 -F "/dev/$NVME_PART"
-        fi
-
-        sudo mkdir -p /mnt/nvme
-        sudo mount "/dev/$NVME_PART" /mnt/nvme
-        sudo chown "$TARGET_USER":"$TARGET_USER" /mnt/nvme
-
-        if grep -q "/dev/$NVME_PART" /etc/fstab; then
-            sudo sed -i "\|/dev/$NVME_PART|d" /etc/fstab
-        fi
-        echo "/dev/$NVME_PART /mnt/nvme ext4 defaults 0 2" | sudo tee -a /etc/fstab >/dev/null
-    fi
+    # Mount NVMe at /mnt/nvme - prepare, or with --wipe-nvme re-prepare.
+    seren_nvme_prepare "$NVME_DEV" "$NVME_PART"
 
     sudo -u "$TARGET_USER" mkdir -p /mnt/nvme/models /mnt/nvme/pip-packages /mnt/nvme/pip-cache
 
@@ -319,5 +289,9 @@ run_foundation() {
     # No MAXN phase - Spark manages power at firmware level
     run_phase "01_spark_os_trim"  "Phase 1 - OS trim"            phase_spark_os_trim
     run_phase "02_spark_cuda"     "Phase 2 - CUDA toolkit"        phase_spark_cuda
+    # --wipe-nvme re-prepares the disk even on a node that has done this before.
+    if [ "${WIPE_NVME:-false}" = "true" ]; then
+        phase_unmark "03_spark_nvme"
+    fi
     run_phase "03_spark_nvme"     "Phase 3 - NVMe + pip"          phase_spark_nvme
 }
