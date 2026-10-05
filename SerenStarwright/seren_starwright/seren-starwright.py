@@ -706,6 +706,10 @@ class Job:
     label: str
     cmd: list[str]
     events_file: Optional[Path] = None
+    # stdout is prose for a person, not JSON events and not paired with an
+    # events file: seren-wipe.sh, which predates the event vocabulary and has
+    # nothing to report but the list of what it removed.
+    plain_output: bool = False
     # Extra environment for this job's subprocess, merged over os.environ.
     # This is how the service password travels: never as an argument, because
     # command lines are readable by other processes on Windows and this screen
@@ -1964,6 +1968,19 @@ class SplashScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._refresh()
+
+    def on_screen_resume(self) -> None:
+        # A wipe removes the prep record, so the node this app described at
+        # startup is no longer the node on the desk: Modify must go grey and
+        # the note must stop saying "prepared". Only after a wipe - re-running
+        # --describe on every return to the splash would be a pause for nothing.
+        if getattr(self.app, "node_stale", False):
+            self.app.node_stale = False                  # type: ignore[attr-defined]
+            self.app.node, self.app.node_problem = discover_node()  # type: ignore[attr-defined]
+            self._refresh()
+
+    def _refresh(self) -> None:
         node = self.app.node                            # type: ignore[attr-defined]
         # Honest about what isn't available: node prep is bash-only, so on
         # Windows both doors say so instead of failing when pressed.
@@ -2984,6 +3001,92 @@ class ConfirmWipeModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class WipeNodeModal(ModalScreen[Optional[dict]]):
+    """Show what a wipe would remove, then take the hostname typed back.
+
+    The list on screen is seren-wipe.sh's own --dry-run, re-run whenever a box
+    changes, so what is read is what will be removed - not a description of it
+    kept in step by hand. Returns {"deep": bool, "models": bool}, or None for
+    Escape, Cancel or a wrong word.
+    """
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, hostname: str, script: Path) -> None:
+        super().__init__()
+        self.hostname = hostname
+        self.script = script
+        self._preview_gen = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal"):
+            yield Static("Wipe this node?", classes="modal-title")
+            # Short on purpose: this has to fit a 24-row SSH session with the
+            # list still readable, and the list says the rest.
+            yield Static("Below is what would be removed. Nothing has gone yet.",
+                         classes="modal-sub")
+            yield Checkbox("deep: also Python 3.10, SQLite, sudoers, hostname",
+                           id="wn-deep")
+            yield Checkbox("models: also models and build output", id="wn-models")
+            with VerticalScroll(id="wipe-preview"):
+                yield Static("working out what would be removed...",
+                             id="wipe-preview-text")
+            yield Label(f"type  {self.hostname}  to wipe it")
+            yield Input(placeholder=self.hostname, id="wipe-confirm")
+            with Horizontal(id="actions"):
+                yield Button("Cancel", id="cancel", variant="default")
+                yield Button("Wipe node", id="ok", variant="error")
+
+    def _choices(self) -> dict:
+        return {"deep": self.query_one("#wn-deep", Checkbox).value,
+                "models": self.query_one("#wn-models", Checkbox).value}
+
+    @staticmethod
+    def flags(choices: dict) -> list[str]:
+        return [f"--{k}" for k in ("deep", "models") if choices.get(k)]
+
+    def on_mount(self) -> None:
+        self._preview()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        self._preview()
+
+    def _preview(self) -> None:
+        asyncio.create_task(self._run_preview())
+
+    async def _run_preview(self) -> None:
+        self._preview_gen += 1
+        gen = self._preview_gen
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bash", self.script.as_posix(), "--dry-run", *self.flags(self._choices()),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+            text = out.decode(errors="replace").strip() or "(the wipe script printed nothing)"
+        except Exception as e:                               # noqa: BLE001
+            text = f"could not preview the wipe: {e}"
+        # A box ticked while this ran started a newer preview; let that one win.
+        if gen != self._preview_gen:
+            return
+        try:
+            self.query_one("#wipe-preview-text", Static).update(Text.from_ansi(text))
+        except Exception:                                    # noqa: BLE001
+            pass                                             # dismissed meanwhile
+
+    def _answer(self) -> Optional[dict]:
+        typed = self.query_one("#wipe-confirm", Input).value.strip()
+        return self._choices() if typed == self.hostname else None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(self._answer() if event.button.id == "ok" else None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(self._answer())
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class PrepareNodeScreen(Screen):
     """Prepare THIS machine: OS prereqs, CUDA, llama/kokoro/comfy/chroma/coral.
 
@@ -3126,6 +3229,13 @@ class PrepareNodeScreen(Screen):
                     yield Label("target user (blank = the invoking user)")
                     yield Input(placeholder=os.environ.get("USER", "") or "you",
                                 id="np-user")
+                # Both doors: where a component lands matters as much when
+                # adding one as when building the box. Blank is not "home" -
+                # the dispatcher resolves it, and says which it chose.
+                if node.supports("install-root"):
+                    yield Label("install components under (blank = the root used "
+                                "before, else the NVMe if there is one, else home)")
+                    yield Input(placeholder="/mnt/nvme", id="np-installroot")
                 # Install only, and not for tidiness: --no-max-power suppresses
                 # phase_max_power, which is a FOUNDATION phase. Under Modify no
                 # foundation phase runs, so the control would be a switch wired
@@ -3153,6 +3263,11 @@ class PrepareNodeScreen(Screen):
                 yield Static("", id="cfg-warn")
         with Horizontal(id="actions"):
             yield Button("Back", id="back", variant="default")
+            # MODIFY ONLY: undoing a node belongs with changing one, not with
+            # building one. Pressing it runs nothing - it opens a dialog that
+            # lists what would go and wants the hostname typed.
+            if self.is_modify and self._wipe_script() is not None:
+                yield Button("Wipe node...", id="wipe-node", variant="error")
             # The button names the act, matching the door. "Prepare" was
             # accurate when there was one path and is ambiguous now that there
             # are two - the whole point is that the operator can tell which one
@@ -3172,6 +3287,48 @@ class PrepareNodeScreen(Screen):
             self.query_one("#cfg-warn", Static).update(
                 "sudo is not currently authorised. Run `sudo -v` in another "
                 "terminal first - prep cannot prompt from inside the TUI.")
+
+    def _wipe_script(self) -> Optional[Path]:
+        """seren-wipe.sh beside the dispatcher this node was described by."""
+        node = self.app.node                             # type: ignore[attr-defined]
+        if node is None:
+            return None
+        script = Path(node.script).parent / "lib" / "seren-wipe.sh"
+        return script if script.is_file() else None
+
+    def _wipe_node(self) -> None:
+        node = self.app.node                             # type: ignore[attr-defined]
+        script = self._wipe_script()
+        if node is None or script is None:
+            return
+        warn = self.query_one("#cfg-warn", Static)
+        # Checked HERE, and it blocks: the wipe is sudo rm from its first line,
+        # and a password prompt inside this TUI reads as a hang.
+        if not sudo_ready():
+            warn.update("sudo is not currently authorised. Run `sudo -v` in "
+                        "another terminal first - the wipe cannot prompt from "
+                        "inside the TUI.")
+            return
+        hostname = node.hostname or platform.node()
+
+        def _answer(choices: Optional[dict]) -> None:
+            if not choices:
+                warn.update("Node not wiped - the hostname was not typed.")
+                return
+            what = ", ".join(k for k in ("deep", "models") if choices.get(k))
+            # --yes because the consent was the hostname typed into the dialog;
+            # the script's own prompt would read from a terminal the TUI owns.
+            cmd = ["bash", script.as_posix(), "--yes", *WipeNodeModal.flags(choices)]
+            self.app.jobs = [Job(label=f"wipe node ({hostname})"  # type: ignore[attr-defined]
+                                       + (f": {what}" if what else ""),
+                                 cmd=cmd, plain_output=True)]
+            # The prep record goes with the wipe, so this screen is about to be
+            # wrong about the node. Replace it rather than stack on it: Back
+            # from the run lands on the splash, which re-reads the node.
+            self.app.node_stale = True                   # type: ignore[attr-defined]
+            self.app.switch_screen(InstallScreen())
+
+        self.app.push_screen(WipeNodeModal(hostname, script), _answer)
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         if (event.checkbox.id or "") != "np-wipenvme" or not event.value:
@@ -3252,6 +3409,9 @@ class PrepareNodeScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
             self.app.pop_screen()
+            return
+        if event.button.id == "wipe-node":
+            self._wipe_node()
             return
         node: Optional[NodeDef] = self.app.node          # type: ignore[attr-defined]
         if node is None:
@@ -3344,7 +3504,8 @@ class PrepareNodeScreen(Screen):
         if node.supports("prep"):
             cmd.append("--prep" if want_prep else "--no-prep")
 
-        for wid, flag in (("#np-tag", "--tag"), ("#np-user", "--user")):
+        for wid, flag in (("#np-tag", "--tag"), ("#np-user", "--user"),
+                          ("#np-installroot", "--install-root")):
             w = field(wid, Input)
             if w is not None and w.value.strip():
                 cmd += [flag, w.value.strip()]
@@ -3521,7 +3682,7 @@ class InstallScreen(Screen):
             # redirects stdout and stderr into its own log file - so it writes
             # to job.events_file and we tail that instead. Same event
             # vocabulary either way, so _render_event handles both.
-            if job.events_file is not None:
+            if job.events_file is not None or job.plain_output:
                 assert proc.stdout
                 async for raw in proc.stdout:               # human text on fd 3
                     text = raw.decode(errors="replace").rstrip()
@@ -3689,6 +3850,11 @@ class StarwrightApp(App):
     #modal { background: #181825; border: thick #cba6f7; padding: 1 2;
              width: 62; height: 85%; max-height: 85%; }
     .modal-title { text-style: bold; }
+    /* The whole screen, not the usual 85%: the list is the point of this
+       dialog, and on a 24-row terminal every row it can have is one fewer to
+       scroll. The list takes whatever the fixed controls leave. */
+    WipeNodeModal #modal { width: 78; max-width: 100%; height: 100%; max-height: 100%; }
+    #wipe-preview { height: 1fr; min-height: 3; background: #11111b; padding: 0 1; }
     .modal-sub { color: #6c7086; padding: 0 0 1 0; }
     /* Keep actions visible: body takes remaining space and scrolls, rather
        than growing until it shoves Cancel/Okay out of frame. */
@@ -3719,6 +3885,8 @@ class StarwrightApp(App):
         self.jobs: list[Job] = []
         self.node: Optional[NodeDef] = None
         self.node_problem: Optional[str] = None
+        # Set when a wipe is launched; the splash re-describes the node on it.
+        self.node_stale = False
         # Passwords live HERE and deliberately NOT in `universal` or
         # `per_service`. Those two dicts are precisely what build_command turns
         # into a command line, so anything put in them becomes an argument -

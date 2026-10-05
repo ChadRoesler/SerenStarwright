@@ -33,6 +33,7 @@
 #
 # Options:
 #   -u, --user USER       Target user (default: invoking user)
+#       --install-root DIR  Where the components go (default: /mnt/nvme if present)
 #   -H, --hostname NAME   Hostname (default: auto-derived from services)
 #       --build           Build artifacts from source instead of downloading prebuilts
 #       --tag TAG         Pin to a prebuilt release tag (e.g. 20260916_xavier-jp5)
@@ -152,6 +153,10 @@ Base prep (OS trim, CUDA, NVMe, sudoers - the slow, machine-wide part):
 
 Options:
   -u, --user USER       Target user (default: invoking user)
+      --install-root DIR  Where llama.cpp, whisper.cpp, Kokoro-FastAPI and
+                        ComfyUI are installed, a folder each. Default: the root
+                        an earlier run named, else /mnt/nvme when the NVMe is
+                        there, else the home directory.
       --rename NAME     Set the hostname to NAME. Nothing else renames the box;
                         omit this and the hostname is never touched.
       --build           Build artifacts from source (slow; default is download)
@@ -202,6 +207,8 @@ while [[ $# -gt 0 ]]; do
         --all)         INSTALL_LLAMA=true; INSTALL_KOKORO=true; INSTALL_WHISPER=true
                        INSTALL_COMFYUI=true; INSTALL_CHROMADB=true; shift ;;
         -u|--user)     TARGET_USER="$2"; shift 2 ;;
+        # Where the components themselves go - see seren_apps_root.
+        --install-root) export SEREN_INSTALL_ROOT="$2"; shift 2 ;;
         # RENAME, not "hostname". The verb is the point: this is the only flag
         # that changes the identity of the machine, and the old spelling read
         # like a setting you were declaring rather than an act. See
@@ -285,6 +292,12 @@ if $WIPE_NVME && [ "$FORCE_PREP" = "false" ]; then
     echo "       of prep; drop one of them." >&2
     exit 1
 fi
+
+case "${SEREN_INSTALL_ROOT:-/}" in
+    /*) ;;
+    *)  echo "ERROR: --install-root needs an absolute path, got '$SEREN_INSTALL_ROOT'" >&2
+        exit 1 ;;
+esac
 
 # Validate user
 if ! id "$TARGET_USER" &>/dev/null; then
@@ -655,6 +668,24 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
+# Install root — where the components land
+# ─────────────────────────────────────────────────────────────
+# Resolved AFTER foundation, because the default is the NVMe and foundation is
+# what mounts it. Exported so every installer below gets the same answer, and
+# remembered only when somebody named it: the default resolves the same way
+# next time without being written down.
+if $ANY_COMPONENT; then
+    [ -n "${SEREN_INSTALL_ROOT:-}" ] && mark_install_root "${SEREN_INSTALL_ROOT%/}"
+    SEREN_INSTALL_ROOT="$(seren_apps_root)"
+    export SEREN_INSTALL_ROOT
+    if [ ! -d "$SEREN_INSTALL_ROOT" ]; then
+        sudo mkdir -p "$SEREN_INSTALL_ROOT"
+        sudo chown "$TARGET_USER":"$TARGET_USER" "$SEREN_INSTALL_ROOT"
+    fi
+    log "Install root:    $SEREN_INSTALL_ROOT"
+fi
+
+# ─────────────────────────────────────────────────────────────
 # Service prebuilts — staged AFTER foundation, BEFORE services
 # ─────────────────────────────────────────────────────────────
 # Only needed if at least one service requires staged artifacts.
@@ -767,6 +798,7 @@ echo "" >&3
     echo "  User:        $TARGET_USER"
     echo "  Kernel:      $KERNEL_VER"
     echo "  Base prep:   $($RUN_PREP && echo 'ran this run' || echo 'skipped - already prepared')"
+    $ANY_COMPONENT && echo "  Installed to: $SEREN_INSTALL_ROOT"
     echo ""
     echo "  Installed components:"
     # msmoe was missing from this list while being installable, so a run that

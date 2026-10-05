@@ -519,6 +519,54 @@ def _fixture():
     return services, problems, script, comps
 
 
+async def test_wipe_node() -> None:
+    """Modify can undo a node, and only Modify: the button opens a dialog that
+    shows seren-wipe.sh's own dry run and wants the hostname typed. Nothing is
+    queued by the button, by Cancel or by a wrong word; the right word queues
+    the wipe with exactly the boxes that were ticked, and never --dry-run."""
+    print("\n== Wipe node (Modify only, hostname typed)")
+    services, problems, script, comps = _fixture()
+    real_sudo = sw.sudo_ready
+    sw.sudo_ready = lambda: True
+    try:
+        app = sw.StarwrightApp(services, problems)
+        async with app.run_test(size=(110, 70)) as pilot:
+            scr = await _open(app, pilot, _node(False, script, comps), mode="install")
+            check(not scr.query("#wipe-node"), "Install has no wipe button")
+
+        app = sw.StarwrightApp(services, problems)
+        async with app.run_test(size=(110, 70)) as pilot:
+            scr = await _open(app, pilot, _node(True, script, comps), mode="modify")
+            check(len(scr.query("#wipe-node")) == 1, "Modify has the wipe button")
+
+            await pilot.click("#wipe-node")
+            await pilot.pause(); await pilot.pause()
+            check(isinstance(app.screen, sw.WipeNodeModal), "the button opens the dialog")
+            check(app.jobs == [], "opening the dialog queues nothing")
+            app.screen.query_one("#wipe-confirm", Input).value = "not-this-box"
+            await pilot.click("#ok")
+            await pilot.pause(); await pilot.pause()
+            check(app.jobs == [] and app.screen is scr,
+                  "the wrong word wipes nothing and stays on Modify")
+
+            await pilot.click("#wipe-node")
+            await pilot.pause(); await pilot.pause()
+            app.screen.query_one("#wn-deep", Checkbox).value = True
+            app.screen.query_one("#wipe-confirm", Input).value = "nano-brain"
+            await pilot.click("#ok")
+            await pilot.pause(); await pilot.pause()
+            cmd = app.jobs[0].cmd if app.jobs else []
+            check(any(str(c).endswith("seren-wipe.sh") for c in cmd) and "--yes" in cmd,
+                  "the hostname queues the wipe script: %r" % cmd)
+            check("--deep" in cmd and "--models" not in cmd and "--dry-run" not in cmd,
+                  "only the ticked box is passed, and it is not a dry run")
+            check(isinstance(app.screen, sw.InstallScreen) and app.jobs[0].plain_output,
+                  "it lands on the run screen, reading the script's prose")
+            check(app.node_stale is True, "the splash is told to re-read the node")
+    finally:
+        sw.sudo_ready = real_sudo
+
+
 async def test_two_doors_on_splash() -> None:
     """Node work used to be ONE door, so one screen had to offer foundation prep,
     a hostname field and components together - with a checkbox as the only thing
@@ -1766,6 +1814,7 @@ async def main() -> int:
     await test_modify_refuses_unprepared_node()
     await test_install_preps_and_may_rename()
     await test_consent_flags()
+    await test_wipe_node()
     await test_version()
     await test_command_building()
     await test_local_wheelhouse_option()

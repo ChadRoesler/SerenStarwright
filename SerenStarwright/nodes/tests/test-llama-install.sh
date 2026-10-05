@@ -127,6 +127,19 @@ bash "$T/spark/stop_llama.sh"
 out="$(STAGED_LLAMA_BIN="$T/nope" install_llama 2>&1)"; rc=$?
 [[ $rc -ne 0 && "$out" == *"Staged llama-server binary missing"* ]] && ok_ "a missing staged binary fails and says so" || bad "missing binary: rc=$rc"
 
+echo "== --install-root"
+# The binary goes under the root; the start script stays in the home and points
+# at it. This used to be the home directory with nowhere to say otherwise.
+mkdir -p "$T/root" "$T/rhome/models"
+(
+    export SEREN_TEST_HOME="$T/rhome" USER_HOME="$T/rhome" SEREN_INSTALL_ROOT="$T/root"
+    install_llama > "$T/install-root.log" 2>&1
+)
+[ -x "$T/root/llama.cpp/build/bin/llama-server" ] && [ ! -e "$T/rhome/llama.cpp" ] \
+  && grep -q "$T/root/llama.cpp/build/bin" "$T/rhome/start_llama.sh" \
+  && ok_ "--install-root: the binary lands under the root and the start script points there" \
+  || { bad "install root"; cat "$T/install-root.log"; }
+
 echo
 echo "  $PASS passed, $FAILS failed"
 exit $FAILS

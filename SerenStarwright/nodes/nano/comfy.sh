@@ -35,7 +35,9 @@ install_comfy() {
     fi
 
     # ── ComfyUI repo ──
-    cd "$USER_HOME"
+    local APPS_ROOT; APPS_ROOT="$(seren_apps_root)"
+    seren_note_home_copy ComfyUI
+    cd "$APPS_ROOT"
     if [ ! -d ComfyUI ]; then
         log "Cloning ComfyUI..."
         sudo -u "$TARGET_USER" git clone https://github.com/comfyanonymous/ComfyUI.git
@@ -63,8 +65,8 @@ if torch.cuda.is_available():
     print(f'  Device: {torch.cuda.get_device_name(0)}')
 " 2>&1 || warn "PyTorch import failed in venv - check LD_LIBRARY_PATH"
 
-    log "ComfyUI installed at $USER_HOME/ComfyUI"
+    log "ComfyUI installed at $APPS_ROOT/ComfyUI"
     log "Venv: ~/seren-venvs/comfy"
-    log "Start with: cd ~/ComfyUI && ~/seren-venvs/comfy/bin/python main.py --listen 0.0.0.0 --lowvram"
+    log "Start with: cd $APPS_ROOT/ComfyUI && ~/seren-venvs/comfy/bin/python main.py --listen 0.0.0.0 --lowvram"
     log "(--lowvram is recommended on 8GB Nano)"
 }

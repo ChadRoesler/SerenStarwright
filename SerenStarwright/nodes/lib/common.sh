@@ -486,6 +486,65 @@ mark_hostname_set() {
     fi
 }
 
+# Remember where --install-root pointed, so adding a component later lands
+# beside the ones already there without the flag being typed again.
+mark_install_root() {
+    local root="$1"
+    local tmp; tmp="$(mktemp)"
+    if jq --arg r "$root" '._install_root = $r' "$STATE_FILE" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$STATE_FILE"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# seren_apps_root - the directory node components are installed under:
+# llama.cpp, whisper.cpp, Kokoro-FastAPI and ComfyUI each get a folder in it.
+#
+#   --install-root DIR         what somebody asked for (SEREN_INSTALL_ROOT)
+#   the root a past run named  remembered in the node state
+#   /mnt/nvme                  when the NVMe is there - where models and venvs
+#                              already go, and for the same reason
+#   the user's home            a node with no NVMe
+#
+# These were hardwired to the home directory, so on a Xavier the binaries and
+# repos went onto the 32GB eMMC the NVMe phase exists to keep clear, with
+# nowhere to say otherwise. Start/stop scripts, the env file and the manifests
+# stay in the home: they are small, and they are how everything else finds a
+# component wherever it was put.
+seren_apps_root() {
+    if [ -n "${SEREN_INSTALL_ROOT:-}" ]; then
+        echo "${SEREN_INSTALL_ROOT%/}"
+        return 0
+    fi
+    if [ -n "${SEREN_TEST_HOME:-}" ]; then
+        echo "$SEREN_TEST_HOME"
+        return 0
+    fi
+    local saved; saved="$(seren_state_get _install_root)"
+    if [ -n "$saved" ]; then
+        echo "$saved"
+    elif [ -d /mnt/nvme ]; then
+        echo "/mnt/nvme"
+    else
+        echo "/home/$TARGET_USER"
+    fi
+}
+
+# A node installed before the install root existed has its copy in the home.
+# Installing again puts a new one under the root and repoints the start script;
+# say that the old one is now dead weight rather than leave it to be found.
+seren_note_home_copy() {
+    local name="$1" root; root="$(seren_apps_root)"
+    local home="/home/$TARGET_USER"
+    [ -n "${SEREN_TEST_HOME:-}" ] && home="$SEREN_TEST_HOME"
+    if [ "$root" != "$home" ] && [ -e "$home/$name" ]; then
+        warn "$home/$name is an older copy and is no longer used - $name now lives in $root."
+        warn "  Remove it when you are happy:  rm -rf $home/$name"
+    fi
+    return 0
+}
+
 phase_done() { jq -r ".\"$1\" // false" "$STATE_FILE"; }
 phase_mark() {
     local key="$1"
@@ -1287,7 +1346,8 @@ seren_install_whisper() {
     local default_model="$1"
     local USER_HOME="/home/$TARGET_USER"
     [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
-    local BIN_DIR="$USER_HOME/whisper.cpp/build/bin"
+    local BIN_DIR; BIN_DIR="$(seren_apps_root)/whisper.cpp/build/bin"
+    seren_note_home_copy whisper.cpp
     local MODEL="${WHISPER_MODEL:-$default_model}"
     local PORT="${WHISPER_PORT:-8081}"
     local BASE="${WHISPER_MODEL_BASE:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main}"
@@ -1398,7 +1458,8 @@ seren_install_llama() {
     local def_ctx="$1" def_parallel="$2" def_extra="${3:-}"
     local USER_HOME="/home/$TARGET_USER"
     [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
-    local BIN_DIR="$USER_HOME/llama.cpp/build/bin"
+    local BIN_DIR; BIN_DIR="$(seren_apps_root)/llama.cpp/build/bin"
+    seren_note_home_copy llama.cpp
     local PORT="${LLAMA_PORT:-8090}"
     local MODELS="$USER_HOME/models"
     [ -d /mnt/nvme ] && [ -z "${SEREN_TEST_HOME:-}" ] && MODELS="/mnt/nvme/models"
@@ -1537,7 +1598,7 @@ seren_register_kokoro() {
     local device="${1:-cpu}"
     local USER_HOME="/home/$TARGET_USER"
     [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
-    local DIR="$USER_HOME/Kokoro-FastAPI"
+    local DIR; DIR="$(seren_apps_root)/Kokoro-FastAPI"
     local VENV="$USER_HOME/seren-venvs/kokoro"
     local PORT="${KOKORO_PORT:-8880}"
     local LOGS="$USER_HOME/seren-logs"

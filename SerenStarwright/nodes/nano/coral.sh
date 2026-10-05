@@ -123,11 +123,14 @@ SUDOERS
     fi
 
     # ── Python libs (jp6 needs --break-system-packages) ──
-    log "Installing pycoral + tflite-runtime under python3.10..."
+    log "Installing tflite-runtime under python3.10..."
     sudo -u "$TARGET_USER" python3.10 -m pip install --user --break-system-packages tflite-runtime 2>/dev/null || \
         warn "tflite-runtime via pip failed - may need manual install for aarch64"
-    sudo -u "$TARGET_USER" python3.10 -m pip install --user --break-system-packages pycoral 2>/dev/null || \
-        warn "pycoral via pip failed - may need manual install for aarch64"
+    # NO `pip install pycoral`. The package of that name on PyPI is not Google's
+    # Coral library - it is an unrelated CLI for the Allen Coral Atlas, which
+    # drags in pandas and geopandas. Google publishes pycoral only from its own
+    # index and only up to Python 3.9, so there is nothing to install for 3.10.
+    # tflite-runtime with the libedgetpu delegate drives the TPU without it.
 
     # ── Test helper ──
     sudo -u "$TARGET_USER" tee "$USER_HOME/test-coral.sh" > /dev/null << 'TESTSCRIPT'
@@ -152,7 +155,7 @@ if [ -c /dev/apex_0 ]; then
     echo ""
     echo "Library check:"
     python3.10 -c "import tflite_runtime.interpreter as tflite; print('  tflite_runtime OK')" 2>/dev/null || echo "  tflite_runtime: NOT FOUND"
-    python3.10 -c "from pycoral.utils import edgetpu; print('  pycoral OK')" 2>/dev/null || echo "  pycoral: NOT FOUND"
+    python3.10 -c "from pycoral.utils import edgetpu; print('  pycoral OK')" 2>/dev/null || echo "  pycoral: not installed (optional - Google ships no Python 3.10 build)"
     echo ""
     echo "Unload to free RAM:"
     echo "  sudo modprobe -r apex && sudo modprobe -r gasket"

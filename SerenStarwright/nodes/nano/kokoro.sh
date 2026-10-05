@@ -13,7 +13,9 @@
 
 install_kokoro() {
     local USER_HOME="/home/$TARGET_USER"
-    cd "$USER_HOME"
+    local APPS_ROOT; APPS_ROOT="$(seren_apps_root)"
+    seren_note_home_copy Kokoro-FastAPI
+    cd "$APPS_ROOT"
 
     if [ ! -d Kokoro-FastAPI ]; then
         log "Cloning Kokoro-FastAPI..."
@@ -33,7 +35,7 @@ install_kokoro() {
         "numpy<2" \
         pydub inflect loguru kokoro
 
-    cd "$USER_HOME/Kokoro-FastAPI"
+    cd "$APPS_ROOT/Kokoro-FastAPI"
     if [ -f requirements.txt ]; then
         venv_pip kokoro install -r requirements.txt 2>/dev/null || \
             warn "Some requirements.txt entries failed - main deps already installed"
@@ -52,7 +54,7 @@ snapshot_download(repo_id='hexgrad/Kokoro-82M', local_dir='src/models/v1_0')
     venv_python kokoro -c "import kokoro; print('  kokoro module imports OK')" 2>&1 || \
         warn "kokoro import failed - check pip install above"
 
-    log "Kokoro-FastAPI installed at $USER_HOME/Kokoro-FastAPI"
+    log "Kokoro-FastAPI installed at $APPS_ROOT/Kokoro-FastAPI"
     log "Venv: ~/seren-venvs/kokoro"
 
     # start/stop + the Observatory manifest (lib/common.sh). CPU: the venv's

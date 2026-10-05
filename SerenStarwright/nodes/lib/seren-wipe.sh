@@ -114,6 +114,11 @@ USER_HOME="/home/$TARGET_USER"
 # common.sh uses), so a test run can never reach a real home or NVMe.
 [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
 NVME="${SEREN_TEST_NVME:-/mnt/nvme}"
+# Where node prep put the components: the root a run named with --install-root
+# (remembered in the node state), else the NVMe. Read with grep, not jq - a
+# wipe has to work on a box where jq is one of the things already gone.
+APPS_ROOT="$(grep -o '"_install_root"[[:space:]]*:[[:space:]]*"[^"]*"' "$USER_HOME/.seren/node-state.json" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//')"
+[ -n "$APPS_ROOT" ] || APPS_ROOT="$NVME"
 
 # ─────────────────────────────────────────────────────────────
 # Build the target list - what we'd remove
@@ -131,6 +136,12 @@ SHALLOW_TARGETS=(
     "$USER_HOME/ComfyUI"
     "$USER_HOME/llama.cpp"
     "$USER_HOME/whisper.cpp"
+    # ...and under the install root, which is the NVMe unless --install-root
+    # said otherwise (APPS_ROOT, read from the node state above).
+    "$APPS_ROOT/Kokoro-FastAPI"
+    "$APPS_ROOT/ComfyUI"
+    "$APPS_ROOT/llama.cpp"
+    "$APPS_ROOT/whisper.cpp"
 
     # The node services (whisper, llama, Kokoro): their start/stop scripts, the
     # llama env file, and the manifests the Observatory lists them from. Left
