@@ -3174,7 +3174,7 @@ class PrepareNodeScreen(Screen):
                     yield Static("Could not identify this machine. Pick one:",
                                  classes="modal-sub")
                     with RadioSet(id="force-platform"):
-                        for p in (node.platforms or ["xavier", "nano", "spark"]):
+                        for p in (node.platforms or ["xavier", "nano", "spark", "host"]):
                             yield RadioButton(p)
                 yield Rule()
                 # NO PREP CHECKBOX, and no section for one. An earlier pass put

@@ -122,10 +122,19 @@ SUDOERS
             fail "Sudoers file failed validation"
     fi
 
-    # ── Python libs (jp6 needs --break-system-packages) ──
+    # ── Python libs ──
+    # --break-system-packages ONLY WHERE PIP KNOWS IT. The flag arrived in pip
+    # 23.0.1; a pip older than that (Ubuntu 22.04 ships 22.0.2) does not skip
+    # an option it has never heard of, it exits with "no such option" - so
+    # passing it unconditionally fails the install on the very release it was
+    # added here for. Asked of pip itself rather than guessed from a version.
+    local pip_flags=(--user)
+    if python3.10 -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+        pip_flags+=(--break-system-packages)
+    fi
     log "Installing tflite-runtime under python3.10..."
-    sudo -u "$TARGET_USER" python3.10 -m pip install --user --break-system-packages tflite-runtime 2>/dev/null || \
-        warn "tflite-runtime via pip failed - may need manual install for aarch64"
+    sudo -u "$TARGET_USER" python3.10 -m pip install "${pip_flags[@]}" tflite-runtime || \
+        warn "tflite-runtime via pip failed - pip's error is in the setup log"
     # NO `pip install pycoral`. The package of that name on PyPI is not Google's
     # Coral library - it is an unrelated CLI for the Allen Coral Atlas, which
     # drags in pandas and geopandas. Google publishes pycoral only from its own
@@ -154,7 +163,10 @@ if [ -c /dev/apex_0 ]; then
     lsmod | grep -E "gasket|apex"
     echo ""
     echo "Library check:"
-    python3.10 -c "import tflite_runtime.interpreter as tflite; print('  tflite_runtime OK')" 2>/dev/null || echo "  tflite_runtime: NOT FOUND"
+    # The error itself, not "NOT FOUND": installed-but-will-not-import (a numpy
+    # mismatch, say) and never-installed are different problems, and hiding
+    # stderr made them look the same.
+    python3.10 -c "import tflite_runtime.interpreter as tflite; print('  tflite_runtime OK')" 2>&1 | tail -2 | sed 's/^\([^ ]\)/  tflite_runtime: \1/'
     python3.10 -c "from pycoral.utils import edgetpu; print('  pycoral OK')" 2>/dev/null || echo "  pycoral: not installed (optional - Google ships no Python 3.10 build)"
     echo ""
     echo "Unload to free RAM:"

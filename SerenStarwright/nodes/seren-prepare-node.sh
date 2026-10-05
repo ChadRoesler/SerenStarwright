@@ -2,7 +2,8 @@
 # ══════════════════════════════════════════════════════════════
 # seren-prepare-node.sh — Unified Seren node preparation
 #
-# Dispatcher script. Detects platform (Xavier / Orin Nano / DGX Spark),
+# Dispatcher script. Detects platform (Xavier / Orin Nano / DGX Spark, or a
+# generic x86_64 Linux host - a NUC, a tower, a VM),
 # parses flags, does preflight + sudoers + hostname, then sources the
 # appropriate platform module to run prereq + service phases.
 #
@@ -18,6 +19,8 @@
 #   xavier/{prebuilts,build}.sh
 #   nano/   (same structure)
 #   spark/  (same structure, no build path - prebuilts only)
+#   host/   (foundation only: a Python 3.10+ and SQLite for the Seren
+#            services; no GPU components - use --prep)
 #
 # Usage:
 #   bash seren-prepare-node.sh [SERVICE FLAGS] [OPTIONS]
@@ -309,6 +312,25 @@ fi
 # Preflight: platform detection + structural checks
 # ─────────────────────────────────────────────────────────────
 detect_platform || exit 1
+
+# A host (a NUC, a tower, a VM) runs the Seren services and none of the GPU
+# components: say so here, in a sentence, rather than fail later on a module
+# that does not exist. Its prep also never removes or formats anything.
+if [ "$PLATFORM" = "host" ]; then
+    if $ANY_COMPONENT; then
+        echo "ERROR: llama, kokoro, whisper, comfyui, chromadb, msmoe and coral are for the" >&2
+        echo "       Jetson and Spark nodes. On a host, node prep prepares the box (--prep:" >&2
+        echo "       a Python 3.10+ and SQLite the services can run on); the services" >&2
+        echo "       themselves are installed from their cards." >&2
+        exit 1
+    fi
+    if $TRIM_OS || $WIPE_NVME; then
+        echo "ERROR: --trim-os and --wipe-nvme are for dedicated Jetson and Spark nodes." >&2
+        echo "       A host is prepared without removing or formatting anything." >&2
+        exit 1
+    fi
+    SKIP_MAX_POWER=true          # nvpmodel is a Jetson tool
+fi
 
 # Verify the platform module tree exists
 PLATFORM_DIR="$SCRIPT_DIR/$PLATFORM"

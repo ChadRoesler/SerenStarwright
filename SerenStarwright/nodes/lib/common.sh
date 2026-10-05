@@ -174,7 +174,7 @@ seren_describe_node() {
         modes="$modes,\"build\""
     fi
     printf ',"modes":[%s]' "$modes"
-    printf ',"platforms":["xavier","nano","spark"]'
+    printf ',"platforms":["xavier","nano","spark","host"]'
     # Derived, never declared - see seren_node_flags_from_self.
     local flags_json="" f
     for f in $(seren_node_flags_from_self); do
@@ -237,12 +237,12 @@ detect_platform() {
     # -- explicit override, checked first and trusted completely -------------
     if [ -n "${SEREN_PLATFORM:-}" ]; then
         case "$SEREN_PLATFORM" in
-            xavier|nano|spark)
+            xavier|nano|spark|host)
                 info "Platform forced to '$SEREN_PLATFORM' (override)"
                 _set_platform_vars "$SEREN_PLATFORM" && return 0
                 ;;
             *)
-                fail "Unknown --platform '$SEREN_PLATFORM' (expected: xavier, nano, spark)"
+                fail "Unknown --platform '$SEREN_PLATFORM' (expected: xavier, nano, spark, host)"
                 return 1
                 ;;
         esac
@@ -257,15 +257,57 @@ detect_platform() {
     case "$jp_release" in
         R35) _set_platform_vars xavier ;;
         R36) _set_platform_vars nano   ;;
+        "")
+            # No Tegra release and not a Spark. An x86_64 Linux box is a plain
+            # HOST - a NUC, a tower, a VM - which runs the Seren services and
+            # none of the GPU components. Only x86_64 is assumed: an aarch64
+            # board that did not announce itself is more likely a Jetson whose
+            # release file went missing than a server, and guessing "host"
+            # there would skip its CUDA setup without a word.
+            if [ "$(uname -s 2>/dev/null)" = "Linux" ] && [ "$(uname -m 2>/dev/null)" = "x86_64" ]; then
+                info "Detected a generic x86_64 Linux host (no Tegra release, not a Spark)"
+                _set_platform_vars host && return 0
+            fi
+            fail "Could not detect a supported platform."
+            fail "  /etc/nv_tegra_release: absent, and this is not an x86_64 Linux host."
+            fail "  Force it with:  --platform xavier|nano|spark|host"
+            return 1
+            ;;
         *)
             fail "Could not detect a supported platform."
-            fail "  /etc/nv_tegra_release: ${jp_release:-absent}"
-            fail "  Expected R35 (Xavier/jp5), R36 (Orin Nano/jp6), or a DGX Spark."
-            fail "  Force it with:  --platform xavier|nano|spark"
+            fail "  /etc/nv_tegra_release: $jp_release"
+            fail "  Expected R35 (Xavier/jp5), R36 (Orin Nano/jp6), a DGX Spark, or a generic host."
+            fail "  Force it with:  --platform xavier|nano|spark|host"
             return 1
             ;;
     esac
     return 0
+}
+
+# seren_host_python_ok [--say|--which] - does this box already have a Python
+# the Seren services can run on: 3.10 or newer, built against SQLite 3.35 or
+# newer (ChromaDB's floor)? /usr/local first, so a Python node prep installed
+# is found before the distro's. --say prints "python3.10 3.10.14, sqlite
+# 3.45.1"; --which prints its path. Exit status is the answer either way.
+seren_host_python_ok() {
+    local mode="${1:-}" cand py out
+    for cand in /usr/local/bin/python3.13 /usr/local/bin/python3.12 /usr/local/bin/python3.11 \
+                /usr/local/bin/python3.10 python3.13 python3.12 python3.11 python3.10 python3; do
+        py="$(command -v "$cand" 2>/dev/null)" || continue
+        [ -n "$py" ] || continue
+        out="$("$py" -c 'import sys, sqlite3
+v = sys.version_info
+s = tuple(int(x) for x in sqlite3.sqlite_version.split(".")[:2])
+ok = (v.major, v.minor) >= (3, 10) and s >= (3, 35)
+print("%s %d.%d.%d, sqlite %s" % (sys.argv[1], v.major, v.minor, v.micro, sqlite3.sqlite_version))
+sys.exit(0 if ok else 1)' "$(basename "$py")" 2>/dev/null)" || continue
+        case "$mode" in
+            --say)   echo "$out" ;;
+            --which) echo "$py" ;;
+        esac
+        return 0
+    done
+    return 1
 }
 
 # _looks_like_spark - best-effort DGX Spark detection.
@@ -336,6 +378,19 @@ _set_platform_vars() {
             RELEASE_SUFFIX="spark-jp7"
             CUDA_ARCH="121";    TORCH_ARCH_LIST="12.1"
             PYTORCH_VERSION="2.11.0"; TORCHVISION_VERSION="0.26.0"
+            ;;
+        host)
+            # A generic Linux box. JP_FAMILY carries the distro codename (it
+            # is what the Jetsons' "jp5" is to them: which base this is), and
+            # the release suffix matches SerenSystemPrebuilts' host folders:
+            # 20260520_host-focal-x86_64. No CUDA arch and no torch baseline -
+            # a host runs the services, not the GPU components.
+            local codename=""
+            codename="$( . /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-${ID:-linux}}" )"
+            PLATFORM="host";    JP_FAMILY="${codename:-linux}";  PLATFORM_TAG="host"
+            RELEASE_SUFFIX="host-${JP_FAMILY}-$(uname -m 2>/dev/null || echo unknown)"
+            CUDA_ARCH="";       TORCH_ARCH_LIST=""
+            PYTORCH_VERSION=""; TORCHVISION_VERSION=""
             ;;
         *)
             fail "_set_platform_vars: unknown platform '$1'"
@@ -988,6 +1043,28 @@ run_prebuilts_download_foundation() {
     # skip forty minutes of source builds. The Nano and the Spark ship a new
     # enough Python and SQLite natively and their foundation phases do not
     # read these, so there is nothing to stage there - said, not assumed.
+    if [ "$PLATFORM" = "host" ]; then
+        # A host stages Python and SQLite only when its own are too old (an
+        # Ubuntu 20.04 NUC). The asset names are the host builder's
+        # (python-3.10.14-focal-x86_64.tar.gz, libsqlite3-3.45.1-focal-...),
+        # not the Jetson builder's. No release for this box is not fatal: the
+        # foundation phases build from source and say how long that takes.
+        if seren_host_python_ok; then
+            info "Foundation prebuilts: nothing to stage on this host ($(seren_host_python_ok --say))"
+            return 0
+        fi
+        _as_target mkdir -p "$PREBUILT_DIR"
+        if ! seren_prebuilts_index; then
+            warn "No verified *_${RELEASE_SUFFIX} release to take Python and SQLite from -"
+            warn "  the foundation will build them from source (~40 min)."
+            return 0
+        fi
+        seren_prebuilts_stage 'libsqlite3-*.tar.gz'  STAGED_SQLITE_TARBALL || true
+        seren_prebuilts_stage 'python-3.*-*.tar.gz'  STAGED_PYTHON_TARBALL || true
+        [ -n "${STAGED_PYTHON_TARBALL:-}" ] || warn "no Python tarball in the release - foundation will source-build (~30 min)"
+        [ -n "${STAGED_SQLITE_TARBALL:-}" ] || warn "no SQLite tarball in the release - foundation will source-build (~10 min)"
+        return 0
+    fi
     if [ "$PLATFORM" != "xavier" ]; then
         info "Foundation prebuilts: nothing to stage on $PLATFORM (Python/SQLite are native)"
         return 0

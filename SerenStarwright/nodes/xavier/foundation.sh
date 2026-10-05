@@ -170,7 +170,8 @@ phase_xavier_python310() {
     wget -q --show-progress https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz
     tar xzf Python-3.10.14.tgz
     cd Python-3.10.14
-    ./configure --enable-optimizations --prefix=/usr/local
+    # --enable-loadable-sqlite-extensions: sqlite-vec (SerenLoci --vector) cannot load without it
+    ./configure --enable-optimizations --enable-loadable-sqlite-extensions --prefix=/usr/local
     make -j"$(nproc)"
     sudo make altinstall
     python3.10 -m ensurepip --upgrade

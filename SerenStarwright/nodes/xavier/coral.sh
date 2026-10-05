@@ -134,8 +134,8 @@ SUDOERS
 
     # ── Python libraries ──
     log "Installing tflite-runtime under python3.10..."
-    sudo -u "$TARGET_USER" python3.10 -m pip install --user tflite-runtime 2>/dev/null || \
-        warn "tflite-runtime via pip failed - may need manual install for aarch64"
+    sudo -u "$TARGET_USER" python3.10 -m pip install --user tflite-runtime || \
+        warn "tflite-runtime via pip failed - pip's error is in the setup log"
     # NO `pip install pycoral`. The package of that name on PyPI is not Google's
     # Coral library - it is an unrelated CLI for the Allen Coral Atlas, which
     # drags in pandas and geopandas. Google publishes pycoral only from its own
@@ -165,7 +165,10 @@ if [ -c /dev/apex_0 ]; then
     lsmod | grep -E "gasket|apex"
     echo ""
     echo "Library check:"
-    python3.10 -c "import tflite_runtime.interpreter as tflite; print('  tflite_runtime OK')" 2>/dev/null || echo "  tflite_runtime: NOT FOUND"
+    # The error itself, not "NOT FOUND": installed-but-will-not-import (a numpy
+    # mismatch, say) and never-installed are different problems, and hiding
+    # stderr made them look the same.
+    python3.10 -c "import tflite_runtime.interpreter as tflite; print('  tflite_runtime OK')" 2>&1 | tail -2 | sed 's/^\([^ ]\)/  tflite_runtime: \1/'
     python3.10 -c "from pycoral.utils import edgetpu; print('  pycoral OK')" 2>/dev/null || echo "  pycoral: not installed (optional - Google ships no Python 3.10 build)"
     echo ""
     echo "Unload to free RAM:"

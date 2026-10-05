@@ -50,6 +50,9 @@ jobs:
       - name: prebuilt staging verifies against the release index
         run: bash SerenStarwright/nodes/tests/test-prebuilts-fetch.sh
 
+      - name: a generic host (a NUC) - detection, its Python and SQLite, nothing destructive
+        run: bash SerenStarwright/nodes/tests/test-host-platform.sh
+
       - name: whisper on a node - binary, model, start/stop, the Observatory manifest
         run: bash SerenStarwright/nodes/tests/test-whisper-install.sh
 
