@@ -348,6 +348,18 @@ async def test_node_describe() -> None:
                       "spark correctly has no coral module")
 
 
+def _as_undetected(node):
+    """The Jetson path, as an undetected box sees it. Since 5 Oct 2026 an
+    x86_64 Linux box with no Tegra release is detected as a generic HOST,
+    which offers no GPU components - and that is what a CI runner is. These
+    tests are about the platform picker and the Jetson components, so a host
+    is shown to them as a box node prep could not place."""
+    import dataclasses
+    if node is not None and node.platform == "host":
+        return dataclasses.replace(node, platform=None, jp_family=None, cuda_arch=None)
+    return node
+
+
 async def test_node_screen() -> None:
     """The platform picker used to be decorative: when detection failed every
     checkbox was disabled, and choosing a platform didn't re-enable anything
@@ -356,6 +368,7 @@ async def test_node_screen() -> None:
     services, problems = sw.discover()
     app = sw.StarwrightApp(services, problems)
     async with app.run_test(size=(110, 60)) as pilot:
+        app.node = _as_undetected(app.node)
         if app.node is None and app.node_problem and "Windows" in app.node_problem:
             return ok("windows, skipped")
         check(not app.screen.query_one("#install-node", Button).disabled,
@@ -422,6 +435,7 @@ async def test_node_options_roundtrip() -> None:
     async with app.run_test(size=(110, 70)) as pilot:
         if app.node is None:
             return ok("node prep unavailable, skipped")
+        app.node = _as_undetected(app.node)
         await pilot.click("#install-node")
         await pilot.pause()
         scr = app.screen
