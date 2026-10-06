@@ -267,7 +267,7 @@ switch ($Ripple) {
         if ($RippleClaude) {
             # Claude Code, read off this box: run in the project, memory tools
             # pre-approved (seren-claude-ripple.py prints the two yaml lines).
-            $claudeLines = Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $who
+            $claudeLines = Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $who -AppDir $AppDir
             $rippleLines = "`nripple:`n  # At bedtime and when drafts wait, the hippocampus wakes Claude Code.`n  type: script`n$claudeLines`n  run_as: $(ConvertTo-SerenYamlQuoted $who)"
         } else {
             $rippleLines = "`nripple:`n  # At bedtime and when drafts wait, the hippocampus asks the model.`n  type: script`n  command: $(ConvertTo-SerenYamlQuoted $cmd)`n  run_as: $(ConvertTo-SerenYamlQuoted $who)"

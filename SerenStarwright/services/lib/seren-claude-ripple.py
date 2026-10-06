@@ -26,11 +26,32 @@ an error that says where it looked. Standard library only.
 
 The card writes the JSON list straight into the yaml (a JSON list is valid
 YAML), so the command is an argument list end to end.
+
+THE LIST IS READ WHEN THE MODEL IS WOKEN, NOT WHEN THE CARD RAN (6 Oct 2026).
+The command used to carry the server names it found at install time, frozen
+into the yaml. Then the model's servers change - five of them become one
+Workbench - and the next wake-up pre-approves five servers that are gone and
+none that are there: the woken run can call nothing, cannot say so, and the
+sleep cycle stalls without an error. So with --launcher the command the card
+writes is THIS SCRIPT:
+
+    command: [<python>, <a copy of this file>, <project>, "--run", "{message}"]
+
+and --run does the lookup at that moment, then starts
+`claude -p --allowedTools mcp__<each server now registered>` in the project,
+with the message on claude's stdin (never on a command line: a wake-up can
+quote anything). No servers at that moment is exit 2 and a line saying where
+it looked - a wake-up that cannot work says so in the ripple log.
+
+    python seren-claude-ripple.py <project dir> --run [MESSAGE]     (MESSAGE or stdin)
+    python seren-claude-ripple.py <project dir> --yaml N --launcher <python> <path to this file>
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 
 
@@ -72,8 +93,27 @@ def main(argv: list[str]) -> int:
               f"would wake the model without its memory. Add them with `claude mcp add` in that folder.",
               file=sys.stderr)
         return 2
-    command = ["claude", "-p", "{message}", "--allowedTools", ",".join(f"mcp__{s}" for s in servers)]
     cwd = os.path.abspath(os.path.expanduser(project))
+    allowed = ",".join(f"mcp__{s}" for s in servers)
+    if "--run" in argv:
+        # Woken: the lookup above was done NOW. The message is the argument
+        # after --run, or stdin (a ripple that sends it that way).
+        i = argv.index("--run")
+        message = argv[i + 1] if len(argv) > i + 1 and not argv[i + 1].startswith("--") else sys.stdin.read()
+        claude = os.environ.get("SEREN_CLAUDE_BIN") or shutil.which("claude") or "claude"
+        try:
+            done = subprocess.run([claude, "-p", "--allowedTools", allowed], input=message, text=True,
+                                  encoding="utf-8", cwd=cwd)
+        except FileNotFoundError:
+            print(f"no `claude` on this account's PATH ({os.environ.get('PATH', '')[:200]}) - the model cannot "
+                  f"be woken here", file=sys.stderr)
+            return 2
+        return done.returncode
+    command = ["claude", "-p", "{message}", "--allowedTools", allowed]
+    if "--launcher" in argv:
+        i = argv.index("--launcher")
+        python, script = argv[i + 1], argv[i + 2]
+        command = [python, script, cwd, "--run", "{message}"]
     if "--yaml" in argv:
         pad = " " * int(argv[argv.index("--yaml") + 1])
         print(f"{pad}command: {json.dumps(command)}")

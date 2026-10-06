@@ -25,6 +25,20 @@
 #    --service        Autostart via setup-workbench-service.sh
 #    --mcp            Install the [mcp] extra
 #    --corp           Route TLS through the OS trust store
+#    --claude-mcp     Register this Workbench with Claude Code at user scope (every
+#                     folder) as <instance>-workbench: the ONE server a model
+#                     connects to. The bearer is read from this config on connect
+#    --memory-config PATH           The standard components this Workbench passes
+#    --loci-config PATH             through (their own tools, over MCP): each is
+#    --corpus-callosum-config PATH  given as the PATH of that service's config,
+#    --hippocampus-config PATH      and the card reads its address and bearer
+#    --lodestar-config PATH         from it - no token crosses a command line.
+#                                   One not given is left at its default port,
+#                                   or as the last install had it.
+#    --margin-config PATH           MCP PLUGINS: services outside the standard
+#    --probe-config PATH            system, plugged in the same way, their own
+#                                   tools passed through. Margin comes in over
+#                                   MCP so its HTTP reads can stay off.
 #    --instance NAME  Instance name
 #    --root DIR  Install root: venvs, apps, stores, logs in one folder
 #    --venv PATH      Override venv location
@@ -92,6 +106,12 @@ SVC_DISPLAY="Seren Workbench"
 SVC_DESC="The tools bench where things get done"
 SVC_GROUP="core"
 SVC_PACKAGE="seren-workbench"
+# The standard system it passes through. RECOMMENDS, not requires: the
+# Workbench runs without any of them and offers whichever are there. Starwright
+# hands each one's config path to the matching --<name>-config flag.
+# Margin too: it is not part of the standard system, and a model's diary is
+# still part of the model - where a Margin is installed, it is plugged in.
+SVC_RECOMMENDS="seren-memory seren-loci seren-corpus-callosum seren-hippocampus seren-lodestar seren-margin"
 # mcp is a CORE dependency of this package, not an extra, so the lib
 # derivation (which allowlists mcp for the family) would over-report it.
 SVC_EXTRAS="corp"
@@ -119,6 +139,14 @@ while [[ $# -gt 0 ]]; do
     --service)   INSTALL_SERVICE=true; shift ;;
     --mcp)       MCP=true; shift ;;
     --corp)      CORP=true; shift ;;
+    --claude-mcp) CLAUDE_MCP=true; shift ;;
+    --memory-config)          MEMORY_CONFIG="$2"; shift 2 ;;
+    --loci-config)            LOCI_CONFIG="$2"; shift 2 ;;
+    --corpus-callosum-config) CALLOSUM_CONFIG="$2"; shift 2 ;;
+    --hippocampus-config)     HIPPOCAMPUS_CONFIG="$2"; shift 2 ;;
+    --lodestar-config)        LODESTAR_CONFIG="$2"; shift 2 ;;
+    --margin-config)          MARGIN_CONFIG="$2"; shift 2 ;;
+    --probe-config)           PROBE_CONFIG="$2"; shift 2 ;;
     --no-updates) UPDATES_OFF=true; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
@@ -177,6 +205,50 @@ if [[ -f "$CFG_PATH" ]]; then
   bak="$CFG_PATH.bak.$(date +%s)"; cp "$CFG_PATH" "$bak"; warn "Existing config backed up"
 fi
 if [[ -n "$DATA_DIR" ]]; then STORE_PATH="'$DATA_DIR/tools'"; else STORE_PATH='~/seren-workbench/tools'; fi
+
+# -- the standard components, from their own configs ---------------------------
+# Each --<name>-config becomes that component's address and bearer under
+# `services:`. The Workbench passes the component's own MCP tools through
+# (seren_workbench/upstream.py), so a wrong port or a missing token here is a
+# component that offers nothing. One that was not given writes no line: the
+# default port stands, or the last install's line is carried forward.
+SERVICES_LINES=""; WIRED=""
+_wire() {   # _wire LABEL URLKEY TOKENKEY CONFIG
+  local label="$1" key="$2" tkey="$3" cfg="$4" lines
+  [[ -n "$cfg" ]] || return 0
+  if seren_read_sibling_config "$cfg" && [[ -n "$SIB_URL" ]]; then
+    lines="$(seren_sibling_service_lines "$key" "$tkey" "  ")"
+    SERVICES_LINES+="$lines"$'\n'
+    WIRED+="${WIRED:+, }$label"
+    ok "$label: $SIB_URL (from $cfg$([[ -n "$SIB_TOKEN$SIB_TOKEN_ENV$SIB_TOKEN_KEYRING" ]] && echo ", with its bearer"))"
+  else
+    warn "$label: $cfg gave no address - not wired"
+  fi
+  return 0
+}
+_wire "Memory"          memory      memory       "${MEMORY_CONFIG:-}"
+_wire "Loci"            loci        loci         "${LOCI_CONFIG:-}"
+_wire "Corpus Callosum" callosum    callosum     "${CALLOSUM_CONFIG:-}"
+_wire "Hippocampus"     hippocampus hippocampus  "${HIPPOCAMPUS_CONFIG:-}"
+_wire "Lodestar"        lodestar    runtime_host "${LODESTAR_CONFIG:-}"
+
+# -- MCP plugins: Margin, Probe ------------------------------------------------
+PLUGIN_LINES=""
+_plug() {   # _plug LABEL NAME CONFIG
+  local label="$1" name="$2" cfg="$3"
+  [[ -n "$cfg" ]] || return 0
+  if seren_read_sibling_config "$cfg" && [[ -n "$SIB_URL" ]]; then
+    PLUGIN_LINES+="$(seren_sibling_plugin_lines "$name" "  ")"$'\n'
+    WIRED+="${WIRED:+, }$label (plugin)"
+    ok "$label: $SIB_URL, plugged in over MCP (from $cfg$([[ -n "$SIB_TOKEN$SIB_TOKEN_ENV$SIB_TOKEN_KEYRING" ]] && echo ", with its bearer"))"
+  else
+    warn "$label: $cfg gave no address - not plugged in"
+  fi
+  return 0
+}
+_plug "Margin" margin "${MARGIN_CONFIG:-}"
+_plug "Probe"  probe  "${PROBE_CONFIG:-}"
+
 cat > "$CFG_PATH" <<YAML
 # SerenWorkbench config - generated by seren-workbench-setup.sh
 # Full reference: see seren-workbench.yaml.sample in the repo.
@@ -188,6 +260,8 @@ server:
 dashboard:
   tools_dir: ${STORE_PATH}
 $( $CORP && printf 'tls:\n  trust_system_store: true\n' )
+$( [[ -n "$SERVICES_LINES" ]] && printf '# The standard components, passed through (their own tools, over MCP).\n# Written from each one'"'"'s config at install; GET /components says what each offers.\nservices:\n%s' "$SERVICES_LINES" )
+$( [[ -n "$PLUGIN_LINES" ]] && printf '# MCP plugins: services outside the standard system, passed through the same way.\nplugins:\n%s' "$PLUGIN_LINES" )
 YAML
 
 $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
@@ -201,11 +275,18 @@ $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
 updates:
   enabled: false
 YAML
-[[ -n "$TOKEN" ]] && chmod 600 "$CFG_PATH"
+[[ -n "$TOKEN" || -n "$SERVICES_LINES" || -n "$PLUGIN_LINES" ]] && chmod 600 "$CFG_PATH"
 ok "Config written"
+if [[ -n "$WIRED" ]]; then
+  ok "Passing through: $WIRED"
+else
+  warn "No component config was given (--memory-config, --loci-config, --corpus-callosum-config,"
+  warn "  --hippocampus-config, --lodestar-config): the Workbench looks for each on its default port."
+fi
 
 # -- 5b. launcher ---------------------------------------------------------------
 write_launcher "$APP_DIR" "seren-workbench" "$VPY" "seren_workbench" "$CFG_PATH"
+${CLAUDE_MCP:-false} && seren_claude_mcp_register "workbench"
 
 # -- 6. optional autostart ------------------------------------------------------
 if $INSTALL_SERVICE; then

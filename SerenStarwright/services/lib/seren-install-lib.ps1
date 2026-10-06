@@ -346,6 +346,32 @@ function Get-SerenSiblingTokenLines {
     return $t
 }
 
+# -- Get-SerenSiblingServiceLines - a sibling as keys of a flat services: block --
+# Twin of seren_sibling_service_lines: <key>_url plus <tokenkey>_bearer_token
+# [_env|_keyring], for the Workbench's `services:` block. Empty when the
+# sibling gave no address.
+function Get-SerenSiblingServiceLines {
+    param([hashtable] $Sib, [string] $Key, [string] $TokenKey, [string] $Indent = "  ")
+    if (-not $Sib.Url) { return "" }
+    $t = "${Indent}${Key}_url: $($Sib.Url)`n"
+    if ($Sib.Token)        { $t += "${Indent}${TokenKey}_bearer_token: `"$($Sib.Token)`"`n" }
+    if ($Sib.TokenEnv)     { $t += "${Indent}${TokenKey}_bearer_token_env: $($Sib.TokenEnv)`n" }
+    if ($Sib.TokenKeyring) { $t += "${Indent}${TokenKey}_bearer_token_keyring: `"$($Sib.TokenKeyring)`"`n" }
+    return $t
+}
+
+# -- Get-SerenSiblingPluginLines - a sibling as one entry of a plugins: mapping --
+# Twin of seren_sibling_plugin_lines, for the Workbench's MCP plugins.
+function Get-SerenSiblingPluginLines {
+    param([hashtable] $Sib, [string] $Name, [string] $Indent = "  ")
+    if (-not $Sib.Url) { return "" }
+    $t = "${Indent}${Name}:`n${Indent}  url: $($Sib.Url)`n"
+    if ($Sib.Token)        { $t += "${Indent}  bearer_token: `"$($Sib.Token)`"`n" }
+    if ($Sib.TokenEnv)     { $t += "${Indent}  bearer_token_env: $($Sib.TokenEnv)`n" }
+    if ($Sib.TokenKeyring) { $t += "${Indent}  bearer_token_keyring: `"$($Sib.TokenKeyring)`"`n" }
+    return $t
+}
+
 # -- Get-SerenLayout - where an install lives ------------------------------------
 # With --root (Starwright's install root, ~/seren/<install name>) everything the
 # install owns sits under one folder, so one folder is the whole install - to
@@ -399,9 +425,22 @@ function Get-SerenLayout {
 # yaml lines at -Indent, from seren-claude-ripple.py (the bash twin is
 # seren_claude_ripple_lines). -Who is whose Claude Code it is - the ripple's
 # run_as; another account's settings are read from that account's profile.
-function Get-SerenClaudeRippleLines([string] $Vpy, [string] $Dir, [int] $Indent = 2, [string] $Who = "") {
+function Get-SerenClaudeRippleLines([string] $Vpy, [string] $Dir, [int] $Indent = 2, [string] $Who = "", [string] $AppDir = "") {
     $helper = Join-Path $PSScriptRoot "seren-claude-ripple.py"
     $argList = @($helper, $Dir, "--yaml", "$Indent")
+    # With -AppDir the command written is a COPY OF THE HELPER run with this
+    # python (twin of seren_claude_ripple_lines): the server list is read at
+    # every wake-up, so it follows the model's servers when they change.
+    if ($AppDir) {
+        try {
+            New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+            $copy = Join-Path $AppDir "seren-claude-ripple.py"
+            Copy-Item $helper $copy -Force
+            $argList += @("--launcher", $Vpy, $copy)
+        } catch {
+            Warn "-RippleClaude: could not put the wake helper in ${AppDir}; the command will carry today's server list"
+        }
+    }
     if ($Who -and $Who -ne $env:USERNAME) {
         $argList += @("--claude-json", (Join-Path (Join-Path (Split-Path $env:USERPROFILE) $Who) ".claude.json"))
     }

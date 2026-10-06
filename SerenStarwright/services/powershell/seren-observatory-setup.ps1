@@ -206,7 +206,7 @@ if ($Ripple) {
     function ConvertTo-SerenYamlQuoted([string] $v) { "'" + ($v -replace "'", "''") + "'" }
     $rcmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
     $rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
-    $rcmdLines = if ($RippleClaude) { Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $rwho }
+    $rcmdLines = if ($RippleClaude) { Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $rwho -AppDir $AppDir }
                  else { "  command: $(ConvertTo-SerenYamlQuoted $rcmd)" }
     @"
 

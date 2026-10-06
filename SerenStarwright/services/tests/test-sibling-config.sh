@@ -87,6 +87,37 @@ seren_read_sibling_config "$T/hippo.yaml"
 check "server url read"                          "[[ \"$SIB_URL\" == 'http://127.0.0.1:7269' ]]"
 check "memory's bearer is not taken as its own"  "[[ -z \"$SIB_TOKEN\" ]]"
 
+echo "== a sibling as keys of the Workbench's flat services: block"
+seren_read_sibling_config "$T/memory.yaml"
+LINES="$(seren_sibling_service_lines memory memory "  ")"
+EXPECT=$'  memory_url: http://127.0.0.1:7267\n  memory_bearer_token: "s3cret-inline"'
+if [[ "$LINES" == "$EXPECT" ]]; then ok_ "url and inline token under the component's keys"; else bad "services lines: [$LINES]"; fi
+seren_read_sibling_config "$T/loci.yaml"
+LINES="$(seren_sibling_service_lines lodestar runtime_host "  ")"
+EXPECT=$'  lodestar_url: http://127.0.0.1:7266\n  runtime_host_bearer_token_env: SEREN_LOCI_TOKEN'
+if [[ "$LINES" == "$EXPECT" ]]; then ok_ "the url key and the token key can differ (Lodestar)"; else bad "lodestar lines: [$LINES]"; fi
+seren_read_sibling_config "$T/open.yaml"
+check "an open sibling: the url alone"            "[[ \"$(seren_sibling_service_lines loci loci '  ')\" == '  loci_url: http://127.0.0.1:7421' ]]"
+seren_read_sibling_config "$T/nope.yaml" 2>/dev/null || true
+check "no address, no lines"                      "[[ -z \"$(seren_sibling_service_lines loci loci '  ')\" ]]"
+
+echo "== a sibling as one entry of the Workbench's plugins: mapping (Margin over MCP)"
+seren_read_sibling_config "$T/margin.yaml"
+LINES="$(seren_sibling_plugin_lines margin "  ")"
+EXPECT=$'  margin:\n    url: http://127.0.0.1:7265\n    bearer_token_keyring: "seren-margin/bearer"'
+if [[ "$LINES" == "$EXPECT" ]]; then ok_ "name, url and the bearer pointer, nested"; else bad "plugin lines: [$LINES]"; fi
+seren_read_sibling_config "$T/open.yaml"
+EXPECT=$'  margin:\n    url: http://127.0.0.1:7421'
+if [[ "$(seren_sibling_plugin_lines margin '  ')" == "$EXPECT" ]]; then ok_ "an open Margin: the url alone"; else bad "open plugin lines"; fi
+
+echo "== the Workbench card declares its components"
+D="$(bash "$HERE/services/bash/seren-workbench-setup.sh" --describe)"
+for f in memory-config loci-config corpus-callosum-config hippocampus-config lodestar-config margin-config probe-config; do
+  check "the card takes --$f" "grep -q '\"$f\"' <<<\"\$D\""
+done
+check "and recommends the five, and Margin, so Starwright hands their configs over" \
+  "grep -q 'seren-memory' <<<\"\$D\" && grep -q 'seren-corpus-callosum' <<<\"\$D\" && grep -q 'seren-lodestar' <<<\"\$D\" && grep -q 'seren-margin' <<<\"\$D\""
+
 echo "== a reinstall keeps the existing bearer"
 TOKEN=""
 seren_reuse_token "$T/memory.yaml" >/dev/null 2>&1

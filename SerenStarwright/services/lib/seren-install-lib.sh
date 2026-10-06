@@ -222,7 +222,18 @@ seren_claude_ripple_lines() {
     [[ -n "$home" ]] || home="$(eval echo "~$who")"
     cj=(--claude-json "$home/.claude.json")
   fi
-  "$py" "$(dirname "${BASH_SOURCE[0]}")/seren-claude-ripple.py" "$dir" --yaml "$indent" ${cj[@]+"${cj[@]}"} \
+  # The command written is a COPY OF THE HELPER, beside the config, run with
+  # this python: the server list is then read at every wake-up, so it follows
+  # the model's servers when they change (five services becoming one
+  # Workbench) instead of pre-approving whatever was there on install day.
+  local launcher=() helper_src; helper_src="$(dirname "${BASH_SOURCE[0]}")/seren-claude-ripple.py"
+  if [[ -n "${APP_DIR:-}" ]] && mkdir -p "$APP_DIR" 2>/dev/null && cp "$helper_src" "$APP_DIR/seren-claude-ripple.py" 2>/dev/null; then
+    chmod 755 "$APP_DIR/seren-claude-ripple.py" 2>/dev/null || true
+    launcher=(--launcher "$(command -v "$py")" "$APP_DIR/seren-claude-ripple.py")
+  else
+    warn "--ripple-claude: could not put the wake helper in ${APP_DIR:-the app folder}; the command will carry today's server list and must be regenerated if the model's MCP servers change"
+  fi
+  "$py" "$helper_src" "$dir" --yaml "$indent" ${cj[@]+"${cj[@]}"} ${launcher[@]+"${launcher[@]}"} \
     || die "--ripple-claude $dir: see above"
 }
 
@@ -808,6 +819,37 @@ seren_sibling_token_lines() {
   [[ -n "$SIB_TOKEN" ]]         && printf '%sbearer_token: "%s"\n' "$indent" "$SIB_TOKEN"
   [[ -n "$SIB_TOKEN_ENV" ]]     && printf '%sbearer_token_env: %s\n' "$indent" "$SIB_TOKEN_ENV"
   [[ -n "$SIB_TOKEN_KEYRING" ]] && printf '%sbearer_token_keyring: "%s"\n' "$indent" "$SIB_TOKEN_KEYRING"
+  return 0
+}
+
+# -- seren_sibling_service_lines - a sibling as keys of a flat services: block --
+# The Workbench's config names each component it reaches as <key>_url plus
+# <tokenkey>_bearer_token[_env|_keyring] under `services:` (Lodestar's url key
+# is lodestar_url and its token key runtime_host_*, which is why there are
+# two names). After seren_read_sibling_config: prints the lines, indented by
+# $3, or nothing when the sibling gave no address.
+seren_sibling_service_lines() {
+  local key="$1" tkey="$2" indent="${3:-  }"
+  [[ -n "$SIB_URL" ]] || return 0
+  printf '%s%s_url: %s\n' "$indent" "$key" "$SIB_URL"
+  [[ -n "$SIB_TOKEN" ]]         && printf '%s%s_bearer_token: "%s"\n' "$indent" "$tkey" "$SIB_TOKEN"
+  [[ -n "$SIB_TOKEN_ENV" ]]     && printf '%s%s_bearer_token_env: %s\n' "$indent" "$tkey" "$SIB_TOKEN_ENV"
+  [[ -n "$SIB_TOKEN_KEYRING" ]] && printf '%s%s_bearer_token_keyring: "%s"\n' "$indent" "$tkey" "$SIB_TOKEN_KEYRING"
+  return 0
+}
+
+# -- seren_sibling_plugin_lines - a sibling as one entry of a plugins: mapping --
+# The Workbench's MCP plugins (Margin, Probe) are a mapping, name -> url and
+# bearer. After seren_read_sibling_config: prints the entry named $1, indented
+# by $2, or nothing when the sibling gave no address.
+seren_sibling_plugin_lines() {
+  local name="$1" indent="${2:-  }"
+  [[ -n "$SIB_URL" ]] || return 0
+  printf '%s%s:\n' "$indent" "$name"
+  printf '%s  url: %s\n' "$indent" "$SIB_URL"
+  [[ -n "$SIB_TOKEN" ]]         && printf '%s  bearer_token: "%s"\n' "$indent" "$SIB_TOKEN"
+  [[ -n "$SIB_TOKEN_ENV" ]]     && printf '%s  bearer_token_env: %s\n' "$indent" "$SIB_TOKEN_ENV"
+  [[ -n "$SIB_TOKEN_KEYRING" ]] && printf '%s  bearer_token_keyring: "%s"\n' "$indent" "$SIB_TOKEN_KEYRING"
   return 0
 }
 

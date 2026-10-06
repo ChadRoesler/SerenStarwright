@@ -187,7 +187,7 @@ if ($RippleTarget) {
         $rcmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
         # Inferred at setup: the person running the install (Design note:).
         $rwho = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
-        $rcmdLines = if ($RippleClaude) { Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $rwho }
+        $rcmdLines = if ($RippleClaude) { Get-SerenClaudeRippleLines -Vpy $vpy -Dir $RippleClaude -Indent 2 -Who $rwho -AppDir $AppDir }
                      else { "  command: $(ConvertTo-SerenYamlQuoted $rcmd)" }
         $rl += "`n$rcmdLines`n  run_as: $(ConvertTo-SerenYamlQuoted $rwho)"
     }

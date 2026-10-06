@@ -63,6 +63,47 @@ fi
 y2="$("$PY" "$HELPER" "$T/proj" --yaml 2 --claude-json "$T/claude.json")"
 [[ "$y2" == "$y" ]] && ok_ "--claude-json reads the same file (another user's settings, under sudo)" || bad "--claude-json: $y2"
 
+echo "== the launcher: the list is read when the model is woken, not when the card ran"
+yl="$(SEREN_CLAUDE_JSON="$T/claude.json" "$PY" "$HELPER" "$T/proj" --yaml 2 --launcher the-python the-helper.py)"
+if [[ -n "$PYY" ]]; then
+  got="$("$PYY" -c 'import sys, yaml; d = yaml.safe_load(sys.stdin); c = d["command"]; print(c[0], c[1], c[3], c[4], len(c), "mcp__" in " ".join(c))' <<<"$yl" 2>&1)"
+  [[ "$got" == "the-python the-helper.py --run {message} 5 False" ]] \
+    && ok_ "the command is the helper itself, with no server names frozen into it" || bad "launcher yaml: $got"
+fi
+# a stand-in claude that writes down what it was started with
+mkdir -p "$T/bin"
+cat > "$T/fake_claude.py" <<'PYF'
+import json, os, sys
+json.dump({"argv": sys.argv[1:], "stdin": sys.stdin.read(), "cwd": os.getcwd()}, open(os.environ["FAKE_OUT"], "w"))
+PYF
+FAKE_CLAUDE="$T/bin/claude"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)   # Windows starts a .cmd, not a #! script - as the real claude there is
+    FAKE_CLAUDE="$(cygpath -w "$T/bin/claude.cmd")"
+    printf '@"%s" "%s" %%*\r\n' "$(cygpath -w "$(command -v "$PY")")" "$(cygpath -w "$T/fake_claude.py")" > "$T/bin/claude.cmd" ;;
+  *) printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$(command -v "$PY")" "$T/fake_claude.py" > "$T/bin/claude"; chmod +x "$T/bin/claude" ;;
+esac
+MSG='WOKEN: review "draft 15" & say why; 100% $HOME'
+FAKE_OUT="$T/woke.json" SEREN_CLAUDE_BIN="$FAKE_CLAUDE" SEREN_CLAUDE_JSON="$T/claude.json" "$PY" "$HELPER" "$T/proj" --run "$MSG"; rc=$?
+got="$("$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["argv"][0], d["argv"][1], d["argv"][2]); print(d["stdin"])' "$T/woke.json" 2>&1)"
+[[ $rc -eq 0 && "$(sed -n 1p <<<"$got")" == "-p --allowedTools mcp__everywhere,mcp__from-mcp-json,mcp__wren-memory" ]] \
+  && ok_ "woken with the servers registered NOW pre-approved" || bad "run argv: rc=$rc $got"
+[[ "$(sed -n 2p <<<"$got")" == "$MSG" ]] && ok_ "the message reaches claude on stdin, quotes and all (never a command line)" || bad "run stdin: $got"
+# the model's servers change: five services become one Workbench. No reinstall.
+"$PY" - "$T/claude.json" "$PROJ" <<'PY'
+import json, sys
+path, proj = sys.argv[1:3]
+json.dump({"mcpServers": {"wren-workbench": {"type": "http", "url": "http://nuc:7255/mcp"}}, "projects": {proj: {"mcpServers": {}}}}, open(path, "w"))
+PY
+rm -f "$T/proj/.mcp.json"
+printf '%s' "from stdin" | FAKE_OUT="$T/woke.json" SEREN_CLAUDE_BIN="$FAKE_CLAUDE" SEREN_CLAUDE_JSON="$T/claude.json" "$PY" "$HELPER" "$T/proj" --run
+got="$("$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["argv"][2], "|", d["stdin"])' "$T/woke.json" 2>&1)"
+[[ "$got" == "mcp__wren-workbench | from stdin" ]] \
+  && ok_ "after the move the same command pre-approves the Workbench, and takes its message from stdin" || bad "after the move: $got"
+printf '{"projects": {}}' > "$T/none.json"
+SEREN_CLAUDE_BIN="$FAKE_CLAUDE" SEREN_CLAUDE_JSON="$T/none.json" "$PY" "$HELPER" "$T/proj" --run "hello" 2>"$T/err"; rc=$?
+[[ $rc -eq 2 ]] && grep -q "no MCP servers" "$T/err" && ok_ "woken with no servers registered: refuses and says so, it does not start a model with nothing" || bad "run with no servers: rc=$rc"
+
 echo "== refusals"
 # `everywhere` is user scope, so an empty folder still has one server; a
 # settings file with none at all is the refusal.
