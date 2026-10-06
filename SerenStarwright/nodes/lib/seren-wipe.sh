@@ -153,10 +153,13 @@ SHALLOW_TARGETS=(
     "$USER_HOME/stop_llama.sh"
     "$USER_HOME/start_kokoro.sh"
     "$USER_HOME/stop_kokoro.sh"
+    "$USER_HOME/start_comfy.sh"
+    "$USER_HOME/stop_comfy.sh"
     "$USER_HOME/seren-llama.env"
     "$USER_HOME/.seren/services/whisper.json"
     "$USER_HOME/.seren/services/llama.json"
     "$USER_HOME/.seren/services/kokoro.json"
+    "$USER_HOME/.seren/services/comfy.json"
     "$USER_HOME/.seren/node.json"
 
     # User pip packages on NVMe (the .local symlinks point here)

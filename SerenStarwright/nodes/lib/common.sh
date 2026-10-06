@@ -291,8 +291,10 @@ detect_platform() {
 # 3.45.1"; --which prints its path. Exit status is the answer either way.
 seren_host_python_ok() {
     local mode="${1:-}" cand py out
-    for cand in /usr/local/bin/python3.13 /usr/local/bin/python3.12 /usr/local/bin/python3.11 \
-                /usr/local/bin/python3.10 python3.13 python3.12 python3.11 python3.10 python3; do
+    # SEREN_HOST_PYTHON_CANDIDATES (space separated) replaces the interpreters
+    # looked at - the test's seam, since a real box always has one of these.
+    local cands="${SEREN_HOST_PYTHON_CANDIDATES:-/usr/local/bin/python3.13 /usr/local/bin/python3.12 /usr/local/bin/python3.11 /usr/local/bin/python3.10 python3.13 python3.12 python3.11 python3.10 python3}"
+    for cand in $cands; do
         py="$(command -v "$cand" 2>/dev/null)" || continue
         [ -n "$py" ] || continue
         out="$("$py" -c 'import sys, sqlite3
@@ -1106,6 +1108,18 @@ run_prebuilts_download_services() {
         seren_prebuilts_stage 'apex-*.ko'        STAGED_APEX_KO         required || return 1
         seren_prebuilts_stage 'coral-*.manifest' STAGED_CORAL_MANIFEST  || return 1
         [ -n "${STAGED_CORAL_MANIFEST:-}" ] || warn "No Coral manifest in the release - skipping the kernel-version check"
+        # The userspace pair, when this platform's release carries it
+        # (SerenSystemPrebuilts --edgetpu): the delegate library and the
+        # tflite_runtime wheel built for it, from the same TensorFlow. Optional:
+        # a release from before that phase has neither, and the Coral install
+        # then falls back to the pinned community pair or says there is none.
+        seren_prebuilts_stage 'libedgetpu-std-*.so'   STAGED_EDGETPU_LIB   || return 1
+        seren_prebuilts_stage 'tflite_runtime-*.whl'  STAGED_TFLITE_WHL    || return 1
+        if { [ -n "${STAGED_EDGETPU_LIB:-}" ] && [ -z "${STAGED_TFLITE_WHL:-}" ]; } \
+           || { [ -z "${STAGED_EDGETPU_LIB:-}" ] && [ -n "${STAGED_TFLITE_WHL:-}" ]; }; then
+            warn "The release has only one of libedgetpu / tflite_runtime - they are a pair, so neither is used."
+            STAGED_EDGETPU_LIB=""; STAGED_TFLITE_WHL=""
+        fi
     fi
 
     log "Staged from $PREBUILT_TAG into $PREBUILT_DIR"
@@ -1358,6 +1372,230 @@ venv_python() {
     local service="$1"; shift
     local venv_path; venv_path="$(_seren_venv_path "$service")"
     sudo -u "$TARGET_USER" "$venv_path/bin/python" "$@"
+}
+
+# The same, with this platform's CUDA libraries on the path - for anything
+# that asks torch whether it can see the GPU. sudo drops LD_LIBRARY_PATH, and
+# on a Xavier CUDA 12.2 only answers through the compat shim: without this a
+# freshly installed ComfyUI printed "CUDA available: False" on a box where it
+# was (node-c, 5 Oct 2026 - "the NVIDIA driver on your system is too old").
+venv_python_cuda() {
+    local service="$1"; shift
+    local venv_path; venv_path="$(_seren_venv_path "$service")"
+    sudo -u "$TARGET_USER" env LD_LIBRARY_PATH="$(seren_cuda_ld_path):${LD_LIBRARY_PATH:-}" "$venv_path/bin/python" "$@"
+}
+
+# ═════════════════════════════════════════════════════════════
+# Coral userspace: libedgetpu, a venv, and the test script
+# ═════════════════════════════════════════════════════════════
+#
+# The kernel modules are each platform's business (they are welded to its
+# kernel). Everything above them is the same on every node, so it lives here:
+#
+#   libedgetpu1-std   the system library that hands a model to the TPU. Prep
+#                     never installed it, so even a working tflite_runtime
+#                     would have run on the CPU.
+#   ~/seren-venvs/coral   tflite_runtime and the numpy it wants, in a venv like
+#                     every other component. This used to be `pip install
+#                     --user` into the system python3.10, which meant fighting
+#                     the system's pip (the --break-system-packages flag that
+#                     Ubuntu 22.04's own pip does not know) and the system's
+#                     numpy, for something a venv makes a non-question.
+#   ~/test-coral.sh   loads the modules, then loads the Edge TPU delegate from
+#                     that venv - so a pass means the TPU is usable from Python,
+#                     not merely that a device node exists.
+#
+# No pycoral: the package of that name on PyPI is an unrelated CLI for the Allen
+# Coral Atlas (it drags in pandas and geopandas), and Google publishes its own
+# only up to Python 3.9. tflite_runtime plus the delegate is the whole job.
+_seren_os_codename() {
+    ( . /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-unknown}" )
+}
+
+# _seren_edgetpu_pin - the verified libedgetpu / tflite_runtime pair for this
+# base, as one line: VERSION DEB_URL DEB_SHA256 WHEEL_URL WHEEL_SHA256. Empty
+# when no pair has been verified here. A pair is added by running it on the
+# real board first (delegate loads, a model runs on the TPU), never by
+# guessing that a neighbouring distro's build will do.
+# $SEREN_EDGETPU_PIN overrides it (a test, or a pair you verified yourself).
+_seren_edgetpu_pin() {
+    if [ -n "${SEREN_EDGETPU_PIN:-}" ]; then echo "$SEREN_EDGETPU_PIN"; return 0; fi
+    case "$(_seren_os_codename)/$(dpkg --print-architecture 2>/dev/null)" in
+        jammy/arm64)    # Orin Nano, JetPack 6. Verified 5 Oct 2026.
+            echo "16.0tf2.17.1" \
+                 "https://github.com/feranick/libedgetpu/releases/download/16.0TF2.17.1-1/libedgetpu1-std_16.0tf2.17.1-1.ubuntu22.04_arm64.deb" \
+                 "053672bda6da70a3d30b09df1d00920a0b71618eb4bbe116af9148e14c98b80d" \
+                 "https://github.com/feranick/TFlite-builds/releases/download/v2.17.1/tflite_runtime-2.17.1-cp310-cp310-linux_aarch64.whl" \
+                 "ff351908e48d76f8296f374f2f45cbd49ce6bfd7e36bbf1e393e122fdd9942c9"
+            ;;
+    esac
+}
+
+# _seren_fetch_verified URL SHA256 DEST - download to DEST and keep it only if
+# its SHA-256 is the one given. A mismatch removes the file and says both
+# hashes: a binary that is not the one that was tested does not get installed.
+_seren_fetch_verified() {
+    local url="$1" want="$2" dest="$3" got
+    rm -f "$dest"
+    if ! curl -fsSL --retry 3 -o "$dest" "$url"; then
+        rm -f "$dest"
+        warn "could not download $(basename "$dest") from $url"
+        return 1
+    fi
+    got="$(sha256sum "$dest" | awk '{print $1}')"
+    if [ "$got" != "$want" ]; then
+        rm -f "$dest"
+        warn "$(basename "$dest") is not the file that was verified (sha256 $got, expected $want) - not installed"
+        return 1
+    fi
+    log "  verified $(basename "$dest") ✓"
+}
+
+seren_install_coral_userspace() {
+    local USER_HOME="/home/$TARGET_USER"
+
+    # ── libedgetpu + the tflite_runtime built for it ──
+    #
+    # FIRST, this platform's own prebuilt pair, when the release has one (the
+    # branch below; SerenSystemPrebuilts --edgetpu). What follows is the
+    # FALLBACK for a release from before that phase existed:
+    #
+    # A PINNED PAIR, each file checked against a SHA-256 written here.
+    #
+    # Google's Coral apt repo stopped serving: every file under
+    # packages.cloud.google.com/apt/dists/coral-edgetpu-stable answers 403
+    # (5 Oct 2026; the signing key still downloads, the repo does not), and
+    # Google's own last release was 2021. PyPI's tflite-runtime ends at 2.14.0,
+    # for which no libedgetpu was ever built - and the two must be built from
+    # the same TensorFlow, or the delegate does not load.
+    #
+    # So both come from the maintained community builds (github.com/feranick:
+    # libedgetpu and TFlite-builds), one version of each, as a pair: see
+    # _seren_edgetpu_pin. Verified on the Orin Nano (JetPack 6, Ubuntu 22.04):
+    # delegate loads, MobileNet V2 runs on the TPU at 3 ms. They are a third
+    # party's binaries, which is exactly why they are pinned by hash and not
+    # by "latest": what installs is what was tested, or nothing does.
+    #
+    # BEST EFFORT, like before. A base with no verified pair gets PyPI's
+    # tflite-runtime (CPU only) and is told so; the modules are still there.
+    local pin deb_url deb_sha whl_url whl_sha want_ver tmp
+    pin="$(_seren_edgetpu_pin)"
+    if [ -n "${STAGED_EDGETPU_LIB:-}" ] && [ -f "$STAGED_EDGETPU_LIB" ] \
+       && [ -n "${STAGED_TFLITE_WHL:-}" ] && [ -f "$STAGED_TFLITE_WHL" ]; then
+        # THE FIRST CHOICE: this platform's own prebuilt pair (SerenSystemPrebuilts
+        # --edgetpu), built from source on a box like this one and verified
+        # against the release's SHA256SUMS when it was staged. No third party.
+        # The library is one self-contained file (abseil and flatbuffers are
+        # linked in), so installing it is a copy, the two names the loader and
+        # tflite look for, and ldconfig. A libedgetpu package from somewhere
+        # else is removed first: two libedgetpu.so.1 on the loader's path is a
+        # coin toss about which TensorFlow the delegate was built for.
+        if dpkg -s libedgetpu1-std >/dev/null 2>&1 || dpkg -s libedgetpu1-max >/dev/null 2>&1; then
+            log "Removing the packaged libedgetpu in favour of this platform's prebuilt..."
+            sudo apt-get remove -y libedgetpu1-std libedgetpu1-max >/dev/null 2>&1 || true
+        fi
+        if sudo install -o root -g root -m 0644 "$STAGED_EDGETPU_LIB" /usr/local/lib/libedgetpu.so.1.0 \
+           && sudo ln -sf libedgetpu.so.1.0 /usr/local/lib/libedgetpu.so.1 \
+           && sudo ldconfig; then
+            log "libedgetpu installed from the prebuilt ($(basename "$STAGED_EDGETPU_LIB")) ✓"
+        else
+            warn "libedgetpu did not install into /usr/local/lib - the error is in the setup log."
+        fi
+        ensure_venv coral
+        if venv_pip coral install "numpy<2" "$STAGED_TFLITE_WHL"; then
+            log "tflite-runtime installed from the prebuilt ($(basename "$STAGED_TFLITE_WHL")) ✓"
+        else
+            warn "tflite-runtime did not install into ~/seren-venvs/coral - the error is in the setup log"
+        fi
+    elif [ -z "$pin" ]; then
+        warn "No verified libedgetpu build for this base ($(_seren_os_codename)/$(dpkg --print-architecture 2>/dev/null))."
+        warn "  The Coral modules are installed; the TPU cannot be used from Python until"
+        warn "  libedgetpu and a tflite_runtime built for the same TensorFlow are."
+        ensure_venv coral
+        venv_pip coral install "numpy<2" tflite-runtime \
+            || warn "tflite-runtime did not install into ~/seren-venvs/coral - pip's error is in the setup log"
+    else
+        read -r want_ver deb_url deb_sha whl_url whl_sha <<< "$pin"
+        tmp="$(mktemp -d)"
+        if [ "$(dpkg-query -W -f='${Version}' libedgetpu1-std 2>/dev/null | cut -d- -f1)" = "$want_ver" ]; then
+            log "libedgetpu1-std $want_ver already installed ✓"
+        elif _seren_fetch_verified "$deb_url" "$deb_sha" "$tmp/libedgetpu1-std.deb" \
+             && sudo apt-get install -y "$tmp/libedgetpu1-std.deb"; then
+            log "libedgetpu1-std $want_ver installed ✓"
+        else
+            warn "libedgetpu1-std did not install - the error is in the setup log."
+            warn "  The TPU cannot be used from Python until it is; ~/test-coral.sh will say so."
+        fi
+
+        # numpy<2: these tflite_runtime wheels are built against numpy 1.x.
+        ensure_venv coral
+        chmod 755 "$tmp"
+        if _seren_fetch_verified "$whl_url" "$whl_sha" "$tmp/$(basename "$whl_url")" \
+           && chmod 644 "$tmp/$(basename "$whl_url")" \
+           && venv_pip coral install "numpy<2" "$tmp/$(basename "$whl_url")"; then
+            log "tflite-runtime (built for libedgetpu $want_ver) installed in ~/seren-venvs/coral ✓"
+        else
+            warn "tflite-runtime did not install into ~/seren-venvs/coral - the error is in the setup log"
+        fi
+        rm -rf "$tmp"
+    fi
+
+    # ── Test helper ──
+    sudo -u "$TARGET_USER" tee "$USER_HOME/test-coral.sh" > /dev/null << 'TESTSCRIPT'
+#!/bin/bash
+# Quick Coral TPU test - run after reboot
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo "Loading Coral modules..."
+sudo modprobe gasket
+sudo modprobe apex
+sleep 2
+
+if [ -c /dev/apex_0 ]; then
+    echo -e "${GREEN}✓${NC} /dev/apex_0 exists - Coral TPU is alive!"
+    echo ""
+    echo "PCIe device:"
+    lspci | grep -i "Global Unichip\|089a" || echo "  (not visible via lspci)"
+    echo ""
+    echo "Loaded modules:"
+    lsmod | grep -E "gasket|apex"
+    echo ""
+    echo "Library check (~/seren-venvs/coral):"
+    PY="$HOME/seren-venvs/coral/bin/python"
+    if [ ! -x "$PY" ]; then
+        echo "  no venv at ~/seren-venvs/coral - re-run node prep with --coral"
+    else
+        # The errors themselves, never "NOT FOUND": not installed, installed
+        # but will not import, and no delegate are three different problems.
+        "$PY" - 2>&1 << 'PYCHECK' | sed 's/^/  /'
+try:
+    import tflite_runtime.interpreter as tflite
+    print("tflite_runtime OK")
+except Exception as e:
+    raise SystemExit("tflite_runtime: %s: %s" % (type(e).__name__, e))
+try:
+    tflite.load_delegate("libedgetpu.so.1")
+    print("Edge TPU delegate loaded - the TPU is usable from Python")
+except Exception as e:
+    print("Edge TPU delegate did NOT load: %s" % (e or type(e).__name__))
+    print("(is libedgetpu1-std installed?  dpkg -s libedgetpu1-std)")
+PYCHECK
+    fi
+    echo ""
+    echo "Unload to free RAM:"
+    echo "  sudo modprobe -r apex && sudo modprobe -r gasket"
+else
+    echo -e "${RED}✗${NC} /dev/apex_0 not found"
+    echo "Troubleshooting:"
+    echo "  1. dmesg | grep -i 'apex\|gasket\|coral'"
+    echo "  2. lspci | grep -i '089a'"
+    echo "  3. cat /proc/cmdline | grep pcie_aspm"
+    echo "  4. Did you reboot after seren-setup with --coral?"
+fi
+TESTSCRIPT
+    sudo chmod +x "$USER_HOME/test-coral.sh"
 }
 
 # ═════════════════════════════════════════════════════════════
@@ -1724,6 +1962,72 @@ STARTEOF
         --service-specific model_dir="$DIR/src/models" \
         --service-specific device="$device"
     log "Kokoro registered; start it with ~/start_kokoro.sh (or from Lodestar), port $PORT"
+}
+
+# ════════════════════════════════════════════════════════
+# ComfyUI - image generation, registered for the Observatory
+# ════════════════════════════════════════════════════════
+#
+# The install stays in <platform>/comfy.sh (the torch wheels are per platform).
+# What was missing, the same way it was for llama and Kokoro before 27 Sept:
+# a start script, a stop script and a manifest. Without them an installed
+# ComfyUI is a folder - the Observatory does not list it, Lodestar cannot
+# start it, and "installed successfully" was true and useless (node-c,
+# 5 Oct 2026).
+#
+#   seren_register_comfy [EXTRA ARGS FOR main.py]     e.g. --lowvram on a Nano
+#     COMFY_PORT   default 8188
+#
+# The manifest is named "comfy": that is the name the Observatory's
+# /api/v1/service/comfy routes load, and they list checkpoints, loras and vae
+# from the three serviceSpecific directories written here.
+seren_register_comfy() {
+    local extra="$*"
+    local USER_HOME="/home/$TARGET_USER"
+    [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
+    local DIR; DIR="$(seren_apps_root)/ComfyUI"
+    local VENV="$USER_HOME/seren-venvs/comfy"
+    local PORT="${COMFY_PORT:-8188}"
+    local LOGS="$USER_HOME/seren-logs"
+    local LDP; LDP="$(seren_cuda_ld_path)"
+
+    if [ ! -f "$DIR/main.py" ] || [ ! -x "$VENV/bin/python" ]; then
+        fail "ComfyUI is not where its start script would look: $DIR/main.py, $VENV"
+        return 1
+    fi
+    _as_target mkdir -p "$LOGS"
+
+    _as_target tee "$USER_HOME/start_comfy.sh" > /dev/null <<STARTEOF
+#!/bin/bash
+# start_comfy.sh - written by seren-prepare-node (comfyui). Started and stopped
+# by the Observatory through its manifest (~/.seren/services/comfy.json).
+PID="$LOGS/comfy.pid"
+if [ -f "\$PID" ] && kill -0 "\$(cat "\$PID")" 2>/dev/null; then echo "comfy already running"; exit 0; fi
+cd "$DIR" || exit 1
+# No login shell when the Observatory runs this: the CUDA path is set here.
+export LD_LIBRARY_PATH="$LDP:\${LD_LIBRARY_PATH:-}"
+nohup "$VENV/bin/python" main.py --listen 0.0.0.0 --port $PORT $extra >> "$LOGS/comfy.log" 2>&1 &
+echo \$! > "\$PID"
+STARTEOF
+    chmod +x "$USER_HOME/start_comfy.sh"
+    _seren_write_stop_script comfy "$USER_HOME" "$LOGS"
+
+    write_service_manifest "comfy" \
+        service_type=pid_file \
+        implementation=comfyui \
+        port="$PORT" \
+        endpoint=/prompt \
+        health_path=/system_stats \
+        start_script="$USER_HOME/start_comfy.sh" \
+        stop_script="$USER_HOME/stop_comfy.sh" \
+        pid_path="$LOGS/comfy.pid" \
+        log_path="$LOGS/comfy.log" \
+        venv_path="$VENV" \
+        --service-specific checkpoints_dir="$DIR/models/checkpoints" \
+        --service-specific loras_dir="$DIR/models/loras" \
+        --service-specific vae_dir="$DIR/models/vae" \
+        --service-specific device=cuda
+    log "ComfyUI registered; start it with ~/start_comfy.sh (or from Lodestar), port $PORT"
 }
 
 # ═════════════════════════════════════════════════════════════

@@ -62,6 +62,12 @@ jobs:
       - name: kokoro on a node - uvicorn from the repo root, cpu/cuda, the Observatory manifest
         run: bash SerenStarwright/nodes/tests/test-kokoro-install.sh
 
+      - name: comfyui on a node - main.py with the CUDA path, start/stop, the Observatory manifest
+        run: bash SerenStarwright/nodes/tests/test-comfy-install.sh
+
+      - name: coral userspace - a pinned, checksummed libedgetpu and tflite_runtime
+        run: bash SerenStarwright/nodes/tests/test-coral-userspace.sh
+
       - name: seren-wipe removes the node services, keeps models unless --models
         run: bash SerenStarwright/nodes/tests/test-wipe.sh
 

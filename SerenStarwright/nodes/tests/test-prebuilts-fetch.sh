@@ -39,6 +39,9 @@ echo "bnb"            > "$REL/bitsandbytes-0.50.2+sm87-cp310-cp310-linux_aarch64
 echo "gasket"         > "$REL/gasket-jp6-orin-aarch64.ko"
 echo "apex"           > "$REL/apex-jp6-orin-aarch64.ko"
 echo "kernel=x"       > "$REL/coral-jp6-orin.manifest"
+echo "edgetpu lib"    > "$REL/libedgetpu-std-jp6-orin-aarch64.so"
+echo "edgetpu max"    > "$REL/libedgetpu-max-jp6-orin-aarch64.so"
+echo "tflite wheel"   > "$REL/tflite_runtime-2.17.1-cp310-cp310-linux_aarch64.whl"
 ( cd "$REL" && sha256sum * > SHA256SUMS
   # entries the folder had but the release never carries
   echo "$(printf 'deadbeef%.0s' {1..8})  apt-toolchain/gcc_11_arm64.deb" >> SHA256SUMS
@@ -59,6 +62,7 @@ check "and made executable only now" '[ "$(uname -s)" != Linux ] || [ -x "$STAGE
 check "torchvision keeps its real +tag" '[ "$(basename "${STAGED_TVISION_WHL:-}")" = "torchvision-0.26.0+336d36e-cp310-cp310-linux_aarch64.whl" ]'
 check "bitsandbytes staged as the optional spare" '[ -f "${STAGED_BNB_WHL:-/nope}" ]'
 check "coral trio staged" '[ -f "$STAGED_GASKET_KO" ] && [ -f "$STAGED_APEX_KO" ] && [ -f "$STAGED_CORAL_MANIFEST" ]'
+check "the Coral userspace pair staged: the std library and its wheel" '[ "$(basename "${STAGED_EDGETPU_LIB:-}")" = "libedgetpu-std-jp6-orin-aarch64.so" ] && [ "$(basename "${STAGED_TFLITE_WHL:-}")" = "tflite_runtime-2.17.1-cp310-cp310-linux_aarch64.whl" ]'
 check "nothing from apt/ or wheelhouse/ was fetched" '! ls "$PREBUILT_DIR" | grep -qE "deb$|numpy"'
 check "the index sits beside the staging" '[ -s "$PREBUILT_DIR/.release/SHA256SUMS-20260916_orin-jp6" ]'
 check "a second run does not refetch (files verified in place)" 'run_prebuilts_download_services 2>&1 | grep -qv Downloading'
@@ -70,16 +74,31 @@ unset STAGED_LLAMA_BIN
 if run_prebuilts_download_services >/dev/null 2>"$T/err"; then bad "a tampered asset is refused"; else ok "a tampered asset is refused"; fi
 check "and nothing is left staged under that name" '[ ! -f "$PREBUILT_DIR/llama-server-jp6-orin-aarch64" ]'
 check "the refusal names the file" 'grep -q "llama-server-jp6-orin-aarch64 failed verification" "$T/err"'
-( cd "$REL" && sha256sum llama-server-* torch-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* > SHA256SUMS )
+( cd "$REL" && sha256sum llama-server-* torch-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* libedgetpu-* tflite_runtime-* > SHA256SUMS )
 unset PREBUILT_INDEX
 
 echo "── a required asset that is missing ──"
 mv "$REL/torch-2.11.0-cp310-cp310-linux_aarch64.whl" "$T/torch.bak"
-( cd "$REL" && sha256sum llama-server-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* > SHA256SUMS )
+( cd "$REL" && sha256sum llama-server-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* libedgetpu-* tflite_runtime-* > SHA256SUMS )
 rm -f "$PREBUILT_DIR"/torch-*; unset STAGED_TORCH_WHL PREBUILT_INDEX
 if run_prebuilts_download_services >"$T/err" 2>&1; then bad "a missing required wheel fails the run"; else ok "a missing required wheel fails the run"; fi
 check "and says which pattern" 'grep -q "torch-\*.whl" "$T/err"'
 mv "$T/torch.bak" "$REL/torch-2.11.0-cp310-cp310-linux_aarch64.whl"
+( cd "$REL" && sha256sum llama-server-* torch-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* libedgetpu-* tflite_runtime-* > SHA256SUMS )
+unset PREBUILT_INDEX
+
+echo "── a release from before --edgetpu, and half a pair ──"
+rm -f "$REL"/libedgetpu-* "$REL"/tflite_runtime-*
+( cd "$REL" && sha256sum llama-server-* torch-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* > SHA256SUMS )
+rm -f "$PREBUILT_DIR"/libedgetpu-* "$PREBUILT_DIR"/tflite_runtime-*; unset STAGED_EDGETPU_LIB STAGED_TFLITE_WHL PREBUILT_INDEX
+if run_prebuilts_download_services >/dev/null 2>"$T/err"; then ok "a release without the pair still stages"; else bad "a release without the pair still stages: $(cat "$T/err")"; fi
+check "and nothing is staged for it" '[ -z "${STAGED_EDGETPU_LIB:-}" ] && [ -z "${STAGED_TFLITE_WHL:-}" ]'
+echo "edgetpu lib" > "$REL/libedgetpu-std-jp6-orin-aarch64.so"
+( cd "$REL" && sha256sum llama-server-* torch-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* libedgetpu-* > SHA256SUMS )
+unset STAGED_EDGETPU_LIB STAGED_TFLITE_WHL PREBUILT_INDEX
+run_prebuilts_download_services >"$T/err" 2>&1
+check "a library with no wheel is not half-used" '[ -z "${STAGED_EDGETPU_LIB:-}" ] && grep -q "they are a pair" "$T/err"'
+rm -f "$REL"/libedgetpu-*
 ( cd "$REL" && sha256sum llama-server-* torch-* torchvision-* bitsandbytes-* gasket-* apex-* coral-* > SHA256SUMS )
 unset PREBUILT_INDEX
 

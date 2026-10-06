@@ -10,7 +10,7 @@
 #   5. Blacklists modules at boot (load on demand to save RAM)
 #   6. Sets up udev rule for non-root /dev/apex_0 access
 #   7. Adds modprobe sudoers rules (in addition to base sudoers from dispatcher)
-#   8. Installs pycoral + tflite-runtime
+#   8. Installs libedgetpu + tflite-runtime (in ~/seren-venvs/coral)
 #
 # Service phase - always re-runs when --coral is flagged.
 # REBOOT REQUIRED after this for kernel cmdline changes to take effect.
@@ -132,57 +132,9 @@ SUDOERS
             fail "Sudoers file failed validation"
     fi
 
-    # ── Python libraries ──
-    log "Installing tflite-runtime under python3.10..."
-    sudo -u "$TARGET_USER" python3.10 -m pip install --user tflite-runtime || \
-        warn "tflite-runtime via pip failed - pip's error is in the setup log"
-    # NO `pip install pycoral`. The package of that name on PyPI is not Google's
-    # Coral library - it is an unrelated CLI for the Allen Coral Atlas, which
-    # drags in pandas and geopandas. Google publishes pycoral only from its own
-    # index and only up to Python 3.9, so there is nothing to install for 3.10.
-    # tflite-runtime with the libedgetpu delegate drives the TPU without it.
-
-    # ── Test helper ──
-    sudo -u "$TARGET_USER" tee "$USER_HOME/test-coral.sh" > /dev/null << 'TESTSCRIPT'
-#!/bin/bash
-# Quick Coral TPU test - run after reboot
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-echo "Loading Coral modules..."
-sudo modprobe gasket
-sudo modprobe apex
-sleep 2
-
-if [ -c /dev/apex_0 ]; then
-    echo -e "${GREEN}✓${NC} /dev/apex_0 exists - Coral TPU is alive!"
-    echo ""
-    echo "PCIe device:"
-    lspci | grep -i "Global Unichip\|089a" || echo "  (not visible via lspci)"
-    echo ""
-    echo "Loaded modules:"
-    lsmod | grep -E "gasket|apex"
-    echo ""
-    echo "Library check:"
-    # The error itself, not "NOT FOUND": installed-but-will-not-import (a numpy
-    # mismatch, say) and never-installed are different problems, and hiding
-    # stderr made them look the same.
-    python3.10 -c "import tflite_runtime.interpreter as tflite; print('  tflite_runtime OK')" 2>&1 | tail -2 | sed 's/^\([^ ]\)/  tflite_runtime: \1/'
-    python3.10 -c "from pycoral.utils import edgetpu; print('  pycoral OK')" 2>/dev/null || echo "  pycoral: not installed (optional - Google ships no Python 3.10 build)"
-    echo ""
-    echo "Unload to free RAM:"
-    echo "  sudo modprobe -r apex && sudo modprobe -r gasket"
-else
-    echo -e "${RED}✗${NC} /dev/apex_0 not found"
-    echo "Troubleshooting:"
-    echo "  1. dmesg | grep -i 'apex\|gasket\|coral'"
-    echo "  2. lspci | grep -i '089a'"
-    echo "  3. cat /proc/cmdline | grep pcie_aspm"
-    echo "  4. Did you reboot after seren-setup with --coral?"
-fi
-TESTSCRIPT
-    sudo chmod +x "$USER_HOME/test-coral.sh"
+    # ── Userspace: libedgetpu, the venv, ~/test-coral.sh ──
+    # Shared by every platform - see seren_install_coral_userspace.
+    seren_install_coral_userspace
 
     log "Coral TPU setup complete"
     log "REBOOT REQUIRED for kernel cmdline (pcie_aspm=off, gasket.dma_bit_mask=32)"

@@ -57,13 +57,15 @@ install_comfy() {
     fi
 
     log "Verifying PyTorch CUDA in venv..."
-    venv_python comfy -c "
+    venv_python_cuda comfy -c "
 import torch
 print(f'  PyTorch: {torch.__version__}')
 print(f'  CUDA available: {torch.cuda.is_available()}')
 if torch.cuda.is_available():
     print(f'  Device: {torch.cuda.get_device_name(0)}')
 " 2>&1 || warn "PyTorch import failed in venv - check LD_LIBRARY_PATH"
+
+    seren_register_comfy --lowvram || return 1
 
     log "ComfyUI installed at $APPS_ROOT/ComfyUI"
     log "Venv: ~/seren-venvs/comfy"

@@ -62,9 +62,9 @@ mkpy() {   # mkpy DIR NAME PYVER SQLITEVER OKEXIT
 }
 mkpy "$T/old" python3 3.8.10 3.31.1 1
 mkpy "$T/new" python3 3.12.3 3.45.1 0
-( PATH="$T/old:/usr/bin:/bin"; hash -r; ! seren_host_python_ok ) \
+( SEREN_HOST_PYTHON_CANDIDATES="$T/old/python3"; ! seren_host_python_ok ) \
   && ok "Python 3.8 with SQLite 3.31 is not enough" || bad "Python 3.8 with SQLite 3.31 is not enough"
-( PATH="$T/new:/usr/bin:/bin"; hash -r; seren_host_python_ok && [ "$(seren_host_python_ok --say)" = "python3 3.12.3, sqlite 3.45.1" ] ) \
+( SEREN_HOST_PYTHON_CANDIDATES="$T/old/python3 $T/new/python3"; seren_host_python_ok && [ "$(seren_host_python_ok --say)" = "python3 3.12.3, sqlite 3.45.1" ] && [ "$(seren_host_python_ok --which)" = "$T/new/python3" ] ) \
   && ok "Python 3.12 with SQLite 3.45 is, and it says which" || bad "Python 3.12 with SQLite 3.45 is, and it says which"
 
 echo "── staging from a host release ──"

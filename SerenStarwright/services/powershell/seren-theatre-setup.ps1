@@ -30,6 +30,10 @@ param(
   # the occasional corpus snippet - not something to put on the LAN by
   # accident. Widen it yourself, deliberately, if you mean to.
   [string]   $TheatreHost = "127.0.0.1",
+  # A bearer is optional on loopback and REQUIRED off it: the service refuses
+  # to start on 0.0.0.0 without one.
+  [string]   $Token       = "",
+  [switch]   $GenToken,
   # Repeatable. Each becomes a stages: entry in the generated config, so a
   # fresh install lands on something real instead of an empty room.
   [string[]] $Stage       = @(),
@@ -249,6 +253,12 @@ switch -Wildcard ($cardCheck) {
 # -- 5. config --------------------------------------------------------------
 Step "Writing config at $CfgPath"
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+if ($GenToken) { $Token = & $vpy -c "import secrets; print(secrets.token_urlsafe(32))" }
+# A reinstall keeps the existing bearer unless -Token / -GenToken say otherwise.
+if (-not $Token -and -not $GenToken) { $Token = Get-SerenReusedToken -Path $CfgPath }
+if (-not $Token -and $TheatreHost -notmatch '^(127\.|localhost$|::1$)') {
+  Warn "-TheatreHost $TheatreHost with no bearer: SerenTheatre will REFUSE TO START. Re-run with -GenToken (or -Token)."
+}
 if (Test-Path $CfgPath) {
   $bak = "$CfgPath.bak.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
   Copy-Item $CfgPath $bak; (Get-Item $bak).LastWriteTime = Get-Date   # its own time: Copy-Item keeps the config's, and keep-config reads a backup's age from it
@@ -262,6 +272,8 @@ server:
   # the occasional corpus snippet - not for the LAN by accident.
   host: $TheatreHost
   port: $Port
+  # Required once host is not loopback; empty = no auth (loopback only).
+  bearer_token: "$Token"
 
 # Only the tail of each log is ever read. The dashboard must never be the
 # reason the box is busy.
@@ -336,7 +348,8 @@ recipes: '$($layout.Data)\recipes'
 $launcher = Write-Launcher -AppDir $AppDir -ServiceName "seren-theatre" -Vpy $vpy -Module "seren_theatre" -CfgPath $CfgPath
 
 # -- 6. optional autostart ----------------------------------------------------
-if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-theatre" -AppDir $AppDir -Token "" -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem }
+if ($Token) { Protect-SerenConfig -Path $CfgPath -ServiceUser $ServiceUser }
+if ($Service) { Setup-Autostart -ScriptDir $ScriptDir -ServiceName "seren-theatre" -AppDir $AppDir -Token $Token -VenvDir $VenvDir -ServiceUser $ServiceUser -LocalSystem:$LocalSystem }
 
 # -- done -------------------------------------------------------------------
 $connectHost = if ($TheatreHost -eq "0.0.0.0") { "127.0.0.1" } else { $TheatreHost }
@@ -374,7 +387,7 @@ $doneArgs = @{
     ConnectHost = $connectHost
     Port        = $Port
     Autostart   = ([bool] $Service)
-    Token       = ""
+    Token       = $Token
     Mcp         = $false
     Corp        = $false
     Vector      = $false
