@@ -2,11 +2,11 @@
 # ══════════════════════════════════════════════════════════════
 #  --root: one folder per named install.
 #
-#  Design note: "everything gets pushed into its per named install" -
+#  Everything gets pushed into its per-named install -
 #  two clusters on one host must not share a Lodestar, an Observatory, Probe's
 #  results or Theatre's archive, and you should be able to see what belongs to
-#  which. Found the same day: the wren set's configs said ~/.seren-memory...,
-#  the services ran as LocalSystem, and all of the assistant's memory lived in the
+#  which. Found the same day: one set's configs said ~/.seren-memory...,
+#  the services ran as LocalSystem, and all of a model's memory lived in the
 #  Windows system profile. Under a root every path is absolute.
 #
 #  Proves:
@@ -51,6 +51,8 @@ eq "no root: the old layout, the old concatenated suffix" "$out" "/v/memoryTest|
 echo "== every card"
 for f in "$HERE"/services/bash/seren-*-setup.sh; do
   card="$(basename "$f" -setup.sh)"
+  # A carabiner clips a harness to the cluster; it installs no service, so there is nothing to lay out.
+  grep -q '^SVC_GROUP="carabiners"' "$f" && { ok_ "$card: a carabiner, no service to lay out"; continue; }
   n_layout="$(grep -c '^seren_layout "' "$f")"
   n_suffix="$(grep -c 'setup_autostart .*"\$SVC_SUFFIX"' "$f")"
   n_root="$(grep -cE '^\s+--root\)' "$f")"

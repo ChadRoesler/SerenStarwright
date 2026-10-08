@@ -5,7 +5,7 @@
 #  Found 27 Sept 2026 adding the llama and Kokoro manifests: the wipe predated
 #  the node services, so a wiped node kept ~/start_*.sh, ~/seren-llama.env and
 #  ~/.seren/services/*.json - manifests the Observatory listed and could not
-#  start. the user's call on models the same day: kept unless --models.
+#  start. Models: kept unless --models.
 #
 #  Proves, against a scratch home and a scratch NVMe (SEREN_TEST_HOME,
 #  SEREN_TEST_NVME; sudo is a stub that runs the command as us):

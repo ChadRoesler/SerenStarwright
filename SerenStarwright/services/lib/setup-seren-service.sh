@@ -313,7 +313,7 @@ fi
 #
 # WHERE: under an install root, <root>/manifests - the roster that install's
 # Observatory is configured to read (server.manifests_dir, written by the
-# observatory card). Design note: two named installs on one host each
+# observatory card). Two named installs on one host each
 # run an Observatory, and one shared ~/.seren/services had each listing - and
 # restarting - the other's services. No root: ~/.seren/services, as before.
 #

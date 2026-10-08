@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  --claude-mcp: a card registers its service with Claude Code at USER scope.
 #
-#  Design note: added by hand from a home folder, the wren-* servers
+#  Added by hand from a home folder, the MCP servers once
 #  landed at Claude Code's LOCAL scope (that one folder), and a Claude started
 #  anywhere else woke without its memory. Proves:
 #    - the five MCP cards offer --claude-mcp as a switch

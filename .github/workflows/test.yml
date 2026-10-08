@@ -107,6 +107,9 @@ jobs:
       - name: --claude-bookmark - every session starts from Margin's bookmark
         run: bash SerenStarwright/services/tests/test-claude-bookmark.sh
 
+      - name: the carabiner card clips a harness onto Seren (connection files, install, register, bookmark, belay)
+        run: bash SerenStarwright/services/tests/test-carabiner-card.sh
+
       - name: service manifests go into the install's own roster
         run: bash SerenStarwright/services/tests/test-manifests-dir.sh
 

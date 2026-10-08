@@ -56,7 +56,7 @@ param(
   # -- logging ----------------------------------------------------------------
   # Default: a logs folder beside the app (the install root's logs\ under a
   # root; <app dir>\logs in the old layout). ~\seren-logs was one more
-  # place to look (the smoke).
+  # place to look (the 30 Sept 2026 smoke).
   [string] $LogDir       = "",
 
   # -- health check -----------------------------------------------------------
@@ -353,7 +353,7 @@ if ($RunAsLocalSystem) {
 
 # -- let the Observatory drive it, and tell it the service exists -------------
 #
-#  THE GRANT. Design note: the Windows spelling of seren-systemctl. On a
+#  THE GRANT: the Windows spelling of seren-systemctl. On a
 #  node the Observatory may start/stop seren-* units through one narrow sudo
 #  helper and nothing else; here the service's own security descriptor gains
 #  one ACE giving the control account start (RP), stop (WP), query status (LC)

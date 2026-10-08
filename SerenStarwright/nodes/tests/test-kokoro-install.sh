@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  Kokoro on a node: start/stop and the Observatory manifest.
 #
-#  Design note: Kokoro was installed on every node and registered on
+#  27 Sept 2026: Kokoro was installed on every node and registered on
 #  none. The install itself (git clone, pip, a 300MB model) needs the network
 #  and is not what changed; the registration is, and it is tested here with a
 #  fake repo and a fake venv python (no network, no GPU):

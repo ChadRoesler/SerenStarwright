@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  The hippocampus card: bedtime and the draft cap.
 #
-#  Design note: the sleep schedule (a time, or every X hours) and the
+#  The sleep schedule (a time, or every X hours) and the
 #  draft cap (max rounds of draft and critique, so no endless loop) must be
 #  configurable - they existed in the config but no card ever wrote them, so
 #  nobody could see them. Proves:

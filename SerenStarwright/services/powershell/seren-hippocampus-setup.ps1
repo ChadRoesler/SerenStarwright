@@ -261,7 +261,7 @@ switch ($Ripple) {
     "off"      { $rippleLines = "`nripple:`n  type: `"`"                  # off; -Ripple script|endpoint turns it back on" }
     "script"   {
         $cmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }
-        # Inferred at setup (Design note:): the person running the install
+        # Inferred at setup: the person running the install
         # is whose login the command needs.
         $who = if ($RippleRunAs) { $RippleRunAs } else { $env:USERNAME }
         if ($RippleClaude) {

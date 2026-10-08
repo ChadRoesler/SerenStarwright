@@ -201,7 +201,7 @@ updates:
 }
 
 if ($Ripple) {
-    # Inferred at setup (Design note:): the person running the install is
+    # Inferred at setup: the person running the install is
     # whose login the command needs.
     function ConvertTo-SerenYamlQuoted([string] $v) { "'" + ($v -replace "'", "''") + "'" }
     $rcmd = if ($RippleCommand) { $RippleCommand } else { 'claude -p "{message}"' }

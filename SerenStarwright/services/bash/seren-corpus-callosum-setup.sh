@@ -104,7 +104,7 @@ SVC_ACCENT="#9d7cff"
 # Recommended, not required: the callosum fans n stores (ten of each still
 # pull well). One Memory and one Loci is the good shape, either alone works,
 # and with neither it still installs and fans nothing until a store is added.
-# Design note: "im a warning message not a cop."
+# A recommendation is a warning, not a cop.
 SVC_RECOMMENDS="seren-memory seren-loci"
 
 # -- the stores it fans: where Memory and Loci are, and how to be let in ------

@@ -1378,7 +1378,7 @@ venv_python() {
 # that asks torch whether it can see the GPU. sudo drops LD_LIBRARY_PATH, and
 # on a Xavier CUDA 12.2 only answers through the compat shim: without this a
 # freshly installed ComfyUI printed "CUDA available: False" on a box where it
-# was (node-c, 5 Oct 2026 - "the NVIDIA driver on your system is too old").
+# was (a Xavier, 5 Oct 2026 - "the NVIDIA driver on your system is too old").
 venv_python_cuda() {
     local service="$1"; shift
     local venv_path; venv_path="$(_seren_venv_path "$service")"
@@ -1717,6 +1717,7 @@ STARTEOF
 
     write_service_manifest "whisper" \
         service_type=pid_file \
+        orchestrated=true \
         implementation=whisper.cpp \
         port="$PORT" \
         endpoint=/v1/audio/transcriptions \
@@ -1741,7 +1742,7 @@ STARTEOF
 # llama.cpp - the inference server (llama-server)
 # ═════════════════════════════════════════════════════════════
 #
-# Design note: llama and Kokoro were installed on every node and
+# Punch list, 27 Sept 2026: llama and Kokoro were installed on every node and
 # registered on none, so the Observatory listed nothing and Lodestar could not
 # start or stop either. The punch-list row was "write_service_manifest exists,
 # nobody calls it for llama or Kokoro". This is llama's half; Kokoro's follows.
@@ -1865,6 +1866,7 @@ STARTEOF
     # wrong after the first swap.
     write_service_manifest "llama" \
         service_type=pid_file \
+        orchestrated=true \
         implementation=llama.cpp \
         port="$PORT" \
         endpoint=/v1/chat/completions \
@@ -1949,6 +1951,7 @@ STARTEOF
 
     write_service_manifest "kokoro" \
         service_type=pid_file \
+        orchestrated=true \
         implementation=kokoro-fastapi \
         port="$PORT" \
         endpoint=/v1/audio/speech \
@@ -1972,7 +1975,7 @@ STARTEOF
 # What was missing, the same way it was for llama and Kokoro before 27 Sept:
 # a start script, a stop script and a manifest. Without them an installed
 # ComfyUI is a folder - the Observatory does not list it, Lodestar cannot
-# start it, and "installed successfully" was true and useless (node-c,
+# start it, and "installed successfully" was true and useless (a Xavier,
 # 5 Oct 2026).
 #
 #   seren_register_comfy [EXTRA ARGS FOR main.py]     e.g. --lowvram on a Nano
@@ -2014,6 +2017,7 @@ STARTEOF
 
     write_service_manifest "comfy" \
         service_type=pid_file \
+        orchestrated=true \
         implementation=comfyui \
         port="$PORT" \
         endpoint=/prompt \
@@ -2147,6 +2151,9 @@ write_service_manifest() {
         # Numeric values (port, schema_version, etc.) get unquoted output.
         # Crude detection: if it's all digits, treat as number.
         if [[ "$v" =~ ^[0-9]+$ ]]; then
+            json+="\"$(_seren_json_escape "$k")\":${v},"
+        elif [ "$v" = "true" ] || [ "$v" = "false" ]; then
+            # Booleans (orchestrated=true) go out bare so the Observatory reads a bool.
             json+="\"$(_seren_json_escape "$k")\":${v},"
         else
             json+="\"$(_seren_json_escape "$k")\":\"$(_seren_json_escape "$v")\","

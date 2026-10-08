@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  Service manifests go into the install's own roster.
 #
-#  Design note: two named installs on one host each run an
+#  Two named installs on one host each run an
 #  Observatory, and every manifest went into the one ~/.seren/services - so
 #  each Observatory listed, restarted and reclaimed the other's services.
 #  Under a root the roster is <root>/manifests, and the observatory card

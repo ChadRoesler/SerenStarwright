@@ -206,7 +206,7 @@ function Get-SerenDescribe {
         # wires a requirement, but never pulls one into a run, and with none of
         # them present it warns and carries on. The corpus callosum fans n
         # stores; one of each is the good shape, either alone works.
-        # Design note: "im a warning message not a cop."
+        # A recommendation is a warning, not a cop.
         [string[]] $Recommends = @()
     )
     $flags  = @(Get-SerenFlagsFromSelf -ScriptPath $ScriptPath)
@@ -383,8 +383,8 @@ function Get-SerenSiblingPluginLines {
 #     <root>/logs           service logs
 #
 # Every path is ABSOLUTE. A service running as another account resolves ~ to
-# THAT account's home: the wren set's configs said ~/.seren-memory..., the
-# services ran as LocalSystem, and the whole of the assistant's memory lived in the
+# THAT account's home: one set's configs said ~/.seren-memory..., the
+# services ran as LocalSystem, and the whole of a model's memory lived in the
 # Windows system profile, outside every backup (found 26 Sept 2026).
 #
 # The instance is the install's name; the OS service joins it with a dash

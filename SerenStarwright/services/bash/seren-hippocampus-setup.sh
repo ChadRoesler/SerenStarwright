@@ -372,7 +372,7 @@ case "$RIPPLE" in
     RIPPLE_LINES=$(printf '\nripple:\n  type: ""                  # off; --ripple script|endpoint turns it back on')
     ;;
   script)
-    # Inferred at setup (Design note:): the person running the install is
+    # Inferred at setup: the person running the install is
     # whose login the command needs. A root service drops to them (runuser).
     RIPPLE_WHO="${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}"
     if [[ -n "${RIPPLE_CLAUDE_LINES:-}" ]]; then

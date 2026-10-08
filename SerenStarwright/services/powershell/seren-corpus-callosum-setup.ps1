@@ -93,7 +93,7 @@ if ($Describe) {
         # Mirrors SVC_RECOMMENDS in seren-corpus-callosum-setup.sh.
         # Recommended, not required: it fans n stores, one Memory and one
         # Loci is the good shape, either alone works, and with neither it
-        # still installs. Design note: "im a warning message not a cop."
+        # still installs. A recommendation is a warning, not a cop.
         Recommends  = @('seren-memory', 'seren-loci')
     }
     Get-SerenDescribe @describeArgs

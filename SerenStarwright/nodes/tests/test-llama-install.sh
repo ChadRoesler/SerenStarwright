@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  llama.cpp on a node: the binary, the settings file, start/stop, the manifest.
 #
-#  Design note: llama was installed on every node and registered on
+#  27 Sept 2026: llama was installed on every node and registered on
 #  none, so the Observatory showed nothing and Lodestar could not start it.
 #  One "llama" manifest now; the model it serves is a line in
 #  ~/seren-llama.env. Proves, with a fake llama-server (no network, no GPU):
@@ -75,8 +75,9 @@ assert m["pid_path"] == h + "/seren-logs/llama.pid", m
 ss = m["serviceSpecific"]
 assert ss["models_dir"] == h + "/models" and ss["config_path"] == h + "/seren-llama.env", ss
 assert "model" not in ss, "the model lives in the settings file, not a copy here"
+assert m["orchestrated"] is True, "Lodestar starts and stops llama: off is idle, not unhealthy (a real JSON bool)"
 PY
-then ok_ "manifest: pid_file, port 8090, chat path, scripts, pid, models_dir + settings path"; else bad "manifest wrong: $(cat "$M" 2>/dev/null)"; fi
+then ok_ "manifest: pid_file, port 8090, chat path, scripts, pid, models_dir + settings path, orchestrated"; else bad "manifest wrong: $(cat "$M" 2>/dev/null)"; fi
 
 echo "== start and stop"
 bash "$H/start_llama.sh" >/dev/null 2>&1; sleep 1

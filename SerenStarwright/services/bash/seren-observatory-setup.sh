@@ -259,7 +259,7 @@ if $RIPPLE; then
   _yq() { local v=${1//\'/\'\'}; printf "'%s'" "$v"; }
   # A variable, not inline: the } of {message} would close ${...:-...} early.
   RIPPLE_DEFAULT_COMMAND='claude -p "{message}"'
-  # Inferred at setup (Design note:): the person running the install is
+  # Inferred at setup: the person running the install is
   # whose login the command needs; a root service drops to them (runuser).
   cat >> "$CFG_PATH" <<YAML
 

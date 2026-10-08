@@ -13,8 +13,8 @@
 
 # install_root_of APP_DIR VENV_DIR - prints the install root, or nothing.
 # Both pointing into the SAME parent is the root; an apps/ and a venvs/ under
-# different parents, or anything else, is the old layout. Design note:
-# two named installs on one host each run an Observatory, so a unit from one
+# different parents, or anything else, is the old layout. Two named installs on one
+# host each run an Observatory, so a unit from one
 # must not land in the shared roster where the other lists it.
 install_root_of() {
   local app="${1%/}" venv="${2%/}"

@@ -9,8 +9,8 @@ With --yaml N it prints the two config lines instead, indented N spaces:
 ripple block.
 
 WHY: a ripple wakes the main model with `claude -p "{message}"`. For that run
-to BE the model - the assistant, with their memory - two things have to be true that the
-bare command does not give (Design note: "so that YOU can use it here"):
+to BE the model - the persona, with its memory - two things have to be true
+that the bare command does not give:
 
   - it runs in the project the memory MCP servers are registered for. Claude
     Code keeps local-scope servers per project in ~/.claude.json; started
@@ -70,6 +70,42 @@ def servers_for(project: str, claude_json: str) -> list[str]:
     return sorted(set(found))
 
 
+def find_claude() -> str | None:
+    """Where `claude` is for the account this runs as. PATH first; then the
+    places the installers put it, because a service that wakes the model
+    (the Observatory, as run_as) hands it the SERVICE's PATH - CUDA, a
+    system Python - and not the account's own. First seen 7 Oct 2026: the
+    first wake over the cluster refused with "no claude on this account's
+    PATH" while claude sat in ~/.local/bin the whole time. SEREN_CLAUDE_BIN
+    names it outright and wins."""
+    named = os.environ.get("SEREN_CLAUDE_BIN")
+    if named:
+        return named
+    found = shutil.which("claude")
+    if found:
+        return found
+    homes = [os.path.expanduser("~")]
+    for var in ("USERPROFILE", "HOME"):
+        if os.environ.get(var) and os.environ[var] not in homes:
+            homes.append(os.environ[var])
+    if os.name == "nt" and os.environ.get("USERNAME"):
+        homes.append(os.path.join(os.environ.get("SystemDrive", "C:") + os.sep, "Users", os.environ["USERNAME"]))
+    names = ("claude.exe", "claude.cmd", "claude") if os.name == "nt" else ("claude",)
+    for home in dict.fromkeys(homes):
+        for folder in (os.path.join(home, ".local", "bin"),                     # the native installer
+                       os.path.join(home, ".claude", "local"),                  # claude's own local install
+                       os.path.join(home, "AppData", "Roaming", "npm"),         # npm -g on Windows
+                       os.path.join(home, ".npm-global", "bin")):               # npm -g with a user prefix
+            for name in names:
+                candidate = os.path.join(folder, name)
+                if os.path.isfile(candidate):
+                    return candidate
+    for candidate in ("/usr/local/bin/claude", "/opt/homebrew/bin/claude"):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__.strip().splitlines()[2], file=sys.stderr)
@@ -100,13 +136,18 @@ def main(argv: list[str]) -> int:
         # after --run, or stdin (a ripple that sends it that way).
         i = argv.index("--run")
         message = argv[i + 1] if len(argv) > i + 1 and not argv[i + 1].startswith("--") else sys.stdin.read()
-        claude = os.environ.get("SEREN_CLAUDE_BIN") or shutil.which("claude") or "claude"
+        claude = find_claude()
+        if claude is None:
+            print(f"no `claude` for this account: not on PATH ({os.environ.get('PATH', '')[:200]}), not in "
+                  f"~/.local/bin, ~/.claude/local or npm's folder. Set SEREN_CLAUDE_BIN to where it is. "
+                  f"The model cannot be woken here.", file=sys.stderr)
+            return 2
         try:
             done = subprocess.run([claude, "-p", "--allowedTools", allowed], input=message, text=True,
                                   encoding="utf-8", cwd=cwd)
-        except FileNotFoundError:
-            print(f"no `claude` on this account's PATH ({os.environ.get('PATH', '')[:200]}) - the model cannot "
-                  f"be woken here", file=sys.stderr)
+        except OSError as exc:
+            print(f"`claude` at {claude} could not be started ({exc}) - the model cannot be woken here",
+                  file=sys.stderr)
             return 2
         return done.returncode
     command = ["claude", "-p", "{message}", "--allowedTools", allowed]

@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  Whisper on a node: the binary, the model, start/stop, the manifest.
 #
-#  Design note: speech to text on the nodes before the node install
+#  26 Sept 2026: speech to text on the nodes before the node install
 #  tests. The installer copies the staged whisper-server, fetches a model once,
 #  writes start/stop scripts and registers a pid_file manifest the Observatory
 #  drives - the first node service to do that last part. Proves, with a fake

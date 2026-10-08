@@ -491,8 +491,8 @@ try {
 
 # -- -Root: one folder per named install (26 Sept 2026) --------------------------
 # Two clusters on one host must not share a Lodestar, an Observatory, Probe's
-# results or Theatre's archive. And the wren set's configs said ~/.seren-...,
-# the services ran as LocalSystem, and all of the assistant's memory lived in the
+# results or Theatre's archive. And one set's configs said ~/.seren-...,
+# the services ran as LocalSystem, and all of a model's memory lived in the
 # Windows system profile. Under a root every path is absolute.
 Section "-Root: a named install in one folder"
 $rootTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-root-" + [guid]::NewGuid().ToString("N"))
@@ -515,6 +515,8 @@ try {
     foreach ($f in Get-ChildItem (Join-Path $ScriptDir "services\powershell\seren-*-setup.ps1")) {
         $src = [System.IO.File]::ReadAllText($f.FullName)
         $card = $f.BaseName -replace "-setup$", ""
+        # A carabiner clips a harness to the cluster; it installs no service, so there is nothing to lay out.
+        if ($src -match "-Group\s+'carabiners'") { Good "$($card): a carabiner, no service to lay out"; continue }
         if ($src -match '\[string\]\s+\$Root\s+=' -and $src -match 'Get-SerenLayout -Root \$Root') { Good "$($card): -Root and Get-SerenLayout" }
         else { Bad "$($card): no -Root / layout" }
         $m = [regex]::Match($src, '(?m)^\$storePath = if \(\$layout\.Data\) \{ "(?<root>[^"]*)" \} else \{ "(?<bare>[^"]*)" \}')
@@ -619,7 +621,7 @@ if ($qdef) {
 
 # -- the install record carries the card's options (30 Sept 2026) --------------
 # Every flag the card was invoked with, minus secrets, so a reinstall starts
-# from them (the user's smoke: a ripple, a bookmark hook and a voice card all
+# from them (the smoke: a ripple, a bookmark hook and a voice card all
 # opened blank on reinstall). Written through the real lib into a scratch ledger.
 Section "install record: options, minus secrets"
 & {
@@ -629,12 +631,12 @@ Section "install record: options, minus secrets"
     $prev = $env:SEREN_INSTALLED_DIR; $env:SEREN_INSTALLED_DIR = $tmp
     try {
         $bound = @{ Port = 7421; ClaudeBookmark = [switch]$true; VoiceCard = [switch]$true; Token = "s3cret-no"; RippleToken = "s3cret-no2"
-                    ServicePassword = "pw-no"; Json = [switch]$true; Instance = "wren"; RippleRunAs = "alice"; KeepWarm = 600; MarginHost = "127.0.0.1" }
+                    ServicePassword = "pw-no"; Json = [switch]$true; Instance = "wren"; RippleRunAs = "Alice"; KeepWarm = 600; MarginHost = "127.0.0.1" }
         Write-SerenInstallRecord -Service "seren-margin" -ConnectHost "127.0.0.1" -Port 7421 -Autostart $true -Token "s3cret-no" -Bound $bound *> $null
         $raw = Get-Content (Join-Path $tmp "seren-margin.json") -Raw
         $o = ($raw | ConvertFrom-Json).options
         if ($o.'claude-bookmark' -eq $true -and $o.'voice-card' -eq $true) { Good "a switch records true" } else { Bad "switches: $($o | ConvertTo-Json -Compress)" }
-        if ($o.'ripple-run-as' -eq "alice" -and $o.'keep-warm' -eq "600" -and $o.host -eq "127.0.0.1" -and $o.port -eq "7421") { Good "value flags record their values, under canonical names (MarginHost -> host)" }
+        if ($o.'ripple-run-as' -eq "Alice" -and $o.'keep-warm' -eq "600" -and $o.host -eq "127.0.0.1" -and $o.port -eq "7421") { Good "value flags record their values, under canonical names (MarginHost -> host)" }
         else { Bad "values: $($o | ConvertTo-Json -Compress)" }
         if (-not ($raw -match "s3cret|pw-no") -and $null -eq $o.token -and $null -eq $o.'ripple-token' -and $null -eq $o.json) { Good "no token, no password, no plumbing in the record" }
         else { Bad "secret or plumbing leaked: $raw" }
@@ -664,12 +666,12 @@ else { Bad "the service core still needs a password for an unchanged account" }
 $bareLine = ($coreSrc -split "`n" | Where-Object { $_ -match '^\s*\$bare = ' } | Select-Object -First 1)
 if ($bareLine) {
     Invoke-Expression $bareLine.Trim()
-    if (((& $bare ".\alice") -ieq (& $bare "alice")) -and ((& $bare "$env:COMPUTERNAME\alice") -ieq "alice") -and -not ((& $bare "LocalSystem") -ieq "alice")) { Good "the account comparison treats .\user, BOX\user and user as one" }
+    if (((& $bare ".\alice") -ieq (& $bare "Alice")) -and ((& $bare "$env:COMPUTERNAME\Alice") -ieq "alice") -and -not ((& $bare "LocalSystem") -ieq "alice")) { Good "the account comparison treats .\user, BOX\user and user as one" }
     else { Bad "the account comparison is wrong: $bareLine" }
 } else { Bad "no account comparison in the service core" }
 
 # The record says what Windows says, and a backup carries its own time (30 Sept
-# 2026, the second dev install): five records said service_user 'alice' while
+# 2026, the second dev install): five records said service_user 'Alice' while
 # the services ran as LocalSystem, and a hand-set max_tokens was dropped because
 # Copy-Item keeps the config's modified time and keep-config read the backup's
 # age from it.
@@ -679,7 +681,7 @@ Section "install record: the account Windows says; backups: their own time"
     $global:Instance = "wren"; $global:SerenSvcSuffix = "-wren"
     if ((Get-SerenServiceName "seren-corpus-callosum") -eq "SerenCorpusCallosum-wren") { Good "the service name is the wrappers' (SerenCorpusCallosum-wren)" }
     else { Bad "service name wrong: $(Get-SerenServiceName 'seren-corpus-callosum')" }
-    if ((Test-SerenSameAccount ".\alice" "alice") -and (Test-SerenSameAccount "$env:COMPUTERNAME\alice" "alice") -and -not (Test-SerenSameAccount "LocalSystem" "alice")) { Good "accounts compare by who they are, not how they are spelled" }
+    if ((Test-SerenSameAccount ".\alice" "Alice") -and (Test-SerenSameAccount "$env:COMPUTERNAME\Alice" "alice") -and -not (Test-SerenSameAccount "LocalSystem" "Alice")) { Good "accounts compare by who they are, not how they are spelled" }
     else { Bad "Test-SerenSameAccount is wrong" }
     if ((Get-SerenServiceAccount "seren-no-such-service-here") -eq "") { Good "no such service: no account, no error" } else { Bad "a missing service returned an account" }
     Remove-Variable -Name Instance, SerenSvcSuffix -Scope Global -ErrorAction SilentlyContinue
@@ -821,8 +823,8 @@ else { & {
 } }
 
 # -- the callosum card: only the stores it was given (25 Sept 2026) ------------
-# the user: the callosum holds n stores, better with one of each, either alone
-# works - "im a warning message not a cop." The card wrote memory:7420 AND
+# The callosum holds n stores, better with one of each, either alone works;
+# a recommendation is a warning, not a cop. The card wrote memory:7420 AND
 # loci:7422 whatever it was handed, so a Memory-only callosum reported a dead
 # Loci on every search. This runs the REAL card from a scratch tree whose lib
 # is the real one with Find-Python / Resolve-Wheel / Create-Venv /

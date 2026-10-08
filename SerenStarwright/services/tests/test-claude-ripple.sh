@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════
 #  seren-claude-ripple.py: the ripple command for Claude Code, read off a
-#  Claude Code settings file (Design note: "so that YOU can use it
-#  here"). Proves:
+#  Claude Code settings file. Proves:
 #    - servers are gathered from all three scopes: user (top-level
 #      mcpServers), local (projects[<dir>].mcpServers) and project (.mcp.json)
 #    - --yaml N prints `command:` and `cwd:` lines, a JSON list that parses as
@@ -100,6 +99,17 @@ printf '%s' "from stdin" | FAKE_OUT="$T/woke.json" SEREN_CLAUDE_BIN="$FAKE_CLAUD
 got="$("$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["argv"][2], "|", d["stdin"])' "$T/woke.json" 2>&1)"
 [[ "$got" == "mcp__wren-workbench | from stdin" ]] \
   && ok_ "after the move the same command pre-approves the Workbench, and takes its message from stdin" || bad "after the move: $got"
+# the service's PATH is not the account's: claude lives in ~/.local/bin and PATH has none of it
+mkdir -p "$T/home/.local/bin"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) cp "$T/bin/claude.cmd" "$T/home/.local/bin/claude.cmd" ;;
+  *) cp "$T/bin/claude" "$T/home/.local/bin/claude" ;;
+esac
+HOMEW="$T/home"; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) HOMEW="$(cygpath -w "$T/home")" ;; esac
+PYABS="$(command -v "$PY")"
+printf '%s' "found me" | FAKE_OUT="$T/woke.json" SEREN_CLAUDE_JSON="$T/claude.json" HOME="$HOMEW" USERPROFILE="$HOMEW" PATH="/nonexistent"   "$PYABS" "$HELPER" "$T/proj" --run; rc=$?
+got="$("$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["stdin"])' "$T/woke.json" 2>&1)"
+[[ $rc -eq 0 && "$got" == "found me" ]] && ok_ "with nothing on PATH, claude is found in the account's ~/.local/bin (the Observatory hands over the service's PATH)" || bad "find in ~/.local/bin: rc=$rc $got"
 printf '{"projects": {}}' > "$T/none.json"
 SEREN_CLAUDE_BIN="$FAKE_CLAUDE" SEREN_CLAUDE_JSON="$T/none.json" "$PY" "$HELPER" "$T/proj" --run "hello" 2>"$T/err"; rc=$?
 [[ $rc -eq 2 ]] && grep -q "no MCP servers" "$T/err" && ok_ "woken with no servers registered: refuses and says so, it does not start a model with nothing" || bad "run with no servers: rc=$rc"

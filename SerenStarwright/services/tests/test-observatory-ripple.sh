@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  The Observatory card: receiving a ripple.
 #
-#  Design note: the hippocampus moves to the Nano and the model lives
+#  The hippocampus moves to a Jetson and the model lives
 #  on the desktop, so a ripple has to cross boxes - the Nano POSTs it to the
 #  desktop's Observatory, which starts the command AS the person. Proves:
 #    - --describe offers --ripple (a switch), --ripple-command, --ripple-run-as

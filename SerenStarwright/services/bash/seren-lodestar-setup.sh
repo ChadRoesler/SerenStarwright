@@ -268,7 +268,7 @@ if [[ -n "$RIPPLE_TARGET" ]]; then
       printf '  run_as: %s\n' "$(_yq "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")"
     elif [[ "$RIPPLE_TARGET" == "local" ]]; then
       printf '  command: %s\n' "$(_yq "${RIPPLE_COMMAND:-$RIPPLE_DEFAULT_COMMAND}")"
-      # Inferred at setup: the person running the install (Design note:).
+      # Inferred at setup: the person running the install.
       printf '  run_as: %s\n' "$(_yq "${RIPPLE_RUN_AS:-${SUDO_USER:-$(id -un)}}")"
     fi
   } >> "$CFG_PATH"

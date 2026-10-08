@@ -515,14 +515,14 @@ class InstallLog:
 
     WHY: on 30 Sept 2026 an account swap failed on two installs running, and
     the only record of why was this screen's log pane - gone when the window
-    closed. Neither the user nor the assistant could say what the service step had printed.
+    closed. Nobody could say what the service step had printed.
 
     One file per run in ~/.seren/logs (SEREN_LOG_DIR overrides, for tests),
     written line by line as the run goes, so a crash mid-install still leaves
     everything up to it. And a COPY of each card's part in that install's own
     logs folder - <install root>/logs under a root, <app dir>/logs in the old
     layout - because that is where someone looks when one instance misbehaves
-    (the user: 'that way we can disect a specific instances log'). The last KEEP of
+    (so one instance's log can be read on its own). The last KEEP of
     each are kept. Lines arrive already redacted (RedactingLog). A log that
     cannot be written never stops an install.
     """
@@ -613,14 +613,14 @@ class ServiceDef:
     requires: list[str] = field(default_factory=list)
     # Better with, works without (--describe's `recommends`). Wired when
     # present, never pulled into a run; none present is a yellow line under
-    # the group, never a blocked Next. Design note: "im a warning
-    # message not a cop."
+    # the group, never a blocked Next. A recommendation is a warning,
+    # not a cop.
     recommends: list[str] = field(default_factory=list)
     params: dict[str, str] = field(default_factory=dict)   # canonical -> native (ps only)
     # A flag that takes one of a few values (--describe's `choices`: bash
     # declares SVC_CHOICES, PowerShell derives it from [ValidateSet]). The
     # Advanced dialog shows a dropdown for it instead of a text box, so a
-    # typo can't reach the card. Design note: the ripple type.
+    # typo can't reach the card. The ripple type, for one.
     choices: dict[str, list[str]] = field(default_factory=dict)
     # Flags that take no value, from --describe's `switches` (bash derives it
     # from `shift ;;` branches, PowerShell from [switch] parameters). An older
@@ -644,7 +644,7 @@ class ServiceDef:
         # no-updates is not offered: update checking is cosmetic (a badge on
         # the info route), on by default, and the yaml block turns it off for
         # anyone who wants that. Ten cards keep the flag; the dialog does not
-        # ask about it (the smoke).
+        # ask about it (the 30 Sept 2026 smoke).
         skip = (UNIVERSAL_FLAGS | set(INLINE_FLAGS) | IDENTITY_FLAGS
                 | {"describe", "json", "help", "no-updates"})
         return [f for f in self.flags if f not in skip]
@@ -930,7 +930,7 @@ class InstalledRecord:
     # The flags the card was invoked with, minus secrets (a switch is True, a
     # value flag its value): what a reinstall starts from. Every advanced flag
     # used to be written into the yaml and forgotten, so a reinstall opened
-    # blank - which for a switch meant off (the smoke).
+    # blank - which for a switch meant off (the 30 Sept 2026 smoke).
     options: dict = field(default_factory=dict)
     has_token: bool = False        # the card wrote a bearer (never the token itself)
 
@@ -1509,7 +1509,7 @@ def inherited_options(records: list[InstalledRecord]) -> dict:
     known = [r for r in records if r.os_service or not r.derived]
     if known and all(r.autostart for r in known):
         out["service"] = True
-    # The prefix MOST of them share, not only one they all share. the user's wren
+    # The prefix MOST of them share, not only one they all share. One
     # set, 26 Sept: four venvs were <root><instance> and Margin, installed
     # earlier with a trailing dash typed on the root, was <root>-<instance>.
     # Requiring unanimity left the field blank for the whole set. A reinstall
@@ -1596,7 +1596,7 @@ def previous_install_data(installed: list[InstalledRecord], setups: list["Setup"
                           chosen: set[str]) -> list[str]:
     """Everything the box already has that bears on this run, in one place.
 
-    Design note: this was split between the top of the screen, the bottom
+    This was split between the top of the screen, the bottom
     and some of the cards. Continuing a setup shows that setup and nothing
     else - other installs are not called out unless this run adds a service
     that will be wired to one. Not continuing shows the whole box, by setup."""
@@ -1643,7 +1643,7 @@ def requirement_lines(members: list["ServiceDef"], svcs: dict[str, "ServiceDef"]
     A service that only RECOMMENDS gets a line when none of what it
     recommends is there: the same yellow, in the same place, and Next still
     goes. One of them is enough to clear it - the callosum works with a
-    Memory alone. Design note: "im a warning message not a cop."
+    Memory alone. A recommendation is a warning, not a cop.
     """
     have = {r.service for r in installed if picked is None or r.label in picked.members}
     out = []
@@ -1964,6 +1964,7 @@ class SplashScreen(Screen):
                     yield Button("Modify Node", id="modify-node",
                                  variant="default")
                 yield Button("Install Services", id="install", variant="primary")
+                yield Button("Install Carabiners", id="install-carabiners", variant="default")
                 yield Button("Exit", id="exit", variant="error")
         yield Footer()
 
@@ -1992,6 +1993,8 @@ class SplashScreen(Screen):
         # note below names Install as the way in.
         self.query_one("#modify-node", Button).disabled = (
             node is None or not node.provisioned)
+        # No carabiner card discovered = no door. Honest, like the node doors.
+        self.query_one("#install-carabiners", Button).disabled = not self.app.carabiners  # type: ignore[attr-defined]
 
         n = len(self.app.services)                      # type: ignore[attr-defined]
         # First token only. resolve_version() appends an explanatory tail
@@ -2023,8 +2026,157 @@ class SplashScreen(Screen):
             self.app.push_screen(PrepareNodeScreen(mode="install"))
         elif event.button.id == "modify-node":
             self.app.push_screen(PrepareNodeScreen(mode="modify"))
+        elif event.button.id == "install-carabiners":
+            self.app.push_screen(CarabinerScreen())
         elif event.button.id == "exit":
             self.app.exit()
+
+
+class CarabinerScreen(Screen):
+    """Clip a model's harness onto Seren: pick the carabiner, say where the
+    model works and which python runs the clip, point it at the Workbench and
+    Margin, go.
+
+    Its own door and its own form, not a card in the services grid, because a
+    carabiner sits on the harness's side of the strap: the questions are about
+    THIS box as the place a model lives (its project folder, its python, the
+    services it reaches), not about a service to run. The standard config is
+    pre-filled from the install ledger - the one Workbench and the one Margin
+    on the box, if there is one of each - so the common case is: open, look,
+    Next.
+    """
+
+    BINDINGS = [("escape", "app.pop_screen", "Back")]
+
+    def _one(self, service: str) -> str:
+        """The config path of the one installed instance of `service`, else ""."""
+        recs = installed_for(service, self.app.installed)                    # type: ignore[attr-defined]
+        return recs[0].config if len(recs) == 1 and recs[0].config else ""
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        cards = self.app.carabiners                                           # type: ignore[attr-defined]
+        with VerticalScroll(id="kbh-root"):
+            box = Vertical(id="kbh-box")
+            box.border_title = "Install Carabiners"
+            with box:
+                yield Static("A carabiner clips the harness a model lives in onto Seren: it registers the "
+                             "Workbench as the model's one MCP door, wakes the model when the Hippocampus "
+                             "or Lodestar asks, and hands it Margin's bookmark at session start. One file, "
+                             "installed beside its own config and framing; this box must be where the "
+                             "harness runs.", id="kbh-blurb")
+                choices = [c for card in cards for c in card.choices.get("carabiner", [])] or [c.name for c in cards]
+                yield Label("carabiner (the harness)")
+                yield Select([(c, c) for c in dict.fromkeys(choices)], value=choices[0] if choices else Select.BLANK,
+                             allow_blank=False, id="kbh-carabiner")
+                yield Label("project: the folder the model works in (wakes run there)")
+                yield Input(value="", placeholder=str(Path.home()), id="kbh-project")
+                yield Label("python: runs the clip from hooks and ripples (blank = the one found on install)")
+                yield Input(value="", placeholder="(found on install)", id="kbh-python")
+                yield Label("into: where the clip lives (blank = <root>/kbh, or ~/seren-kbh)")
+                yield Input(value="", placeholder="(default)", id="kbh-into")
+                # THE WORKBENCH AND MARGIN ARE ROUTES: a url and a token, written
+                # into the clip's yaml. On the box they live on, the ledger knows
+                # their configs and the card reads the route out of those; from
+                # anywhere else, drop in the url and the token. The url fields win
+                # when both are given. The token never becomes an argument: it
+                # rides to the card in the job's environment, and the log redacts it.
+                yield Label("workbench url: the one MCP door, when the Workbench is on another box (e.g. http://nuc:7255)")
+                yield Input(value="", placeholder="(blank: use the config below)", id="kbh-workbench-url")
+                yield Label("workbench token")
+                yield Input(value="", placeholder="(the Workbench's bearer; stays out of the command line)",
+                            password=True, id="kbh-workbench-token")
+                yield Label("workbench config: when the Workbench is on THIS box")
+                yield Input(value=self._one("seren-workbench"), placeholder="(none on this box)", id="kbh-workbench")
+                yield Label("margin url: the bookmark, when Margin is on another box (e.g. http://nuc:7251)")
+                yield Input(value="", placeholder="(blank: use the config below)", id="kbh-margin-url")
+                yield Label("margin token")
+                yield Input(value="", placeholder="(Margin's bearer; stays out of the command line)",
+                            password=True, id="kbh-margin-token")
+                yield Label("margin config: when Margin is on THIS box")
+                yield Input(value=self._one("seren-margin"), placeholder="(none on this box)", id="kbh-margin")
+                yield Label("host: with a config from another box, the host this box dials (its 0.0.0.0 is a name here)")
+                yield Input(value="", placeholder="(as the configs say)", id="kbh-host")
+                yield Label("instance: the registered server is <instance>-workbench")
+                yield Input(value="", placeholder="seren", id="kbh-instance")
+                yield Checkbox("dry wake: belay also runs the harness binary once (--version)", id="kbh-drywake")
+                yield Static("", id="kbh-note")
+        with Horizontal(id="actions"):
+            yield Button("Back", id="back", variant="default")
+            yield Button("Next", id="next", variant="primary")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        note = self.query_one("#kbh-note", Static)
+        wb, mg = self._one("seren-workbench"), self._one("seren-margin")
+        lines = []
+        if wb:
+            lines.append(f"Workbench found on this box: {wb}")
+        if mg:
+            lines.append(f"Margin found on this box: {mg}")
+        if not (wb or mg):
+            lines.append("No Workbench or Margin in this box's install ledger: point the two fields at their "
+                         "configs (copied from the brain box), and set host to that box's name.")
+        note.update("\n".join(lines))
+
+    def build(self) -> Optional[list[str]]:
+        cards = self.app.carabiners                                           # type: ignore[attr-defined]
+        name = str(self.query_one("#kbh-carabiner", Select).value or "")
+        card = next((c for c in cards if name in c.choices.get("carabiner", []) or c.name == name), cards[0] if cards else None)
+        if card is None:
+            return None
+
+        def val(wid: str) -> str:
+            return self.query_one(wid, Input).value.strip()
+        cfg: dict = {"carabiner": name}
+        for wid, flag in (("#kbh-project", "project"), ("#kbh-python", "python"), ("#kbh-into", "into"),
+                          ("#kbh-workbench-url", "workbench-url"), ("#kbh-margin-url", "margin-url"),
+                          ("#kbh-workbench", "workbench-config"), ("#kbh-margin", "margin-config"),
+                          ("#kbh-host", "host"), ("#kbh-instance", "instance")):
+            v = val(wid)
+            if v:
+                cfg[flag] = v
+        # A url wins over a config for the same service; the card would too,
+        # but the command should say one thing.
+        if cfg.get("workbench-url"):
+            cfg.pop("workbench-config", None)
+        if cfg.get("margin-url"):
+            cfg.pop("margin-config", None)
+        if self.query_one("#kbh-drywake", Checkbox).value:
+            cfg["dry-wake"] = True
+        universal = {k: v for k, v in self.app.universal.items() if k in ("root", "local", "ref", "repo")}  # type: ignore[attr-defined]
+        return build_command(card, cfg, universal)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back":
+            self.app.pop_screen()
+            return
+        if event.button.id != "next":
+            return
+        cmd = self.build()
+        if cmd is None:
+            self.query_one("#kbh-note", Static).update("No carabiner card was discovered; nothing to install.")
+            return
+        for wid, label in (("#kbh-project", "project"), ("#kbh-workbench", "workbench config"), ("#kbh-margin", "margin config")):
+            v = self.query_one(wid, Input).value.strip()
+            if v and not Path(v).expanduser().exists():
+                self.query_one("#kbh-note", Static).update(f"{label}: no such path on this box: {v}")
+                return
+        name = str(self.query_one("#kbh-carabiner", Select).value or "carabiner")
+        self.app.jobs = [Job(label=f"clip {name} onto Seren", cmd=cmd, env=self.job_env())]  # type: ignore[attr-defined]
+        self.app.push_screen(InstallScreen())
+
+    def job_env(self) -> dict:
+        """The tokens, as the card expects them: SEREN_WORKBENCH_TOKEN and
+        SEREN_MARGIN_TOKEN in the environment, never on the command line, and
+        registered as secrets so the install log redacts them."""
+        env: dict = {}
+        for wid, var in (("#kbh-workbench-token", "SEREN_WORKBENCH_TOKEN"), ("#kbh-margin-token", "SEREN_MARGIN_TOKEN")):
+            v = self.query_one(wid, Input).value.strip()
+            if v:
+                env[var] = v
+                self.app.secrets.add(v)                                        # type: ignore[attr-defined]
+        return env
 
 
 class ServiceCard(Vertical):
@@ -3778,12 +3930,18 @@ class StarwrightApp(App):
     #splash-node-row Button { width: 1fr; margin: 0 1 1 1; }
     #splash-note { color: #6c7086; text-align: center; padding-bottom: 1; }
     #select-root { padding: 1 2; }
+    #kbh-root { padding: 1 2; }
+    #kbh-box { border: round #2f6fb3; padding: 1 2; height: auto; }
+    #kbh-box Label { color: #a6adc8; padding: 1 0 0 0; }
+    #kbh-box Input { width: 100%; }
+    #kbh-blurb { color: #cdd6f4; padding: 0 0 1 0; }
+    #kbh-note { color: #f9e2af; padding: 1 0 0 0; }
     /* Explicit height:auto all the way down. Without it on the GROUP and the
        CARDS row, the outer container fixed its height first and clipped the
        bottom line off every card whose description wrapped - the border landed
        mid-sentence ("The bridge between Loci and"). */
-    /* Every box on a screen is the same width (Design note: 'same sized as
-       the other groups... makes it look purtty'). */
+    /* Every box on a screen is the same width (the same size as the
+       other groups; it reads better). */
     .group { border: round #45475a; border-title-color: #cba6f7; border-title-style: bold;
              padding: 0 1; margin: 1 0; height: auto; width: 100%; }
     .group-head { color: #6c7086; margin: 1 0 0 0; }
@@ -3801,7 +3959,7 @@ class StarwrightApp(App):
     #setup-box { margin: 1 0; }
     #prev-box { margin: 1 0 0 0; }
     #cfg-prev-box { margin: 1 0; }
-    /* the room the user asked for between the continue row and name / port */
+    /* room between the continue row and name / port */
     #setup-fields { margin: 1 0 0 0; }
     #setup-warn { color: #f38ba8; height: auto; }
     .adv-folded { display: none; height: auto; }
@@ -3870,7 +4028,13 @@ class StarwrightApp(App):
     def __init__(self, services: list[ServiceDef], problems: list[str],
                  installed: Optional[list[InstalledRecord]] = None) -> None:
         super().__init__()
-        self.services = services
+        # A carabiner clips a HARNESS onto Seren; it sits on the model's side,
+        # not among the services. Its cards get their own door on the splash
+        # (Install Carabiners) and stay out of the services grid, so a person
+        # installing a brain is never offered a clip for a harness they may not
+        # have, and vice versa.
+        self.carabiners: list[ServiceDef] = [s for s in services if s.group == "carabiners"]
+        self.services = [s for s in services if s.group != "carabiners"]
         self.problems = problems
         self.installed: list[InstalledRecord] = list(installed or [])
         self.setups: list[Setup] = load_setups(installed=self.installed) if installed is not None else []

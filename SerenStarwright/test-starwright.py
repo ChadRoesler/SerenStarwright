@@ -79,7 +79,13 @@ async def test_discovery() -> None:
         bad(f"discovery problem: {p}")
     for s in services:
         check(bool(s.name and s.display), f"{s.name}: has name + display")
-        check(s.default_port > 0, f"{s.name}: port {s.default_port}")
+        # A carabiner is not a server: it clips a harness onto Seren and
+        # listens on nothing, so its port is 0 and must be. Every other card
+        # is a service with a port.
+        if s.group == "carabiners":
+            check(s.default_port == 0, f"{s.name}: a carabiner has no port (got {s.default_port})")
+        else:
+            check(s.default_port > 0, f"{s.name}: port {s.default_port}")
         check(bool(s.accent), f"{s.name}: accent {s.accent or '(missing)'}")
 
 
@@ -94,9 +100,13 @@ async def test_nothing_dropped() -> None:
         await pilot.click("#install")
         await pilot.pause()
         shown = {c.svc.name for c in app.screen.query(sw.ServiceCard)}
-        missing = {s.name for s in services} - shown
-        check(not missing, f"all {len(services)} rendered"
+        # A carabiner card is not a service and has its own door on the splash
+        # (Install Carabiners); every other discovered card must be in this grid.
+        missing = {s.name for s in app.services} - shown
+        check(not missing, f"all {len(app.services)} service card(s) rendered"
                            + (f" - MISSING {sorted(missing)}" if missing else ""))
+        doors = {s.name for s in services if s.group == "carabiners"}
+        check(doors <= {c.name for c in app.carabiners}, f"carabiner card(s) kept for their own door: {sorted(doors)}")
 
 
 async def test_dependencies() -> None:
@@ -125,8 +135,8 @@ async def test_callosum_recommends() -> None:
     """Corpus Callosum REQUIRED Memory and Loci, so ticking it pulled both
     into every run, and its card wrote an entry for each whether or not it
     was there - a Memory-only callosum reported a dead Loci on every search.
-    Design note: it holds n stores, better with one of each, either
-    alone works - "im a warning message not a cop." It RECOMMENDS them now:
+    It holds n stores, better with one of each, either alone works; a
+    recommendation is a warning, not a cop. It RECOMMENDS them now:
     wired when present, never pulled, a yellow line when none is, and Next
     is never blocked."""
     print("\n== Callosum recommends Memory and Loci, requires nothing")
@@ -238,7 +248,7 @@ async def test_layout(cols: int, rows: int) -> None:
         clipped = [c.svc.name for c in app.screen.query(sw.ServiceCard)
                    if sum(x.outer_size.height for x in c.children) > c.content_size.height]
         check(not clipped, f"no card clipped{' - ' + str(clipped) if clipped else ''}")
-        for s in services:
+        for s in app.services:                             # the grid's cards; carabiners have their own door
             app.screen.query_one(f"#svc-{s.name}", Checkbox).value = True
         await pilot.pause()
         await pilot.click("#next")
@@ -849,6 +859,65 @@ async def test_command_building() -> None:
     check(not missing, "every card declares --local (missing: %s)" % missing)
 
 
+async def test_carabiner_door() -> None:
+    """The carabiners sit on the side of the harness, so Install Carabiners
+    belongs on the main screen beside Install Services, Install Node and
+    Modify Node. Its own door and form; the
+    carabiner card never shows in the services grid; the command it builds is
+    the card with the standard config, the Workbench and Margin pre-filled from
+    the ledger when the box has one of each."""
+    print("\n== Install Carabiners door")
+    services, problems = sw.discover()
+    cards = [s for s in services if s.group == "carabiners"]
+    check(bool(cards), "a carabiner card is discovered")
+    if not cards:
+        return
+    wb = sw.InstalledRecord(service="seren-workbench", instance="wren", host="127.0.0.1", port=7255,
+                            config="/tmp/wb/seren-workbench.yaml")
+    mg = sw.InstalledRecord(service="seren-margin", instance="wren", host="127.0.0.1", port=7251,
+                            config="/tmp/mg/seren-margin.yaml")
+    app = sw.StarwrightApp(services, problems, installed=[wb, mg])
+    check(not any(s.group == "carabiners" for s in app.services), "carabiner cards stay out of the services grid")
+    check(app.carabiners and app.carabiners[0].name == "seren-carabiner", "the app keeps them apart")
+    async with app.run_test(size=(110, 60)) as pilot:
+        check(not app.screen.query_one("#install-carabiners", Button).disabled, "Install Carabiners is on the splash, enabled")
+        await pilot.click("#install-carabiners")
+        await pilot.pause()
+        scr = app.screen
+        check(isinstance(scr, sw.CarabinerScreen), "the carabiner screen opened")
+        check(scr.query_one("#kbh-workbench", Input).value == "/tmp/wb/seren-workbench.yaml", "the Workbench config is pre-filled from the ledger")
+        check(scr.query_one("#kbh-margin", Input).value == "/tmp/mg/seren-margin.yaml", "Margin's too")
+        check(str(scr.query_one("#kbh-carabiner", Select).value) == "claude", "claude is the carabiner picked")
+        scr.query_one("#kbh-project", Input).value = "D:/work" if sw.IS_WINDOWS else "/home/me/work"
+        scr.query_one("#kbh-host", Input).value = "nuc"
+        scr.query_one("#kbh-margin-url", Input).value = "http://nuc:7251"
+        scr.query_one("#kbh-margin-token", Input).value = "margin-secret"
+        scr.query_one("#kbh-instance", Input).value = "wren"
+        scr.query_one("#kbh-drywake", Checkbox).value = True
+        await pilot.pause()
+        cmd = scr.build()
+        joined = " ".join(cmd)
+        check(cards[0].script.name in joined, "the command runs the carabiner card")
+        check(("--carabiner claude" in joined) or ("-Carabiner claude" in joined), "with the carabiner picked")
+        check("seren-workbench.yaml" in joined, "the Workbench config from the ledger rides along")
+        check(("--margin-url http://nuc:7251" in joined) or ("-MarginUrl http://nuc:7251" in joined), "a Margin url is a route")
+        check("seren-margin.yaml" not in joined, "and the url wins over the ledger's config for the same service")
+        check("margin-secret" not in joined, "the token is NOT on the command line")
+        check(scr.job_env().get("SEREN_MARGIN_TOKEN") == "margin-secret", "it rides in the job's environment")
+        check(app.secrets.redact("x margin-secret y") != "x margin-secret y", "and the log redacts it")
+        check(("--host nuc" in joined) or ("-CarabinerHost nuc" in joined), "the host this box dials")
+        check(("--instance wren" in joined) or ("-Instance wren" in joined), "the instance")
+        check(("--dry-wake" in joined) or ("-DryWake" in joined), "the dry wake switch, as a switch")
+        check("--json" in joined or "-Json" in joined, "and the event stream")
+        # an empty services grid is still a services grid: Install Services works without a brain card? no -
+        # but the carabiner card must not be what the grid shows
+        await pilot.click("#back")
+        await pilot.pause()
+        await pilot.click("#install")
+        await pilot.pause()
+        check(not list(app.screen.query("#svc-seren-carabiner")), "no carabiner card in the services grid")
+
+
 async def test_switches_are_check_boxes() -> None:
     """A flag that takes no value must never be a text box. Every card has
     --no-updates, and the Advanced modal rendered it as an Input: whatever the
@@ -866,9 +935,13 @@ async def test_switches_are_check_boxes() -> None:
     check("port" not in mem.switches and "token" not in mem.switches,
           "flags that take a value are not switches")
     for svc in services:
+        if svc.group == "carabiners":
+            # Not a service: no update badge to turn off, so no --no-updates.
+            check("no-updates" not in svc.flags, "%s (a carabiner) does not pretend to check for updates" % svc.name)
+            continue
         check("no-updates" in svc.switches, "%s reports --no-updates as a switch" % svc.name)
         # ...and the dialog does not offer it: update checking is cosmetic and
-        # on by default; the yaml block turns it off (the smoke).
+        # on by default; the yaml block turns it off (the 30 Sept smoke).
         check("no-updates" not in svc.advanced_flags, "%s keeps no-updates out of Advanced" % svc.name)
 
     app = sw.StarwrightApp(services, problems)
@@ -886,8 +959,8 @@ async def test_switches_are_check_boxes() -> None:
             return
         check(isinstance(modal.query_one("#adv-claude-mcp"), Checkbox), "claude-mcp is a check box")
         check(isinstance(modal.query_one("#adv-port"), Input), "port is still a text box")
-        # Design note: st "sitting as part of the advanced makes it a weird
-        # hidden thing" - it is a checkbox on Memory's row now, labelled with
+        # st "sitting as part of the advanced makes it a weird hidden thing" -
+        # it is a checkbox on Memory's row now, labelled with
         # what it costs, and not in the dialog at all
         check(not modal.query("#adv-st"), "st is not in the Advanced dialog")
         modal.query_one("#adv-claude-mcp", Checkbox).value = True
@@ -906,7 +979,7 @@ async def test_switches_are_check_boxes() -> None:
 
 
 async def test_advanced_values_can_be_changed_and_cleared() -> None:
-    """Design note: an instance name set once in the Advanced dialog could
+    """An instance name set once in the Advanced dialog could
     not be changed afterwards. The dialog reported only what was filled in and
     the screen merged it, so a cleared field or an unticked box never removed
     the old value."""
@@ -958,7 +1031,7 @@ async def test_advanced_values_can_be_changed_and_cleared() -> None:
 
 
 async def test_a_choice_flag_is_a_dropdown() -> None:
-    """Design note: the hippocampus ripple is 'script' or 'endpoint' (or off),
+    """The hippocampus ripple is 'script' or 'endpoint' (or off),
     and a text box let any typo through to the card. A flag the card offers
     choices for (--describe's `choices`) is a dropdown; picking one reaches the
     command line, and the blank means the card's default - the flag is left off."""
@@ -1081,7 +1154,7 @@ async def test_install_ledger() -> None:
 
 
 async def test_select_layout() -> None:
-    """the user's drawing, 25 Sept: a Setup box; room between the continue row
+    """The drawing: a Setup box; room between the continue row
     and name / port; the port takes digits only; a new setup may not take an
     existing name; groups at most three cards wide; every card one size with
     a two-line description; 'X requires Y' under the group until it is met."""
@@ -1143,7 +1216,7 @@ async def test_select_layout() -> None:
 
 
 async def test_config_boxes() -> None:
-    """the user's drawing, 26 Sept: every section a titled box, all one width, on
+    """The drawing: every section a titled box, all one width, on
     both screens; the group's install-all box has a line of air under the
     border it cannot sit in."""
     print("\n== Boxes, one width")
@@ -1174,7 +1247,7 @@ async def test_config_boxes() -> None:
 
 
 async def test_install_root() -> None:
-    """Design note: one folder per named install - venvs, apps, stores and
+    """One folder per named install - venvs, apps, stores and
     logs - so two clusters on one host share nothing and you can see what is
     whose. An install from before roots is reinstalled in place, not moved."""
     print("\n== Install roots")
@@ -1186,7 +1259,7 @@ async def test_install_root() -> None:
     try:
         check(sw.setup_root("wren", home) == str(home / "seren" / "wren"), "a named install lives in ~/seren/<name>")
         check(sw.setup_root("", home) == str(home / "seren" / "default"), "an unnamed one is 'default'")
-        check(sw.setup_root("the assistant's box", home) == str(home / "seren" / "rhys-s-box"), "the name is made safe for a folder")
+        check(sw.setup_root("Someone's box", home) == str(home / "seren" / "someone-s-box"), "the name is made safe for a folder")
 
         rooted = sw.InstalledRecord(service="seren-memory", instance="wren", root=str(home / "seren" / "wren"))
         old = sw.InstalledRecord(service="seren-memory", instance="wren-memory")
@@ -1411,7 +1484,7 @@ async def test_record_found_modal() -> None:
 
 
 async def test_installed_dependency_is_used_not_reinstalled() -> None:
-    """Design note: ticking the hippocampus loaded a default Memory install
+    """Ticking the hippocampus loaded a default Memory install
     rather than the one already installed. An installed dependency satisfies
     the requirement and is wired; only a missing one is pulled in."""
     print("\
@@ -1461,8 +1534,8 @@ async def test_installed_dependency_is_used_not_reinstalled() -> None:
 
 
 async def test_nothing_asked_that_the_box_knows() -> None:
-    """Design note: 'for you have memory loci and corpus installed, just
-    adding the hippocampus, it shouldnt prompt or want all the values.' The
+    """With Memory, Loci and the Callosum installed, adding the hippocampus
+    should not prompt for all the values again. The
     wired memory folds to one line in Configure; the install options come
     from the installs the run builds on."""
     print("\n== Nothing asked that the box knows")
@@ -1483,9 +1556,9 @@ async def test_nothing_asked_that_the_box_knows() -> None:
     mixed = sw.InstalledRecord(service="seren-loci", port=7266, source="pypi", autostart=True)
     check("local" not in sw.inherited_options([mem, mixed]), "records that disagree on source: nothing inherited")
 
-    # the user's wren set, 26 Sept: four venvs <root><instance>, Margin <root>-<instance>.
+    # One set, 26 Sept: four venvs <root><instance>, Margin <root>-<instance>.
     # Unanimity left the venv root blank; the majority fills it and names Margin.
-    root = "C:\\Users\\alice\\wren-seren-venvs"
+    root = "C:\\Users\\Alice\\wren-seren-venvs"
     wren = [sw.InstalledRecord(service=f"seren-{s}", instance=f"wren-{s}", venv=root + f"wren-{s}")
             for s in ("memory", "loci", "corpuscallosum", "hippocampus")]
     wren.append(sw.InstalledRecord(service="seren-margin", instance="wren-margin", venv=root + "-wren-margin"))
@@ -1529,7 +1602,7 @@ async def test_nothing_asked_that_the_box_knows() -> None:
 
 
 async def test_reinstall_starts_from_what_is_installed() -> None:
-    """Design note: continuing an install, the venv root, LocalSystem, the
+    """Continuing an install, the venv root, LocalSystem, the
     service box and the hippocampus's model url were blank, and nothing
     stopped a reinstall wiping a bearer token. A reinstall starts from the
     installed service; the card keeps the token."""
@@ -1585,19 +1658,19 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
         check(inh.get("venv") == str(home / "wren-seren-venvs-") and inh.get("local-system") is True
               and inh.get("service") is True, f"universal defaults from the record: {inh}")
         # The record's options: every flag the card was given, back on the
-        # dialog (the smoke: a ripple, a voice card, a bookmark hook
+        # dialog (the 30 Sept smoke: a ripple, a voice card, a bookmark hook
         # and the bedtime all opened blank on reinstall - blank meant off).
         rec2 = sw.InstalledRecord(service="seren-hippocampus", instance="wren", host="127.0.0.1", port=7269,
                                   venv=str(home / "venvs" / "hippocampus"), config="", app_dir=str(home / "apps" / "hippocampus"),
                                   root=str(home), extras={"mcp": True}, has_token=True,
-                                  options={"port": "7269", "instance": "wren", "ripple": "script", "ripple-run-as": "alice",
+                                  options={"port": "7269", "instance": "wren", "ripple": "script", "ripple-run-as": "Alice",
                                            "ripple-claude": "D:/work/project", "voice-card": True, "claude-mcp": True,
                                            "sleep-at": "03:30", "keep-warm": "600", "gen-token": True, "root": str(home),
                                            "local-system": True, "service": True, "no-such-flag": "x"})
         per2 = {"seren-hippocampus": {"instance": "wren"}}
         sw.prefill_reinstall(["seren-hippocampus"], svcs, per2, [rec2])
         c2 = per2["seren-hippocampus"]
-        want = {"ripple": "script", "ripple-run-as": "alice", "ripple-claude": "D:/work/project",
+        want = {"ripple": "script", "ripple-run-as": "Alice", "ripple-claude": "D:/work/project",
                 "voice-card": True, "claude-mcp": True, "sleep-at": "03:30", "keep-warm": "600", "mcp": True}
         missing = {k: c2.get(k) for k, v in want.items() if c2.get(k) != v}
         check(not missing, f"every recorded flag is back on the dialog: {missing or 'all'}")
@@ -1610,24 +1683,24 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
         # The account: a switch with no password is stopped BEFORE install.
         # 30 Sept 2026: five cards were sent -ServiceUser with a blank password,
         # the core refused, every card reported success, and the services kept
-        # LocalSystem while their records said alice.
+        # LocalSystem while their records said Alice.
         hip = svcs["seren-hippocampus"]
         sys_rec = sw.InstalledRecord(service="seren-hippocampus", instance="wren", port=7269, local_system=True)
         usr_rec = sw.InstalledRecord(service="seren-hippocampus", instance="wren", port=7269, local_system=False,
                                      service_user=".\\alice")
         want = {"seren-hippocampus": {"instance": "wren", "service": True}}
-        args = (["seren-hippocampus"], svcs, want, {"service-user": "alice"})
+        args = (["seren-hippocampus"], svcs, want, {"service-user": "Alice"})
         if sw.IS_WINDOWS and "service-user" in hip.flags:
             p1 = sw.identity_problems(*args, [sys_rec])
             check(len(p1) == 1 and "needs that account's Windows password" in p1[0] and "LocalSystem now" in p1[0],
-                  f"LocalSystem -> alice with no password is stopped, and says what it runs as: {p1}")
+                  f"LocalSystem -> Alice with no password is stopped, and says what it runs as: {p1}")
             check(sw.identity_problems(*args, [sys_rec], {}, "hunter2") == [], "with the password it goes ahead")
             check(sw.identity_problems(*args, [usr_rec]) == [], "already runs as that account: no password needed")
             check(sw.identity_problems(["seren-hippocampus"], svcs, want, {"local-system": True}, [sys_rec]) == [],
                   "LocalSystem needs no credential")
             check(sw.identity_problems(["seren-hippocampus"], svcs, {"seren-hippocampus": {"instance": "wren"}},
-                                       {"service-user": "alice"}, [sys_rec]) == [], "not installed as a service: nothing to ask")
-            check(sw._bare_account(".\\alice") == sw._bare_account("alice"), "one account, however Windows spells it")
+                                       {"service-user": "Alice"}, [sys_rec]) == [], "not installed as a service: nothing to ask")
+            check(sw._bare_account(".\\Alice") == sw._bare_account("alice"), "one account, however Windows spells it")
         else:
             check(sw.identity_problems(*args, [sys_rec]) == [], "off Windows there is no credential to ask for")
         # The password is put to Windows BEFORE anything runs. 30 Sept 2026: a
@@ -1642,12 +1715,12 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
             return "" if pw == "the-right-one" else "The user name or password is incorrect. (Windows error 1326)"
         two = ["seren-hippocampus", "seren-memory"]
         both = {n: {"instance": "wren", "service": True} for n in two}
-        uni = {"service-user": "alice"}
+        uni = {"service-user": "Alice"}
         if sw.IS_WINDOWS and "service-user" in hip.flags:
             bad = sw.credential_problems(two, svcs, both, uni, {}, "typo", logon=fake_logon)
-            check(len(bad) == 1 and "Windows refused the password for .\\alice" in bad[0] and "1326" in bad[0],
+            check(len(bad) == 1 and "Windows refused the password for .\\Alice" in bad[0] and "1326" in bad[0],
                   f"a wrong password is refused before anything runs, with Windows' reason: {bad}")
-            check(asked == [(".\\alice", "typo")], f"one account and password is asked once, with its prefix: {asked}")
+            check(asked == [(".\\Alice", "typo")], f"one account and password is asked once, with its prefix: {asked}")
             check(sw.credential_problems(two, svcs, both, uni, {}, "the-right-one", logon=fake_logon) == [], "the right one goes ahead")
             n_before = len(asked)
             check(sw.credential_problems(two, svcs, both, {"local-system": True}, {}, "typo", logon=fake_logon) == []
@@ -1658,7 +1731,7 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
         else:
             check(sw.credential_problems(two, svcs, both, uni, {}, "typo", logon=fake_logon) == [] and asked == [],
                   "off Windows nothing is asked")
-        check(sw._split_account(".\\alice") == ("alice", ".") and sw._split_account("alice") == ("alice", ".")
+        check(sw._split_account(".\\Alice") == ("Alice", ".") and sw._split_account("Alice") == ("Alice", ".")
               and sw._split_account("BOX\\alice") == ("alice", "BOX") and sw._split_account("c@d.com") == ("c@d.com", None),
               "an account is split the way LogonUser wants it")
         # the screens: the universal inputs and the Configure note
@@ -1842,6 +1915,7 @@ async def main() -> int:
     await test_nothing_asked_that_the_box_knows()
     await test_reinstall_starts_from_what_is_installed()
     await test_switches_are_check_boxes()
+    await test_carabiner_door()
     await test_advanced_values_can_be_changed_and_cleared()
     await test_a_choice_flag_is_a_dropdown()
     await test_install_log_is_kept()

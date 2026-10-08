@@ -201,8 +201,8 @@ seren_switches_from_self() {
 }
 
 # -- seren_claude_ripple_lines DIR INDENT - a ripple that wakes Claude Code -----
-# The ripple's command for Claude Code, read off this box (Design note:
-# "so that YOU can use it here"): `claude -p "{message}"` run IN the project the
+# The ripple's command for Claude Code, read off this box:
+# `claude -p "{message}"` run IN the project the
 # model's memory MCP servers are registered for, with those servers' tools
 # pre-approved - a headless run cannot answer a permission prompt. Prints the
 # `command:` and `cwd:` yaml lines at INDENT spaces; dies with the reason when
@@ -239,8 +239,8 @@ seren_claude_ripple_lines() {
 
 # -- seren_claude_mcp_register SHORT - this service in Claude Code, everywhere --
 # Registers the service with Claude Code at USER scope as <instance>-SHORT
-# (wren-memory), so every folder's Claude has it. Design note: added by
-# hand from a home folder, the wren-* servers landed at Claude Code's LOCAL
+# (e.g. brain-memory), so every folder's Claude has it. Added by hand from a
+# home folder, the servers once landed at Claude Code's LOCAL
 # scope - that one folder - and a Claude started anywhere else woke without its
 # memory. No token on a command line: the entry holds the URL and a
 # headersHelper - this service's python running seren-mcp-headers.py on its
@@ -336,7 +336,7 @@ seren_claude_bookmark_register() {
 # installs it first when both are in a run, but never pulls one in; with none
 # of them present it warns and carries on. The corpus callosum fans n stores -
 # one Memory and one Loci is the good shape, either alone works, neither still
-# installs. Design note: "im a warning message not a cop."
+# installs. A recommendation is a warning, not a cop.
 seren_describe() {
   local extras_json="" flags_json="" requires_json="" recommends_json="" f
   local flags="${SVC_FLAGS:-$(seren_flags_from_self)}"
@@ -864,8 +864,8 @@ seren_sibling_plugin_lines() {
 #     <root>/logs           service logs
 #
 # Every path is ABSOLUTE. A service running as another account resolves ~ to
-# THAT account's home: the wren set's configs said ~/.seren-memory..., the
-# services ran as LocalSystem, and the whole of the assistant's memory lived in the
+# THAT account's home: one set's configs said ~/.seren-memory..., the
+# services ran as LocalSystem, and the whole of a model's memory lived in the
 # Windows system profile, outside every backup (found 26 Sept 2026).
 #
 # The instance is the install's name; the OS service joins it with a dash
@@ -961,7 +961,7 @@ seren_record_install() {
   # The flags this card was invoked with, so a reinstall starts from them:
   # every advanced flag (a ripple, a bedtime, a model path, a voice card...)
   # used to be written into the yaml and then forgotten, and a reinstall
-  # opened blank - which for a switch meant off (the smoke).
+  # opened blank - which for a switch meant off (the 30 Sept 2026 smoke).
   # Values only for flags that take one; a switch records true. NEVER a
   # secret: any flag ending in -token, and --password, is dropped whole.
   local options_json; options_json="$(seren_options_json)"

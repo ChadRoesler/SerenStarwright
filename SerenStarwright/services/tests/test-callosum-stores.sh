@@ -2,8 +2,8 @@
 # ══════════════════════════════════════════════════════════════
 #  The callosum card writes only the stores it was given.
 #
-#  Design note: the callosum holds n stores, better with one of each,
-#  either alone works - "im a warning message not a cop." The card used to
+#  The callosum holds n stores, better with one of each, either alone works;
+#  a recommendation is a warning, not a cop. The card used to
 #  write memory:7420 AND loci:7422 whatever it was handed, so a Memory-only
 #  callosum reported a dead Loci on every search.
 #

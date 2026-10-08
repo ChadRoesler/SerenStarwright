@@ -2,7 +2,7 @@
 # ══════════════════════════════════════════════════════════════
 #  --claude-bookmark: every Claude Code session starts from Margin's bookmark.
 #
-#  the assistant and Design note: every session walked in cold. Margin now keeps
+#  Every session walked in cold. Margin now keeps
 #  a bookmark (the dedication, and how many letters wait); this card flag clips
 #  it into Claude Code as a SessionStart hook. Proves:
 #    - the Margin card offers --claude-bookmark as a switch
