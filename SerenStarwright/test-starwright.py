@@ -935,10 +935,10 @@ async def test_switches_are_check_boxes() -> None:
     check("port" not in mem.switches and "token" not in mem.switches,
           "flags that take a value are not switches")
     for svc in services:
-        if svc.group == "carabiners":
-            # Not a service: no update badge to turn off, so no --no-updates.
-            check("no-updates" not in svc.flags, "%s (a carabiner) does not pretend to check for updates" % svc.name)
-            continue
+        # Every card takes --no-updates, a carabiner included: the describe
+        # contract (CI's bash step and verify-powershell) asks for it on all
+        # cards, and a carabiner accepting a switch it has no use for is cheaper
+        # than two exemption lists that drift.
         check("no-updates" in svc.switches, "%s reports --no-updates as a switch" % svc.name)
         # ...and the dialog does not offer it: update checking is cosmetic and
         # on by default; the yaml block turns it off (the 30 Sept smoke).

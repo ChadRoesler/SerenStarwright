@@ -42,6 +42,7 @@
 #                            route (token from $KBH_TOKEN_<NAME>), else a
 #                            connection file in <into>/connections
 #    --kbh PATH              Install this .kbh file
+#    --no-updates            Accepted for the card contract; a carabiner checks nothing
 #    --local DIR|URL         A dev wheelhouse (seren-dev-publish.sh) that holds
 #                            <carabiner>.kbh beside the wheels
 #    --ref TAG               The .kbh from a SerenCarabiners GitHub release
@@ -139,6 +140,7 @@ while [[ $# -gt 0 ]]; do
     --server)           SERVERS+=("$2"); shift 2 ;;
     --kbh)              KBH="$2"; shift 2 ;;
     --local)            LOCAL="$2"; shift 2 ;;
+    --no-updates)       NO_UPDATES=true; shift ;;   # every card takes it; a carabiner has no update check
     --ref)              REF="$2"; shift 2 ;;
     --repo)             REPO="$2"; shift 2 ;;
     --repo-dir)         REPO_DIR="$2"; shift 2 ;;

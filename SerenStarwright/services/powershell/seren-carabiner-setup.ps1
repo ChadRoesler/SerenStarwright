@@ -49,6 +49,7 @@ param(
   [string]   $Repo            = "",
   [string]   $RepoDir         = "",
   [switch]   $DryWake,
+  [switch]   $NoUpdates,        # every card takes it; a carabiner has no update check
   [string]   $Instance        = "",
   [string]   $Root            = "",
   [switch]   $Describe,
