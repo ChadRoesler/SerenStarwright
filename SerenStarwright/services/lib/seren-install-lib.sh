@@ -374,6 +374,13 @@ seren_describe() {
     for o in "${_seren_opts[@]}"; do opts+="${opts:+,}\"$(_json_esc "$o")\""; done
     choices_json+="${choices_json:+,}\"$(_json_esc "${ch%%=*}")\":[${opts}]"
   done
+  # SVC_SECRETS: values the card takes from its ENVIRONMENT, never a flag,
+  # "flag=VAR" space-separated. Starwright shows a password box for each and
+  # hands the value to the card's environment, out of argv and the log.
+  local secrets_json="" sec
+  for sec in ${SVC_SECRETS:-}; do
+    secrets_json+="${secrets_json:+,}\"$(_json_esc "${sec%%=*}")\":\"$(_json_esc "${sec#*=}")\""
+  done
   local switches_json="" sw
   for sw in ${SVC_SWITCHES:-$(seren_switches_from_self)}; do
     switches_json+="${switches_json:+,}\"$(_json_esc "$sw")\""
@@ -393,6 +400,7 @@ seren_describe() {
   printf ',"requires":[%s]'     "$requires_json"
   printf ',"recommends":[%s]'   "$recommends_json"
   printf ',"choices":{%s}'      "$choices_json"
+  printf ',"secrets":{%s}'      "$secrets_json"
   printf '}\n'
 }
 

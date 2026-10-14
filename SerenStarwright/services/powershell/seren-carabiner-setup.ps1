@@ -78,7 +78,8 @@ if ($Describe) {
     Get-SerenDescribe -ScriptPath $PSCommandPath -Name 'seren-carabiner' -Display 'Seren Carabiner' `
         -Description "Clip a model's harness (Claude Code) onto Seren" -Group 'carabiners' -Package 'seren-carabiners' `
         -Accent '#2f6fb3' -DefaultHost '127.0.0.1' -DefaultPort 0 -Extras @() -Requires @() `
-        -Recommends @('seren-workbench', 'seren-margin')
+        -Recommends @('seren-workbench', 'seren-margin') `
+        -Secrets @{ 'workbench-token' = 'SEREN_WORKBENCH_TOKEN'; 'margin-token' = 'SEREN_MARGIN_TOKEN' }
     exit 0
 }
 if ($Json) { Enable-SerenJson }
@@ -205,6 +206,8 @@ foreach ($s in $Server) {
 Step "kbh $Carabiner install"
 & $Python $KbhPath $Carabiner install --into $Into --project $Project --python $Python --connections $Connections @serverArgs @bookmarkArgs
 if ($LASTEXITCODE -ne 0) { Die "kbh $Carabiner install failed" }
+# A route's token is embedded in the clip's yaml: only this account reads it.
+if ((Get-Content -Raw -LiteralPath $CfgPath) -match '(?m)^\s+bearer_token:\s*\S') { Protect-SerenConfig -Path $CfgPath }
 
 # -- 5. register + bookmark ---------------------------------------------------------------
 if ($serverArgs.Count -gt 0) {

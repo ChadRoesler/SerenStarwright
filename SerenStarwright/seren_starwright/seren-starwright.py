@@ -336,6 +336,7 @@ GROUPS: list[tuple[str, str]] = [
     ("brain",     "Seren Brain System"),
     ("core",      "Seren Core Tool System"),
     ("auxiliary", "Seren Auxillary"),
+    ("desktop",   "Seren Desktop"),
 ]
 
 
@@ -350,6 +351,10 @@ def _ordered_groups(services: list["ServiceDef"]) -> list[tuple[str, str]]:
             pretty = s.group.replace("-", " ").replace("_", " ").title()
             out.append((s.group, f"Seren {pretty}"))
     return out
+
+# What a record's connect address is when the service listens on every
+# interface - never a bind address anyone chose.
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 # Flags that describe the MACHINE or the RUN, not the service. Setting --corp
 # per-service is meaningless: if the box is behind an intercepting proxy it's
@@ -627,6 +632,12 @@ class ServiceDef:
     # card that does not report it falls back to the switches every card in
     # the family has always had, so the modal never turns one into a text box.
     switches: list[str] = field(default_factory=list)
+    # Values the card takes from its ENVIRONMENT, never a flag (--describe's
+    # `secrets`: flag name -> variable, "lodestar-token" ->
+    # "SEREN_LODESTAR_TOKEN"). The Advanced dialog shows a password box for
+    # each; the value rides in the job's environment, registered so the log
+    # redacts it, and never reaches per_service, argv or the install record.
+    secrets: dict[str, str] = field(default_factory=dict)
     script: Path = Path()
 
     def is_switch(self, flag: str) -> bool:
@@ -846,7 +857,10 @@ def discover() -> tuple[list[ServiceDef], list[str]]:
                 params=dict(d.get("params", {})),
                 choices={str(k): [str(c) for c in v] for k, v in (d.get("choices") or {}).items()
                          if isinstance(v, list) and v} if isinstance(d.get("choices"), dict) else {},
-                switches=list(d.get("switches", [])), script=script))
+                switches=list(d.get("switches", [])),
+                secrets={str(k): str(v) for k, v in (d.get("secrets") or {}).items() if k and v}
+                        if isinstance(d.get("secrets"), dict) else {},
+                script=script))
         except json.JSONDecodeError as e:
             problems.append(f"{script.name}: bad JSON from --describe ({e})")
         except subprocess.TimeoutExpired:
@@ -1442,7 +1456,15 @@ def prefill_reinstall(selected: list[str], svcs: dict[str, ServiceDef], per_serv
         out[n] = rec
         if rec.port and "port" in svc.flags:
             cfg.setdefault("port", rec.port)
-        if rec.host and rec.host != svc.default_host and "host" in svc.flags:
+        # The BIND address comes from the service's own config (below), never
+        # from the record: a record's host is where to CONNECT, and a card
+        # writes 127.0.0.1 there for a service bound to 0.0.0.0. Taking it
+        # as the bind address re-installed a LAN Observatory loopback-only,
+        # and a cleared host box was refilled with it (13 Oct 2026). With no
+        # config to read, only an address that is not loopback is a choice
+        # someone made.
+        if (rec.host and rec.host not in LOOPBACK_HOSTS and rec.host != svc.default_host
+                and "host" in svc.flags and not (rec.config and config_value(rec.config, "server", "host"))):
             cfg.setdefault("host", rec.host)
         pre = venv_prefix(rec)
         if pre and "venv" in svc.flags:
@@ -2679,6 +2701,14 @@ class AdvancedModal(ModalScreen[dict]):
                     yield Input(value=str(self.current.get(flag, "")),
                                 placeholder=default or "(unset)",
                                 id=f"adv-{flag}")
+                # Secrets: typed here, handed to the card in its environment.
+                # Blank keeps whatever was typed before in this run (the box
+                # never shows it back); the card keeps what its config has.
+                held = (getattr(self.app, "service_secrets", {}) or {}).get(self.svc.name, {})
+                for flag, var in self.svc.secrets.items():
+                    yield Label(f"{flag}  (passed as {var}, never on the command line or in the log)")
+                    yield Input(password=True, placeholder="●●●●●●●● (set - blank keeps it)" if held.get(var)
+                                else "(unset)", id=f"adv-secret-{flag}")
             with Horizontal(id="modal-actions"):
                 yield Button("Cancel", id="cancel", variant="default")
                 yield Button("Okay", id="ok", variant="primary")
@@ -2752,6 +2782,17 @@ class AdvancedModal(ModalScreen[dict]):
             out["_password"] = self.query_one("#adv-service-password", Input).value
         except Exception:                            # noqa: BLE001
             pass
+        # Reserved too, and popped the same way: {VAR: value} for the boxes
+        # that were filled in.
+        secrets = {}
+        for flag, var in self.svc.secrets.items():
+            try:
+                v = self.query_one(f"#adv-secret-{flag}", Input).value.strip()
+            except Exception:                        # noqa: BLE001
+                continue
+            if v:
+                secrets[var] = v
+        out["_secrets"] = secrets
         self.dismiss(out)
 
 
@@ -3009,6 +3050,7 @@ class ConfigScreen(Screen):
               or self.app.service_password)              # type: ignore[attr-defined]
         if pw:
             env[SERVICE_PASSWORD_ENV] = pw
+        env.update(self.app.service_secrets.get(name, {}))   # type: ignore[attr-defined]
         return env
 
     def _save_adv(self, name: str, result: Optional[dict]) -> None:
@@ -3021,6 +3063,9 @@ class ConfigScreen(Screen):
         if pw is not None:
             self.app.service_passwords[name] = pw        # type: ignore[attr-defined]
             self.app.secrets.add(pw)                     # type: ignore[attr-defined]
+        for var, v in (result.pop("_secrets", None) or {}).items():
+            self.app.service_secrets.setdefault(name, {})[var] = v   # type: ignore[attr-defined]
+            self.app.secrets.add(v)                      # type: ignore[attr-defined]
         cfg = self.app.per_service.setdefault(name, {})  # type: ignore[attr-defined]
         for k, v in result.items():
             if v in (None, "", False):
@@ -4057,6 +4102,8 @@ class StarwrightApp(App):
         # which is the one place a password must never be.
         self.service_password: str = ""
         self.service_passwords: dict[str, str] = {}
+        # Per service, {VAR: value} for the secrets its card declared.
+        self.service_secrets: dict[str, dict[str, str]] = {}
         self.secrets = SecretRegistry()
 
     def on_mount(self) -> None:

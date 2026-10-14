@@ -1030,6 +1030,64 @@ async def test_advanced_values_can_be_changed_and_cleared() -> None:
         check("instance" not in app.per_service.get(target, {}), "cancel leaves the config untouched")
 
 
+async def test_a_secret_rides_in_the_environment() -> None:
+    """Installing Symposium against a Lodestar on another box, there was
+    nowhere to put Lodestar's token (13 Oct 2026): the card reads it from
+    SEREN_LODESTAR_TOKEN and Starwright had no box for it. A card declares
+    its secrets; the dialog shows a password box for each, and the value
+    reaches the card's environment - never per_service, the command line,
+    or the log."""
+    print("\n== A card's secret rides in the environment")
+    services, problems = sw.discover()
+    app = sw.StarwrightApp(services, problems)
+    target = "seren-symposium"
+    if target not in app.svc_map:
+        return ok("symposium absent, skipped")
+    check(app.svc_map[target].secrets == {"lodestar-token": "SEREN_LODESTAR_TOKEN"},
+          f"--describe declares it: {app.svc_map[target].secrets}")
+    check("lodestar-token" not in app.svc_map[target].flags, "...and it is not a flag")
+    async with app.run_test(size=(110, 50)) as pilot:
+        await pilot.click("#install")
+        await pilot.pause()
+        app.screen.query_one(f"#svc-{target}", Checkbox).value = True
+        await pilot.pause()
+        await pilot.click("#next")
+        await pilot.pause()
+        config_screen = app.screen
+
+        app.screen.query_one(f"#adv-{target}", Button).press()
+        m = await settled_modal(pilot, app)
+        box = m.query_one("#adv-secret-lodestar-token", Input)
+        check(box.password, "a password box")
+        box.value = "s3cret-lodestar-token"
+        m.query_one("#adv-lodestar-url", Input).value = "http://node-a:6361"
+        await pilot.pause(); await pilot.pause()
+        await pilot.click("#ok"); await pilot.pause(); await pilot.pause()
+
+        cfg = app.per_service.get(target, {})
+        check(cfg.get("lodestar-url") == "http://node-a:6361", f"the url is a flag as before: {cfg}")
+        check("s3cret-lodestar-token" not in json.dumps(cfg), f"the token is not in per_service: {cfg}")
+        cmd = sw.build_command(app.svc_map[target], cfg, {})
+        check("s3cret-lodestar-token" not in " ".join(cmd), "...nor on the command line")
+        env = config_screen._job_env(target)
+        check(env.get("SEREN_LODESTAR_TOKEN") == "s3cret-lodestar-token", "it is in the card's environment")
+        check("s3cret-lodestar-token" not in app.secrets.redact("token s3cret-lodestar-token here"),
+              "...and the log redacts it")
+
+        # Reopened: the box never shows it back; left blank, it is kept.
+        app.screen.query_one(f"#adv-{target}", Button).press()
+        m = await settled_modal(pilot, app)
+        check(m.query_one("#adv-secret-lodestar-token", Input).value == "", "reopening shows nothing back")
+        await pilot.pause(); await pilot.pause()
+        await pilot.click("#ok"); await pilot.pause(); await pilot.pause()
+        check(config_screen._job_env(target).get("SEREN_LODESTAR_TOKEN") == "s3cret-lodestar-token",
+              "blank keeps the one typed before")
+
+        other = next((n for n in app.svc_map if n != target and not app.svc_map[n].secrets), None)
+        if other:
+            check("SEREN_LODESTAR_TOKEN" not in config_screen._job_env(other), "no other card gets it")
+
+
 async def test_a_choice_flag_is_a_dropdown() -> None:
     """The hippocampus ripple is 'script' or 'endpoint' (or off),
     and a text box let any typo through to the card. A flag the card offers
@@ -1634,6 +1692,25 @@ async def test_reinstall_starts_from_what_is_installed() -> None:
         cfg = per["seren-hippocampus"]
         check(list(re_) == ["seren-hippocampus"], "recognised as a reinstall")
         check(cfg.get("port") == 7269, f"port kept: {cfg}")
+        # The bind address is the config's, not the record's connect address:
+        # an Observatory bound to 0.0.0.0 has 127.0.0.1 on its record, and a
+        # reinstall took that and came back loopback-only (13 Oct 2026).
+        if "seren-observatory" in svcs:
+            od = home / "obs"
+            od.mkdir()
+            (od / "seren-observatory.yaml").write_text("server:\n  host: 0.0.0.0\n  port: 7251\n")
+            orec = sw.InstalledRecord(service="seren-observatory", instance="wren", host="127.0.0.1", port=7251,
+                                      venv="", config=str(od / "seren-observatory.yaml"), app_dir=str(od))
+            oper = {"seren-observatory": {"instance": "wren"}}
+            sw.prefill_reinstall(["seren-observatory"], svcs, oper, [orec])
+            check(oper["seren-observatory"].get("host") in (None, "0.0.0.0"),
+                  f"a LAN Observatory stays on the LAN: {oper['seren-observatory'].get('host')}")
+            gone = sw.InstalledRecord(service="seren-observatory", instance="wren", host="127.0.0.1", port=7251,
+                                      venv="", config=str(od / "missing.yaml"), app_dir=str(od))
+            oper = {"seren-observatory": {"instance": "wren"}}
+            sw.prefill_reinstall(["seren-observatory"], svcs, oper, [gone])
+            check("host" not in oper["seren-observatory"],
+                  f"no config: a loopback connect address is not taken as the bind: {oper['seren-observatory']}")
         check(cfg.get("venv") == str(home / "wren-seren-venvs-"), f"venv prefix derived: {cfg.get('venv')}")
         # LocalSystem is a Windows account: only the PowerShell cards have the
         # switch. A bash card has no local-system flag, so on Linux the record's
@@ -1918,6 +1995,7 @@ async def main() -> int:
     await test_carabiner_door()
     await test_advanced_values_can_be_changed_and_cleared()
     await test_a_choice_flag_is_a_dropdown()
+    await test_a_secret_rides_in_the_environment()
     await test_install_log_is_kept()
 
     print("\n" + "=" * 46)

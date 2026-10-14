@@ -120,6 +120,9 @@ SVC_REQUIRES=""
 SVC_RECOMMENDS="seren-workbench seren-margin"
 SVC_EXTRAS=""
 SVC_CHOICES="carabiner=claude"
+# The tokens for a Workbench or Margin on ANOTHER box (--workbench-url /
+# --margin-url): Starwright's password boxes, handed over in the environment.
+SVC_SECRETS="workbench-token=SEREN_WORKBENCH_TOKEN margin-token=SEREN_MARGIN_TOKEN"
 
 SEREN_INSTALL_ARGV="$(printf '%s\n' "$@")"
 for _a in "$@"; do
@@ -294,6 +297,8 @@ step "kbh $CARABINER install"
 "$PYTHON" "$KBH_PATH" "$CARABINER" install --into "$INTO" --project "$PROJECT" --python "$PYTHON" \
   --connections "$CONNECTIONS" ${SERVER_ARGS[@]+"${SERVER_ARGS[@]}"} ${BOOKMARK_ARG[@]+"${BOOKMARK_ARG[@]}"} \
   || die "kbh $CARABINER install failed"
+# A route's token is embedded in the clip's yaml: only this account reads it.
+grep -qE '^[[:space:]]+bearer_token:[[:space:]]*[^[:space:]]' "$CFG_PATH" 2>/dev/null && chmod 600 "$CFG_PATH"
 
 # -- 5. register + bookmark ------------------------------------------------------------
 if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then

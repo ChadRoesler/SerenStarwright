@@ -207,7 +207,13 @@ function Get-SerenDescribe {
         # them present it warns and carries on. The corpus callosum fans n
         # stores; one of each is the good shape, either alone works.
         # A recommendation is a warning, not a cop.
-        [string[]] $Recommends = @()
+        [string[]] $Recommends = @(),
+        # Values the card takes from its ENVIRONMENT, never a parameter: flag
+        # name -> variable ("lodestar-token" -> "SEREN_LODESTAR_TOKEN"). Twin
+        # of SVC_SECRETS. Starwright shows a password box for each and hands
+        # the value to the card's process environment, out of the command
+        # line and redacted from the log.
+        [hashtable] $Secrets = @{}
     )
     $flags  = @(Get-SerenFlagsFromSelf -ScriptPath $ScriptPath)
     if ($Extras.Count -gt 0) {
@@ -266,6 +272,7 @@ function Get-SerenDescribe {
         requires       = @($Requires)
         recommends     = @($Recommends)
         choices        = $choices
+        secrets        = $Secrets
         params         = $params
     }
     # Write-Output is CORRECT here, unlike in Send-SerenEvent, and the

@@ -896,6 +896,82 @@ if (-not $pyExe) {
     }
 }
 
+# -- the symposium card: a client, its Lodestar, its voices (13 Oct 2026) -----
+# The desktop front door is not a service: no autostart, and what it is told
+# about Lodestar and the claude voice is written once and then kept - a
+# reinstall with no flags must not cost a project, a token or a voice. Runs
+# the REAL card against the stubbed lib, like the callosum section above.
+Section "symposium card: its Lodestar, its voices, kept on reinstall"
+if (-not $pyExe) {
+    Note "no working python on PATH - skipping. Not a failure."
+} else {
+    $symTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sw-sym-" + [Guid]::NewGuid().ToString("N"))
+    $symCard = Join-Path $symTmp "services\powershell\seren-symposium-setup.ps1"
+    New-Item -ItemType Directory -Force -Path (Split-Path $symCard), (Join-Path $symTmp "services\lib"),
+        (Join-Path $symTmp "pkg\seren_symposium\ui") | Out-Null
+    Copy-Item (Join-Path $ScriptDir "services\powershell\seren-symposium-setup.ps1") $symCard
+    Copy-Item (Join-Path $ScriptDir "services\lib\seren-keep-config.py") (Join-Path $symTmp "services\lib\seren-keep-config.py")
+    [System.IO.File]::WriteAllText((Join-Path $symTmp "pkg\seren_symposium\__init__.py"), "")
+    [System.IO.File]::WriteAllText((Join-Path $symTmp "pkg\seren_symposium\ui\index.html"), "<!doctype html>")
+    $realLib = Join-Path $ScriptDir "services\lib\seren-install-lib.ps1"
+    $stubLib = ". '$realLib'`n" +
+               "function Find-Python { @{ Exe = '$pyExe'; Args = @() } }`n" +
+               "function Resolve-Wheel { @{ Src = 'stub'; Cleanup = `$false } }`n" +
+               "function Create-Venv { '$pyExe' }`n" +
+               "function Install-Package { }`n"
+    [System.IO.File]::WriteAllText((Join-Path $symTmp "services\lib\seren-install-lib.ps1"), $stubLib)
+    $lodYaml = Join-Path $symTmp "lodestar.yaml"
+    [System.IO.File]::WriteAllText($lodYaml, "server:`n  host: 0.0.0.0`n  port: 6362`n  bearer_token: `"lodestar-bearer`"`n")
+    $oldPyPath = $env:PYTHONPATH
+    $env:PYTHONPATH = Join-Path $symTmp "pkg"
+    $env:SEREN_INSTALLED_DIR = Join-Path $symTmp "ledger"     # never the real ledger
+    $symRoot = Join-Path $symTmp "root"
+    $symCfg = Join-Path $symRoot "apps\symposium\seren-symposium.yaml"
+    function Install-Sym([string[]] $CardArgs) {
+        # -NoShortcut always: the stub's python is a real one, and its
+        # pythonw would put a real entry in this box's Start menu.
+        $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $symCard, "-Root", $symRoot, "-NoShortcut") + $CardArgs
+        $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        try { $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String } finally { $ErrorActionPreference = $prevEap }
+        $text = if (Test-Path $symCfg) { [System.IO.File]::ReadAllText($symCfg) } else { "" }
+        return @{ Rc = $LASTEXITCODE; Out = $out; Cfg = $text }
+    }
+    try {
+        $a = Install-Sym @("-LodestarConfig", $lodYaml, "-Voice", "claude", "-ClaudeName", "alice",
+                           "-ClaudeTools", "mcp__workbench__*, mcp__memory__recall")
+        if ($a.Rc -eq 0 -and $a.Cfg) { Good "a first install with a Lodestar config and the claude voice" } else { Bad "first install failed (rc=$($a.Rc))"; Note $a.Out }
+        if ($a.Cfg -match "url: http://127\.0\.0\.1:6362" -and $a.Cfg -match 'bearer_token: "lodestar-bearer"') {
+            Good "...Lodestar's url and bearer read from its config" } else { Bad "lodestar block wrong: $($a.Cfg)" }
+        if ($a.Cfg -match 'name: "alice"' -and $a.Cfg -match 'permission_mode: "default"' -and
+            $a.Cfg -match 'allowed_tools: \["mcp__workbench__\*", "mcp__memory__recall"\]') {
+            Good "...the claude block: its name, and only the tools it was given" } else { Bad "claude block wrong: $($a.Cfg)" }
+        if ($a.Cfg -match '(?s)folders:\s+- name: "Main"\s+voice: "claude"') { Good "...a starter project with the voice asked for" } else { Bad "no starter project: $($a.Cfg)" }
+        if ($a.Cfg -match 'cluster: "http://127\.0\.0\.1:6362/viewer"') { Good "...the cluster tab points at that Lodestar" } else { Bad "cluster viewer wrong: $($a.Cfg)" }
+        if ((Get-Acl -LiteralPath $symCfg).AreAccessRulesProtected) { Good "...and the config, holding a bearer, is locked" } else { Bad "a config holding a bearer was left open" }
+
+        $b = Install-Sym @()
+        if ($b.Rc -eq 0 -and $b.Cfg -match 'bearer_token: "lodestar-bearer"' -and $b.Cfg -match 'name: "alice"' -and
+            ([regex]::Matches($b.Cfg, 'name: "Main"').Count -eq 1)) {
+            Good "a reinstall with no flags keeps the Lodestar, its bearer, the claude block and the one project" } else { Bad "reinstall lost something (rc=$($b.Rc)): $($b.Cfg)" }
+        if ((Get-Acl -LiteralPath $symCfg).AreAccessRulesProtected) { Good "...and a bearer put back by keep-config is locked too" } else { Bad "a kept bearer was left open" }
+
+        $env:SEREN_LODESTAR_TOKEN = "remote-bearer"
+        try { $c = Install-Sym @("-LodestarUrl", "http://192.0.2.10:6361") } finally { Remove-Item Env:SEREN_LODESTAR_TOKEN -ErrorAction SilentlyContinue }
+        if ($c.Rc -eq 0 -and $c.Cfg -match "url: http://192\.0\.2\.10:6361" -and $c.Cfg -match 'bearer_token: "remote-bearer"') {
+            Good "-LodestarUrl takes its token from `$env:SEREN_LODESTAR_TOKEN" } else { Bad "remote lodestar wrong (rc=$($c.Rc)): $($c.Cfg)" }
+        if ($c.Out -notmatch "remote-bearer") { Good "...and the token is never printed" } else { Bad "the remote token was printed" }
+
+        $d = Install-Sym @("-Voice", "robot")
+        if ($d.Rc -ne 0) { Good "-Voice robot is refused (lodestar or claude)" } else { Bad "-Voice robot was accepted" }
+    } catch {
+        Bad "symposium section threw: $($_.Exception.Message)"
+    } finally {
+        $env:PYTHONPATH = $oldPyPath
+        Remove-Item Env:SEREN_INSTALLED_DIR -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $symTmp -ErrorAction SilentlyContinue
+    }
+}
+
 # -- summary ------------------------------------------------------------------
 Write-Host ""
 Write-Host "=========================================="
