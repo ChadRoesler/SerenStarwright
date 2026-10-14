@@ -1979,26 +1979,97 @@ STARTEOF
 # 5 Oct 2026).
 #
 #   seren_register_comfy [EXTRA ARGS FOR main.py]     e.g. --lowvram on a Nano
-#     COMFY_PORT   default 8188
+#     COMFY_PORT     default 8188
+#     COMFY_MODELS   where the models live: default /mnt/nvme/comfyui-models
+#                    when there is an NVMe, else the checkout's own models/
+#     COMFY_FAMILIES the model families this ComfyUI can draw ("sdxl,sd15");
+#                    blank = no limit. The Xavier keeps every model but, on
+#                    JetPack 5's torch 2.1, draws SDXL and SD 1.5 only;
+#                    Lodestar sends it nothing else.
+#     COMFY_DIR      a ComfyUI that is already there (default <apps>/ComfyUI)
+#     COMFY_PYTHON   and the python it runs with (default ~/seren-venvs/comfy):
+#                    ADOPTING an install made by hand - the Spark's - instead
+#                    of cloning a second one beside it
 #
 # The manifest is named "comfy": that is the name the Observatory's
 # /api/v1/service/comfy routes load, and they list checkpoints, loras and vae
-# from the three serviceSpecific directories written here.
+# from the serviceSpecific directories written here; models_dir is the folder
+# its catalog reads.
+#
+# THE MODELS LIVE APART FROM THE CHECKOUT. Tens to hundreds of GB, slow to
+# fetch: seren-wipe keeps /mnt/nvme/comfyui-models and takes ComfyUI with it,
+# so a re-prep re-clones the app and finds every model where it was. Until
+# now that folder was only made, never wired: ComfyUI was not told
+# about it and the manifest named ComfyUI/models (found 14 Oct 2026, both
+# empty on the Xavier 32 when the Spark's models were copied over). Now
+# ComfyUI is told through its own mechanism, extra_model_paths.yaml - not a
+# symlink over models/, which the repo tracks and a git pull would fight.
 seren_register_comfy() {
     local extra="$*"
     local USER_HOME="/home/$TARGET_USER"
     [ -n "${SEREN_TEST_HOME:-}" ] && USER_HOME="$SEREN_TEST_HOME"
-    local DIR; DIR="$(seren_apps_root)/ComfyUI"
+    local DIR="${COMFY_DIR:-$(seren_apps_root)/ComfyUI}"
     local VENV="$USER_HOME/seren-venvs/comfy"
+    local PY="${COMFY_PYTHON:-$VENV/bin/python}"
+    [ -n "${COMFY_PYTHON:-}" ] && VENV="$(dirname "$(dirname "$PY")")"
     local PORT="${COMFY_PORT:-8188}"
     local LOGS="$USER_HOME/seren-logs"
     local LDP; LDP="$(seren_cuda_ld_path)"
 
-    if [ ! -f "$DIR/main.py" ] || [ ! -x "$VENV/bin/python" ]; then
-        fail "ComfyUI is not where its start script would look: $DIR/main.py, $VENV"
+    if [ ! -f "$DIR/main.py" ] || [ ! -x "$PY" ]; then
+        fail "ComfyUI is not where its start script would look: $DIR/main.py, $PY"
         return 1
     fi
     _as_target mkdir -p "$LOGS"
+
+    # The model store, and ComfyUI pointed at it.
+    local MODELS="${COMFY_MODELS:-}"
+    if [ -z "$MODELS" ]; then
+        # An adopted install keeps its own models/ (and gets no yaml written
+        # into it) unless COMFY_MODELS says otherwise.
+        if [ -d /mnt/nvme ] && [ -z "${SEREN_TEST_HOME:-}" ] && [ -z "${COMFY_DIR:-}" ]; then
+            MODELS=/mnt/nvme/comfyui-models
+        else
+            MODELS="$DIR/models"
+        fi
+    fi
+    if [ "$MODELS" != "$DIR/models" ]; then
+        local sub
+        for sub in checkpoints loras vae diffusion_models text_encoders clip_vision upscale_models \
+                   embeddings controlnet vae_approx ipadapter; do
+            _as_target mkdir -p "$MODELS/$sub"
+        done
+        local EXTRA="$DIR/extra_model_paths.yaml"
+        if [ -f "$EXTRA" ] && ! grep -q "written by seren-prepare-node" "$EXTRA"; then
+            warn "$EXTRA is someone's own - left as it is. Add $MODELS to it for ComfyUI to see the models there."
+        else
+            _as_target tee "$EXTRA" > /dev/null <<EXTRAEOF
+# extra_model_paths.yaml - written by seren-prepare-node. ComfyUI reads its
+# models from here as well as from models/: the store outside the checkout,
+# which a wipe and re-prep keep. Edit freely; once this header line is gone
+# the next prep leaves the file alone.
+seren:
+    base_path: $MODELS
+    is_default: true
+    checkpoints: checkpoints
+    loras: loras
+    vae: vae
+    diffusion_models: |
+        diffusion_models
+        unet
+    text_encoders: |
+        text_encoders
+        clip
+    clip_vision: clip_vision
+    upscale_models: upscale_models
+    embeddings: embeddings
+    controlnet: controlnet
+    vae_approx: vae_approx
+    ipadapter: ipadapter
+EXTRAEOF
+        fi
+        log "ComfyUI models: $MODELS (extra_model_paths.yaml)"
+    fi
 
     _as_target tee "$USER_HOME/start_comfy.sh" > /dev/null <<STARTEOF
 #!/bin/bash
@@ -2009,7 +2080,7 @@ if [ -f "\$PID" ] && kill -0 "\$(cat "\$PID")" 2>/dev/null; then echo "comfy alr
 cd "$DIR" || exit 1
 # No login shell when the Observatory runs this: the CUDA path is set here.
 export LD_LIBRARY_PATH="$LDP:\${LD_LIBRARY_PATH:-}"
-nohup "$VENV/bin/python" main.py --listen 0.0.0.0 --port $PORT $extra >> "$LOGS/comfy.log" 2>&1 &
+nohup "$PY" main.py --listen 0.0.0.0 --port $PORT $extra >> "$LOGS/comfy.log" 2>&1 &
 echo \$! > "\$PID"
 STARTEOF
     chmod +x "$USER_HOME/start_comfy.sh"
@@ -2027,9 +2098,11 @@ STARTEOF
         pid_path="$LOGS/comfy.pid" \
         log_path="$LOGS/comfy.log" \
         venv_path="$VENV" \
-        --service-specific checkpoints_dir="$DIR/models/checkpoints" \
-        --service-specific loras_dir="$DIR/models/loras" \
-        --service-specific vae_dir="$DIR/models/vae" \
+        --service-specific models_dir="$MODELS" \
+        --service-specific checkpoints_dir="$MODELS/checkpoints" \
+        --service-specific loras_dir="$MODELS/loras" \
+        --service-specific vae_dir="$MODELS/vae" \
+        ${COMFY_FAMILIES:+--service-specific families="$COMFY_FAMILIES"} \
         --service-specific device=cuda
     log "ComfyUI registered; start it with ~/start_comfy.sh (or from Lodestar), port $PORT"
 }

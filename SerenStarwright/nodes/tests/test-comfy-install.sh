@@ -15,6 +15,12 @@
 #    - extra arguments (--lowvram on a Nano) reach main.py
 #    - a missing venv fails with the reason; every platform's module registers
 #      and asks torch about CUDA with the CUDA path set
+#    - with a model store outside the checkout (/mnt/nvme/comfyui-models on a
+#      node), ComfyUI is pointed at it (extra_model_paths.yaml) and so is the
+#      manifest; a yaml someone wrote themselves is left alone
+#    - the families a ComfyUI can draw reach the manifest; a ComfyUI made by
+#      hand (the Spark's) is adopted where it is, with its own python
+#    - the Xavier pins ComfyUI to the last release torch 2.1 runs
 #
 #  Run:  bash nodes/tests/test-comfy-install.sh   (Linux; CI runs it)
 # ════════════════════════════════════════════════════════
@@ -65,6 +71,43 @@ assert s["checkpoints_dir"] == h + "/ComfyUI/models/checkpoints", s
 assert s["loras_dir"] == h + "/ComfyUI/models/loras" and s["vae_dir"] == h + "/ComfyUI/models/vae", s
 PY
 then ok_ "named comfy, with the port, the scripts and the three model dirs"; else bad "manifest wrong: $(cat "$M" 2>/dev/null)"; fi
+
+echo "== a model store outside the checkout"
+S="$T/nvme/comfyui-models"
+COMFY_MODELS="$S" seren_register_comfy > "$T/reg2.log" 2>&1 && ok_ "registers with COMFY_MODELS" || { bad "register failed"; cat "$T/reg2.log"; }
+[ -d "$S/checkpoints" ] && [ -d "$S/loras" ] && [ -d "$S/diffusion_models" ] && [ -d "$S/text_encoders" ] \
+  && ok_ "the store's folders are made" || bad "store folders missing: $(ls "$S" 2>/dev/null)"
+X="$R/extra_model_paths.yaml"
+grep -q "written by seren-prepare-node" "$X" && grep -q "base_path: $S" "$X" && grep -q "is_default: true" "$X" \
+  && ok_ "ComfyUI is pointed at it (extra_model_paths.yaml)" || bad "extra_model_paths.yaml: $(cat "$X" 2>/dev/null)"
+if python3 - "$M" "$S" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))["serviceSpecific"]; d = sys.argv[2]
+assert s["models_dir"] == d and s["checkpoints_dir"] == d + "/checkpoints" and s["loras_dir"] == d + "/loras", s
+PY
+then ok_ "and so is the manifest (models_dir, the catalog's folder)"; else bad "manifest: $(cat "$M")"; fi
+printf 'mine:\n    base_path: /data/models\n' > "$X"
+COMFY_MODELS="$S" seren_register_comfy > "$T/reg3.log" 2>&1
+grep -q "^mine:" "$X" && ! grep -q "seren-prepare-node" "$X" && grep -q "left as it is" "$T/reg3.log" \
+  && ok_ "a yaml someone wrote is left alone, and they are told" || bad "own yaml clobbered: $(cat "$X")"
+rm -f "$X"
+seren_register_comfy > /dev/null 2>&1                     # back to the plain layout for what follows
+
+echo "== families, and adopting a ComfyUI made by hand"
+COMFY_FAMILIES="sdxl,sd15" seren_register_comfy > /dev/null 2>&1
+grep -q '"families": "sdxl,sd15"' "$M" && ok_ "the families it draws reach the manifest" || bad "no families: $(cat "$M")"
+A="$T/opt/image_gen/ComfyUI"; AP="$T/opt/dgx-env/bin/python3"
+mkdir -p "$A/models" "$(dirname "$AP")"; touch "$A/main.py"; cp "$H/seren-venvs/comfy/bin/python" "$AP"
+COMFY_DIR="$A" COMFY_PYTHON="$AP" seren_register_comfy --reserve-vram 8 > "$T/adopt.log" 2>&1 \
+  && grep -q "cd \"$A\"" "$H/start_comfy.sh" && grep -q "\"$AP\" main.py --listen 0.0.0.0 --port 8188 --reserve-vram 8" "$H/start_comfy.sh" \
+  && grep -q "\"checkpoints_dir\": \"$A/models/checkpoints\"" "$M" && ! grep -q '"families"' "$M" \
+  && [ ! -e "$A/extra_model_paths.yaml" ] \
+  && ok_ "an install made by hand is adopted where it is, with its own python" \
+  || { bad "adopting failed"; cat "$T/adopt.log"; grep -n "main.py\|cd " "$H/start_comfy.sh"; }
+grep -q 'COMFY_REF:-v0.3.65' "$HERE/nodes/xavier/comfy.sh" && grep -q 'COMFY_FAMILIES:-sdxl,sd15' "$HERE/nodes/xavier/comfy.sh" \
+  && ! grep -q "COMFY_REF" "$HERE/nodes/spark/comfy.sh" \
+  && ok_ "the Xavier pins ComfyUI to what torch 2.1 runs, and says it draws SDXL and SD 1.5" || bad "the Xavier pin is missing"
+seren_register_comfy > /dev/null 2>&1                     # back to the plain layout for what follows
 
 echo "== start, start again, stop"
 bash "$H/start_comfy.sh" >/dev/null 2>&1; sleep 1

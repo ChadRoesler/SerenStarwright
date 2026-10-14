@@ -918,6 +918,61 @@ async def test_carabiner_door() -> None:
         check(not list(app.screen.query("#svc-seren-carabiner")), "no carabiner card in the services grid")
 
 
+async def test_carabiner_rerun_starts_from_the_clip() -> None:
+    """Every carabiner upgrade opened a blank form: project, python, both
+    urls and both tokens typed again (14 Oct 2026). A clip already on the box
+    fills it in - its yaml as it is now, then the flags it was installed
+    with - and a token in the clip shows as there, blank keeping it."""
+    print("\n== A carabiner re-run starts from the clip")
+    import tempfile
+    services, problems = sw.discover()
+    if not any(s.group == "carabiners" for s in services):
+        check(False, "a carabiner card is discovered")
+        return
+    home = Path(tempfile.mkdtemp(prefix="sw-kbh-"))
+    try:
+        clip = home / "kbh" / "claude.yaml"
+        clip.parent.mkdir()
+        project = home / "project"
+        project.mkdir()
+        clip.write_text("carabiner: claude\n"
+                        f"project: {project}\n"
+                        "python: /usr/bin/python3   # the one hooks run\n"
+                        "connections: ./connections\n"
+                        "servers:\n  alice-workbench:\n    url: http://node-a:7255\n    bearer_token: \"not-for-the-form\"\n"
+                        "bookmark:\n  url: http://node-a:7251\n  bearer_token_env: MARGIN_TOKEN\n"
+                        "framing: framing.md\n", encoding="utf-8")
+        v = sw.clip_values(str(clip))
+        check(v.get("project") == str(project) and v.get("python") == "/usr/bin/python3", f"project and python read: {v}")
+        check(v.get("workbench-url") == "http://node-a:7255" and v.get("margin-url") == "http://node-a:7251", "both routes read")
+        check(v.get("workbench-token") is True and v.get("margin-token") is True, "each is seen to hold a token")
+        check("not-for-the-form" not in json.dumps(v), "the token itself is never read out")
+        rec = sw.InstalledRecord(service="seren-carabiner", instance="alice", host="127.0.0.1", port=0,
+                                 config=str(clip), app_dir=str(clip.parent), installed_at="2026-10-14T01:56:15Z",
+                                 options={"project": "/old/project", "workbench-url": "http://old:7255",
+                                          "repo-dir": "D:/work/project", "instance": "alice"})
+        app = sw.StarwrightApp(services, problems, installed=[rec])
+        async with app.run_test(size=(110, 60)) as pilot:
+            await pilot.click("#install-carabiners")
+            await pilot.pause()
+            scr = app.screen
+            val = lambda wid: scr.query_one(wid, Input).value
+            check(val("#kbh-project") == str(project), f"the clip's project, not the old flag: {val('#kbh-project')}")
+            check(val("#kbh-python") == "/usr/bin/python3", "its python")
+            check(val("#kbh-into") == str(clip.parent), "where it lives")
+            check(val("#kbh-workbench-url") == "http://node-a:7255" and val("#kbh-margin-url") == "http://node-a:7251",
+                  "both urls")
+            check(val("#kbh-instance") == "alice", "the instance")
+            check(val("#kbh-workbench-token") == "" and "in the clip" in scr.query_one("#kbh-workbench-token", Input).placeholder,
+                  "the token box says the clip has one, and stays empty")
+            check("Clipped on this box already" in str(scr.query_one("#kbh-note", Static).render()), "and the note says so")
+            joined = " ".join(scr.build())
+            check(("http://node-a:7255" in joined) and ("alice" in joined), f"Next upgrades it as it is: {joined[-160:]}")
+            check("not-for-the-form" not in joined and not scr.job_env(), "no token on the line or in the job")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 async def test_switches_are_check_boxes() -> None:
     """A flag that takes no value must never be a text box. Every card has
     --no-updates, and the Advanced modal rendered it as an Input: whatever the
@@ -1960,6 +2015,52 @@ async def test_install_log_is_kept() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def test_reinstall_reads_the_config_before_the_last_flags() -> None:
+    """Symposium's claude name was edited in its yaml; every reinstall put the
+    old flag back, because the form started from the record (14 Oct 2026).
+    A card names where each flag lives (config_keys) and the config wins;
+    a secret already in the config is shown as there, never read."""
+    print("\n== Reinstall reads the config before the last flags")
+    import tempfile
+    home = Path(tempfile.mkdtemp(prefix="sw-cfgkeys-"))
+    try:
+        services, _ = sw.discover()
+        svcs = {x.name: x for x in services}
+        sym = svcs.get("seren-symposium")
+        if sym is None:
+            check(False, "symposium card present")
+            return
+        check(sym.config_keys.get("claude-name") == "claude.name"
+              and sym.config_keys.get("lodestar-token") == "lodestar.bearer_token",
+              f"the card says where its flags live: {sym.config_keys}")
+        cfgp = home / "seren-symposium.yaml"
+        cfgp.write_text("lodestar:\n  url: http://node-a:6361\n  bearer_token: \"not-for-the-form\"\n\n"
+                        "ui:\n  port: 7271\n\nclaude:\n  name: \"Alice\"\n  cwd: 'D:\\work\\project'\n"
+                        "  allowed_tools: [\"mcp__workbench__*\", \"WebSearch\"]\n")
+        rec = sw.InstalledRecord(service="seren-symposium", instance="alice", host="127.0.0.1", port=7271,
+                                 venv="", config=str(cfgp), app_dir=str(home),
+                                 options={"claude-name": "alice", "claude-tools": "mcp__workbench__*",
+                                          "lodestar-url": "http://192.0.2.10:6361", "voice": "claude"})
+        per = {"seren-symposium": {"instance": "alice"}}
+        sw.prefill_reinstall(["seren-symposium"], svcs, per, [rec])
+        c = per["seren-symposium"]
+        check(c.get("claude-name") == "Alice", f"the edited name, not the old flag: {c.get('claude-name')}")
+        check(c.get("claude-tools") == "mcp__workbench__*,WebSearch", f"a yaml list as the flag's list: {c.get('claude-tools')}")
+        check(c.get("claude-cwd") == "D:\\work\\project", f"a quoted path: {c.get('claude-cwd')}")
+        check(c.get("lodestar-url") == "http://node-a:6361", f"the config's url beats the record's: {c.get('lodestar-url')}")
+        check(c.get("voice") == "claude", "a flag the config does not hold still comes from the record")
+        check("lodestar-token" not in c and "not-for-the-form" not in json.dumps(c), "the secret is never read into the form")
+        check(sw.secret_in_config(sym, "lodestar-token", rec), "but it is seen to be there")
+        bare = home / "bare.yaml"
+        bare.write_text("lodestar:\n  url: http://node-a:6361\n")
+        rec_bare = sw.InstalledRecord(service="seren-symposium", instance="alice", host="127.0.0.1", port=7271,
+                                      venv="", config=str(bare), app_dir=str(home))
+        check(not sw.secret_in_config(sym, "lodestar-token", rec_bare), "no token in the config: none claimed")
+        check(not sw.secret_in_config(sym, "lodestar-token", None), "a fresh install has no config to look in")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 async def main() -> int:
     await test_discovery()
     await test_nothing_dropped()
@@ -1991,8 +2092,10 @@ async def main() -> int:
     await test_installed_dependency_is_used_not_reinstalled()
     await test_nothing_asked_that_the_box_knows()
     await test_reinstall_starts_from_what_is_installed()
+    await test_reinstall_reads_the_config_before_the_last_flags()
     await test_switches_are_check_boxes()
     await test_carabiner_door()
+    await test_carabiner_rerun_starts_from_the_clip()
     await test_advanced_values_can_be_changed_and_cleared()
     await test_a_choice_flag_is_a_dropdown()
     await test_a_secret_rides_in_the_environment()

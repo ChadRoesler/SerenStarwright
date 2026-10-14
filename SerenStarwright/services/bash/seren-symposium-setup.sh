@@ -2,11 +2,16 @@
 # ==========================================================================
 #  seren-symposium-setup.sh  -  one-shot SerenSymposium installer (Linux + macOS)
 #
-#  Twin of seren-symposium-setup.ps1. The desktop front door: one window,
-#  chat in the first tab and the other services' own pages in the rest. A
-#  CLIENT, not a service - it serves its own UI on 127.0.0.1, talks to
-#  Lodestar, and installs no autostart. A chat is answered by a local model
-#  through Lodestar, or (voice: claude) by the claude CLI on this box.
+#  Twin of seren-symposium-setup.ps1. The desktop front door: one window -
+#  chat, settings, a glance at the other services. A CLIENT, not a service -
+#  it serves its own UI on 127.0.0.1 and talks to Lodestar. A chat is
+#  answered by a local model through Lodestar, or (voice: claude) by the
+#  claude CLI on this box.
+#
+#  Always on, at LOGIN and as you (not a system service: the claude voice
+#  needs your claude login, screen share your desktop): on Linux an XDG
+#  autostart entry runs it in the tray (seren-symposium --tray). macOS: not
+#  yet - open it from the launcher. --no-autostart leaves it something you open.
 #
 #  Lodestar: --lodestar-config (Starwright hands over a sibling's config
 #  path; url and bearer are read from it) or --lodestar-url for one on
@@ -30,6 +35,7 @@
 #    --claude-tools LIST     Tools it may use without asking, comma-separated
 #    --no-window             No native window: serve to a browser instead
 #    --no-shortcut           No application-menu entry
+#    --no-autostart          Not at login: Symposium runs while its window is open
 #    --corp                  Install the [corp] extra (OS trust store)
 #    --wheel PATH            Install from a local .whl
 #    --local DIR|URL         Install from a dev wheelhouse (seren-dev-publish.sh)
@@ -81,6 +87,7 @@ CLAUDE_CWD=""
 CLAUDE_TOOLS=""
 NO_WINDOW=false
 NO_SHORTCUT=false
+NO_AUTOSTART=false
 WHEEL=""
 LOCAL=""
 REF=""
@@ -109,6 +116,9 @@ SVC_CHOICES="voice=lodestar|claude"
 # A Lodestar on another box presents a token; it rides in the environment,
 # never on a command line.
 SVC_SECRETS="lodestar-token=SEREN_LODESTAR_TOKEN"
+# Where each lives in the config, so a reinstall starts from the config as it
+# is now (a hand edit included), not the last flags.
+SVC_CONFIG_KEYS="lodestar-url=lodestar.url lodestar-token=lodestar.bearer_token claude-name=claude.name claude-cwd=claude.cwd claude-tools=claude.allowed_tools"
 
 # --describe must answer with ZERO side effects.
 SEREN_INSTALL_ARGV="$(printf '%s\n' "$@")"     # recorded on the install record, minus secrets
@@ -128,6 +138,7 @@ while [[ $# -gt 0 ]]; do
     --claude-tools)    CLAUDE_TOOLS="$2"; shift 2 ;;
     --no-window)       NO_WINDOW=true; shift ;;
     --no-shortcut)     NO_SHORTCUT=true; shift ;;
+    --no-autostart)    NO_AUTOSTART=true; shift ;;
     --wheel)           WHEEL="$2"; shift 2 ;;
     --local)           LOCAL="$2"; shift 2 ;;
     --ref)             REF="$2"; shift 2 ;;
@@ -164,6 +175,12 @@ PACKAGE="seren-symposium"
 resolve_wheel
 
 # -- 3. venv + install ---------------------------------------------------------
+# A Symposium running on this config (the tray, a window) stops for the
+# install - a reinstall is a restart anyway; it comes back up below.
+if pgrep -f "seren_symposium.*$CFG_PATH" >/dev/null 2>&1; then
+  pkill -f "seren_symposium.*$CFG_PATH" || true
+  warn "Stopped the running Symposium for the install - it starts again below"
+fi
 create_venv "$VENV_DIR"
 VPY="$VENV_DIR/bin/python"
 EXTRAS_LIST=(); $NO_WINDOW || EXTRAS_LIST+=("desktop"); $CORP && EXTRAS_LIST+=("corp")
@@ -196,16 +213,22 @@ if [[ -n "$LODESTAR_CONFIG" ]]; then
     VIEWER_URL="$SIB_URL"
     ok "Lodestar: $SIB_URL (from its config)"
   fi
-elif [[ -n "$LODESTAR_URL" ]]; then
+fi
+# Given both, and the config was no use (gone, unreadable - a sibling on
+# another install), the url still counts. It used to be dropped, and the
+# Lodestar only survived because keep-config copied the old block back.
+if [[ -z "$LODESTAR_BLOCK" && -n "$LODESTAR_URL" ]]; then
   LODESTAR_BLOCK="lodestar:"$'\n'"  url: $LODESTAR_URL"
   if [[ -n "${SEREN_LODESTAR_TOKEN:-}" ]]; then
     LODESTAR_BLOCK+=$'\n'"  bearer_token: \"$SEREN_LODESTAR_TOKEN\""
-  else
+  elif $FIRST_INSTALL; then
     warn "SEREN_LODESTAR_TOKEN is not set, so Symposium will call $LODESTAR_URL without a bearer (fine for an open Lodestar; in Starwright, Configure > lodestar-token)"
+  else
+    ok "No new Lodestar token given: keeping the one in the config, if it has one"
   fi
   VIEWER_URL="${LODESTAR_URL%/}"
   ok "Lodestar: $LODESTAR_URL"
-elif $FIRST_INSTALL; then
+elif [[ -z "$LODESTAR_BLOCK" ]] && $FIRST_INSTALL; then
   warn "No --lodestar-config or --lodestar-url: Symposium will look for Lodestar at 127.0.0.1:6361"
 fi
 
@@ -271,8 +294,7 @@ write_launcher "$APP_DIR" "seren-symposium" "$VPY" "seren_symposium" "$CFG_PATH"
 # only its owner reads, however the bearer got there.
 grep -qE '^[[:space:]]+bearer_token:[[:space:]]*"?[^"[:space:]]' "$CFG_PATH" && chmod 600 "$CFG_PATH"
 
-# -- 6. an application-menu entry (Linux) -------------------------------------
-# Not an autostart - Symposium is something you open, not something that runs.
+# -- 6. an application-menu entry, and the tray at login (Linux) ---------------
 SHORTCUT=""
 if ! $NO_SHORTCUT && ! $NO_WINDOW && ! $IS_MAC; then
   apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
@@ -290,6 +312,33 @@ Categories=Network;Chat;
 DESKTOP
   ok "Application menu entry: $SHORTCUT"
 fi
+AUTOSTART=""
+AUTOSTART_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/seren-symposium${INSTANCE:+-$INSTANCE}.desktop"
+if $NO_WINDOW || $IS_MAC; then
+  : # headless, or macOS (no tray autostart there yet)
+elif $NO_AUTOSTART; then
+  [[ -f "$AUTOSTART_FILE" ]] && rm -f "$AUTOSTART_FILE" && ok "No longer starts at login"
+else
+  mkdir -p "$(dirname "$AUTOSTART_FILE")"
+  cat > "$AUTOSTART_FILE" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Seren Symposium${INSTANCE:+ ($INSTANCE)}
+Comment=Seren Symposium, in the tray
+Exec="$VPY" -m seren_symposium --tray --config "$CFG_PATH"
+Path=$APP_DIR
+Terminal=false
+X-GNOME-Autostart-enabled=true
+DESKTOP
+  AUTOSTART="$AUTOSTART_FILE"
+  # And now, when there is a desktop to put a tray icon on.
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    (cd "$APP_DIR" && nohup "$VPY" -m seren_symposium --tray --config "$CFG_PATH" >/dev/null 2>&1 &)
+    ok "Starts at login, in the tray ($AUTOSTART_FILE) - and running now"
+  else
+    ok "Starts at login, in the tray ($AUTOSTART_FILE)"
+  fi
+fi
 
 # -- done -------------------------------------------------------------------
 echo
@@ -297,9 +346,10 @@ echo -e "${G}==========================================${NC}"
 echo -e "${G}  SerenSymposium is set up ✓${NC}"
 echo -e "${G}==========================================${NC}"
 echo -e "  Open it:          ${B}$APP_DIR/run-seren-symposium.sh${NC}"
+[[ -n "$AUTOSTART" ]] && echo -e "  Running:          ${B}in the tray, at every login${NC}"
 $NO_WINDOW && echo -e "  Then browse to:   ${B}http://127.0.0.1:${PORT}/${NC}"
 echo -e "  Config:           ${B}$CFG_PATH${NC}"
 echo -e "${G}Rip it and win. 🌭🔧${NC}"
 
 # -- Starwright contract: structured completion event -------------------------
-seren_emit_done "$SVC_NAME" "127.0.0.1" "$PORT" "false" ""
+seren_emit_done "$SVC_NAME" "127.0.0.1" "$PORT" "$([[ -n "$AUTOSTART" ]] && echo true || echo false)" ""

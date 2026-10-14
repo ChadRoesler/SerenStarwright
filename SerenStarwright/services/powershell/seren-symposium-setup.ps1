@@ -2,11 +2,16 @@
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-symposium-setup.ps1  -  one-shot SerenSymposium installer (Windows)
 #
-#  The desktop front door: one window, chat in the first tab and the other
-#  services' own pages in the rest. A CLIENT, not a service - it serves its
-#  own UI on 127.0.0.1, talks to Lodestar, and installs no autostart. A chat
-#  is answered by a local model through Lodestar, or (voice: claude) by the
-#  claude CLI on this box.
+#  The desktop front door: one window - chat, settings, a glance at the
+#  other services. A CLIENT, not a service - it serves its own UI on
+#  127.0.0.1 and talks to Lodestar. A chat is answered by a local model
+#  through Lodestar, or (voice: claude) by the claude CLI on this box.
+#
+#  Always on, like the rest of the stack, but at LOGON and as you - not a
+#  Windows service: the claude voice needs your claude login, and screen
+#  share your desktop, and a service has neither. A Startup-folder shortcut
+#  runs it in the tray (seren-symposium --tray); the Start menu one opens a
+#  window onto it. -NoAutostart leaves it something you open.
 #
 #  Lodestar: -LodestarConfig (Starwright hands over a sibling's config path;
 #  url and bearer are read from it) or -LodestarUrl for one on another box,
@@ -46,6 +51,8 @@ param(
   # boxes, CI). Without it the [desktop] extra (pywebview) is installed.
   [switch] $NoWindow,
   [switch] $NoShortcut,
+  # Not at logon: no tray, Symposium runs while its window is open.
+  [switch] $NoAutostart,
   [string] $Wheel          = "",
   [string] $Local          = "",
   [string] $Ref            = "",
@@ -101,6 +108,11 @@ if ($Describe) {
         # A Lodestar on another box presents a token; it rides in the
         # environment, never on a command line.
         Secrets     = @{ 'lodestar-token' = 'SEREN_LODESTAR_TOKEN' }
+        # Where each lives in the config, so a reinstall starts from the
+        # config as it is now (a hand edit included), not the last flags.
+        ConfigKeys  = @{ 'lodestar-url' = 'lodestar.url'; 'lodestar-token' = 'lodestar.bearer_token';
+                         'claude-name' = 'claude.name'; 'claude-cwd' = 'claude.cwd';
+                         'claude-tools' = 'claude.allowed_tools' }
     }
     Get-SerenDescribe @describeArgs
     exit 0
@@ -131,6 +143,14 @@ if ($Ref -and -not $Repo) { $Repo = "ChadRoesler/SerenSymposium" }
 
 # -- 2. resolve wheel ----------------------------------------------------------
 $wr = Resolve-Wheel -Wheel $Wheel -Local $Local -Ref $Ref -Repo $Repo -Package "seren-symposium"
+
+# -- 2b. a Symposium running on this config stops for the install -------------
+# The tray (it starts at logon) and any window hold the venv's files open, and
+# a reinstall is a restart anyway: it comes back up below.
+$running = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+             Where-Object { $_.CommandLine -and $_.CommandLine.Contains("seren_symposium") -and $_.CommandLine.Contains($CfgPath) })
+foreach ($proc in $running) { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue }
+if ($running.Count) { Warn "Stopped the running Symposium for the install ($($running.Count) process(es)) - it starts again below" }
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyInfo.Exe -PyArgs $pyInfo.Args
@@ -167,16 +187,24 @@ if ($LodestarConfig) {
     $lodestarUrlForViewer = $sib.Url
     Ok "Lodestar: $($sib.Url) (from its config)"
   }
-} elseif ($LodestarUrl) {
+}
+# Given both, and the config was no use (gone, unreadable - a sibling on
+# another install), the url still counts. It used to be dropped, and the
+# Lodestar only survived because keep-config copied the old block back.
+if (-not $lodestarBlock -and $LodestarUrl) {
   $lodestarBlock = "lodestar:`n  url: $LodestarUrl`n"
   if ($env:SEREN_LODESTAR_TOKEN) {
     $lodestarBlock += "  bearer_token: `"$($env:SEREN_LODESTAR_TOKEN)`"`n"
   } else {
-    Warn "SEREN_LODESTAR_TOKEN is not set, so Symposium will call $LodestarUrl without a bearer (fine for an open Lodestar; in Starwright, Configure > lodestar-token)"
+    if ($firstInstall) {
+      Warn "SEREN_LODESTAR_TOKEN is not set, so Symposium will call $LodestarUrl without a bearer (fine for an open Lodestar; in Starwright, Configure > lodestar-token)"
+    } else {
+      Ok "No new Lodestar token given: keeping the one in the config, if it has one"
+    }
   }
   $lodestarUrlForViewer = $LodestarUrl.TrimEnd('/')
   Ok "Lodestar: $LodestarUrl"
-} elseif ($firstInstall) {
+} elseif (-not $lodestarBlock -and $firstInstall) {
   Warn "No -LodestarConfig or -LodestarUrl: Symposium will look for Lodestar at 127.0.0.1:6361"
 }
 
@@ -243,27 +271,47 @@ if (Select-String -LiteralPath $CfgPath -Pattern '^\s+bearer_token:\s*"?[^"\s]' 
   Protect-SerenConfig -Path $CfgPath
 }
 
-# -- 6. a Start menu shortcut (the window, not a console) ---------------------
-# pythonw: no console behind the window. Not an autostart - Symposium is
-# something you open, not something that runs.
+# -- 6. a Start menu shortcut, and the tray at logon ---------------------------
+# pythonw: no console behind either. The Start menu one opens a window (onto
+# the tray's Symposium when it is running); the Startup one runs the tray.
+$pyw = Join-Path (Split-Path $vpy -Parent) "pythonw.exe"
+$label = "Seren Symposium"
+if ($Instance) { $label = "$label ($Instance)" }
+# The window's own icon (the favicon, as an .ico in the package).
+$ico = (& $vpy -c "import pathlib, seren_symposium as s; p = pathlib.Path(s.__file__).with_name('symposium.ico'); print(p if p.is_file() else '')" 2>$null)
+function New-SymposiumShortcut([string] $Path, [string] $Arguments, [string] $What) {
+  $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($Path)
+  $lnk.TargetPath = $pyw
+  $lnk.Arguments = $Arguments
+  $lnk.WorkingDirectory = $AppDir
+  $lnk.Description = $What
+  if ($ico) { $lnk.IconLocation = "$ico,0" }
+  $lnk.Save()
+}
 $shortcut = ""
-if (-not $NoShortcut -and -not $NoWindow) {
-  $pyw = Join-Path (Split-Path $vpy -Parent) "pythonw.exe"
-  if (Test-Path $pyw) {
+$autostart = ""
+$startupLnk = Join-Path ([Environment]::GetFolderPath("Startup")) "$label.lnk"
+if ($NoWindow) {
+  # headless: nothing to click, nothing in a tray
+} elseif (-not (Test-Path $pyw)) {
+  Warn "No pythonw.exe beside $vpy - no shortcuts and no tray; use the launcher"
+} else {
+  if (-not $NoShortcut) {
     $menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Seren"
     New-Item -ItemType Directory -Force -Path $menu | Out-Null
-    $label = "Seren Symposium"
-    if ($Instance) { $label = "$label ($Instance)" }
     $shortcut = Join-Path $menu "$label.lnk"
-    $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
-    $lnk.TargetPath = $pyw
-    $lnk.Arguments = "-m seren_symposium --config `"$CfgPath`""
-    $lnk.WorkingDirectory = $AppDir
-    $lnk.Description = "The Seren desktop front door"
-    $lnk.Save()
+    New-SymposiumShortcut $shortcut "-m seren_symposium --config `"$CfgPath`"" "The Seren desktop front door"
     Ok "Start menu shortcut: $shortcut"
+  }
+  if ($NoAutostart) {
+    if (Test-Path $startupLnk) { Remove-Item -Force $startupLnk; Ok "No longer starts at logon" }
   } else {
-    Warn "No pythonw.exe beside $vpy - no shortcut; use the launcher"
+    New-SymposiumShortcut $startupLnk "-m seren_symposium --tray --config `"$CfgPath`"" "Seren Symposium, in the tray"
+    $autostart = $startupLnk
+    # And now, so it is not waiting for the next logon.
+    Start-Process -FilePath $pyw -ArgumentList @("-m", "seren_symposium", "--tray", "--config", "`"$CfgPath`"") `
+                  -WorkingDirectory $AppDir -WindowStyle Hidden
+    Ok "Starts at logon, in the tray ($startupLnk) - and running now"
   }
 }
 
@@ -274,6 +322,7 @@ Write-Host "  SerenSymposium is set up ✓" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  Open it:          $launcher" -ForegroundColor Blue
 if ($shortcut) { Write-Host "  Or from Start:    Seren > $([System.IO.Path]::GetFileNameWithoutExtension($shortcut))" -ForegroundColor Blue }
+if ($autostart) { Write-Host "  Running now:      in the tray (and at every logon)" -ForegroundColor Blue }
 if ($NoWindow) { Write-Host "  Then browse to:   http://127.0.0.1:$Port/" -ForegroundColor Blue }
 Write-Host "  Config:           $CfgPath" -ForegroundColor Blue
 Write-Host "Rip it and win. 🌭🔧" -ForegroundColor Green
@@ -283,7 +332,7 @@ $doneArgs = @{
     Service     = 'seren-symposium'
     ConnectHost = '127.0.0.1'
     Port        = $Port
-    Autostart   = $false
+    Autostart   = [bool] $autostart
     Token       = ""
     Corp        = ([bool] $Corp)
     Venv        = $VenvDir

@@ -213,7 +213,13 @@ function Get-SerenDescribe {
         # of SVC_SECRETS. Starwright shows a password box for each and hands
         # the value to the card's process environment, out of the command
         # line and redacted from the log.
-        [hashtable] $Secrets = @{}
+        [hashtable] $Secrets = @{},
+        # Where a flag's value lives in the config the card writes: flag ->
+        # "block.key" ("claude-name" -> "claude.name"). Twin of
+        # SVC_CONFIG_KEYS. A reinstall's form starts from what the config
+        # says NOW - a hand edit included - rather than what was typed last
+        # time; for a secret, Starwright only looks whether one is there.
+        [hashtable] $ConfigKeys = @{}
     )
     $flags  = @(Get-SerenFlagsFromSelf -ScriptPath $ScriptPath)
     if ($Extras.Count -gt 0) {
@@ -273,6 +279,7 @@ function Get-SerenDescribe {
         recommends     = @($Recommends)
         choices        = $choices
         secrets        = $Secrets
+        config_keys    = $ConfigKeys
         params         = $params
     }
     # Write-Output is CORRECT here, unlike in Send-SerenEvent, and the

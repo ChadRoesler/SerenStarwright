@@ -107,6 +107,14 @@ Ok "Python: $Python"
 Step "Resolving $Carabiner.kbh"
 New-Item -ItemType Directory -Force -Path $Into, $Connections | Out-Null
 $kbhSrc = ""
+# A dev wheelhouse is a universal choice in Starwright - it rides along from
+# the services' install - and seren-dev-publish builds wheels, not .kbh files.
+# A wheelhouse folder without one is not a reason to stop: build it from the
+# checkout, as with no wheelhouse at all.
+if ($Local -and $Local -notmatch '^https?://' -and -not (Test-Path (Join-Path ($Local -replace '^file://', '') "$Carabiner.kbh"))) {
+    Warn "No $Carabiner.kbh in the wheelhouse $Local - building it from the SerenCarabiners checkout instead"
+    $Local = ""
+}
 if ($Kbh) {
     if (-not (Test-Path $Kbh)) { Die ".kbh not found: $Kbh" }
     $kbhSrc = (Resolve-Path $Kbh).Path

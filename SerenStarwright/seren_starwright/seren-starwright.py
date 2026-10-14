@@ -638,6 +638,12 @@ class ServiceDef:
     # each; the value rides in the job's environment, registered so the log
     # redacts it, and never reaches per_service, argv or the install record.
     secrets: dict[str, str] = field(default_factory=dict)
+    # Where each flag's value lives in the config the card writes
+    # (--describe's `config_keys`: "claude-name" -> "claude.name"). A
+    # reinstall reads these from the installed config before the record's
+    # remembered flags, so a hand edit is what the form shows - and what the
+    # card writes back - instead of being undone by what was typed last time.
+    config_keys: dict[str, str] = field(default_factory=dict)
     script: Path = Path()
 
     def is_switch(self, flag: str) -> bool:
@@ -860,6 +866,9 @@ def discover() -> tuple[list[ServiceDef], list[str]]:
                 switches=list(d.get("switches", [])),
                 secrets={str(k): str(v) for k, v in (d.get("secrets") or {}).items() if k and v}
                         if isinstance(d.get("secrets"), dict) else {},
+                config_keys={str(k): str(v) for k, v in (d.get("config_keys") or {}).items()
+                             if k and isinstance(v, str) and "." in v}
+                            if isinstance(d.get("config_keys"), dict) else {},
                 script=script))
         except json.JSONDecodeError as e:
             problems.append(f"{script.name}: bad JSON from --describe ({e})")
@@ -1437,6 +1446,27 @@ def config_value(path: str, block: str, key: str) -> str:
     return ""
 
 
+def config_flag_value(path: str, where: str) -> str:
+    """A flag's value out of an installed config, from a card's config_keys
+    entry ("block.key"). An inline yaml list comes back as the comma list a
+    flag takes: ["a", "b"] -> "a,b"."""
+    block, _, key = where.partition(".")
+    v = config_value(path, block, key)
+    if v.startswith("[") and v.endswith("]"):
+        v = ",".join(x.strip().strip('"').strip("'") for x in v[1:-1].split(",") if x.strip())
+    return v
+
+
+def secret_in_config(svc: "ServiceDef", flag: str, rec: Optional["InstalledRecord"]) -> bool:
+    """Does the installed config already hold this secret? Only looked at,
+    never read into the form: the box says it is there and blank keeps it."""
+    where = svc.config_keys.get(flag, "")
+    if not (rec and rec.config and where):
+        return False
+    block, _, key = where.partition(".")
+    return any(config_value(rec.config, block, k) for k in (key, f"{key}_env", f"{key}_keyring"))
+
+
 def prefill_reinstall(selected: list[str], svcs: dict[str, ServiceDef], per_service: dict[str, dict],
                       installed: list[InstalledRecord]) -> dict[str, InstalledRecord]:
     """A service installed again in place starts from how it is installed:
@@ -1478,6 +1508,26 @@ def prefill_reinstall(selected: list[str], svcs: dict[str, ServiceDef], per_serv
         for extra, on in (rec.extras or {}).items():
             if on and extra in svc.flags:
                 cfg.setdefault(extra, True)
+        # What the config says NOW, first: a value edited by hand since the
+        # last install is the one to keep, not the one typed back then (seen
+        # 14 Oct 2026: Symposium's claude name, edited in its yaml, came back
+        # as the old flag on every reinstall). A secret is never read here.
+        if rec.config:
+            for flag, where in svc.config_keys.items():
+                if flag in cfg or flag not in svc.flags or flag in svc.secrets or svc.is_switch(flag):
+                    continue
+                v = config_flag_value(rec.config, where)
+                if v:
+                    cfg[flag] = v
+            for flag in svc.flags:
+                if not flag.endswith("-url") or flag in cfg or flag in svc.config_keys:
+                    continue
+                block = flag[: -len("-url")]
+                if f"seren-{block}" in svc.wires:
+                    continue                          # a dependency is wired, not copied
+                v = config_value(rec.config, block, "url")
+                if v:
+                    cfg[flag] = v
         # Every flag the card was given last time, as it was given: a ripple,
         # a bedtime, a model path, a voice card, a bookmark hook. Identity and
         # the universal ones are decided above and by the universal section;
@@ -1491,20 +1541,10 @@ def prefill_reinstall(selected: list[str], svcs: dict[str, ServiceDef], per_serv
             if v in (None, "", False):
                 continue
             cfg[flag] = True if v is True or (svc.is_switch(flag) and v) else v
-        if rec.config:
-            if "host" in svc.flags and "host" not in cfg:
-                h = config_value(rec.config, "server", "host")
-                if h and h != svc.default_host:
-                    cfg["host"] = h
-            for flag in svc.flags:
-                if not flag.endswith("-url") or flag in cfg:
-                    continue
-                block = flag[: -len("-url")]
-                if f"seren-{block}" in svc.wires:
-                    continue                          # a dependency is wired, not copied
-                v = config_value(rec.config, block, "url")
-                if v:
-                    cfg[flag] = v
+        if rec.config and "host" in svc.flags and "host" not in cfg:
+            h = config_value(rec.config, "server", "host")
+            if h and h != svc.default_host:
+                cfg["host"] = h
     return out
 
 
@@ -1685,6 +1725,60 @@ def requirement_lines(members: list["ServiceDef"], svcs: dict[str, "ServiceDef"]
 
 def installed_for(service: str, installed: list[InstalledRecord]) -> list[InstalledRecord]:
     return [r for r in installed if r.service == service]
+
+
+def _yaml_scalar(v: str) -> str:
+    v = v.strip()
+    if v and v[0] in "\"'":
+        q = v[0]
+        end = v.find(q, 1)
+        return v[1:end] if end > 0 else v[1:]
+    return re.split(r"\s+#", v, maxsplit=1)[0].strip()
+
+
+def clip_values(path: str) -> dict:
+    """What an installed clip's yaml (kbh's <carabiner>.yaml) says, read
+    without a yaml parser: its project and python, the first server's route
+    and the bookmark's - each url, or the connection file it names - and
+    whether each holds a token. The token itself is never read out."""
+    out: dict = {}
+    try:
+        lines = Path(path).read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    except OSError:
+        return out
+    top = server = ""
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        key, _, val = line.strip().partition(":")
+        val = _yaml_scalar(val)
+        if indent == 0:
+            top, server = key, ""
+            if key in ("project", "python") and val:
+                out[key] = val
+            elif key == "bookmark" and val:
+                out["margin-url"] = val                         # a connection file, given as a name
+            continue
+        if top == "servers" and indent == 2:
+            if out.get("server-name"):
+                server = "-"                                     # only the first server is the Workbench
+                continue
+            server = key
+            out["server-name"] = key
+            if val:
+                out["workbench-url"] = val
+        elif top == "servers" and server and server != "-" and indent >= 4:
+            if key == "url" and val:
+                out["workbench-url"] = val
+            elif key.startswith("bearer_token") and val:
+                out["workbench-token"] = True
+        elif top == "bookmark" and indent >= 2:
+            if key == "url" and val:
+                out["margin-url"] = val
+            elif key.startswith("bearer_token") and val:
+                out["margin-token"] = True
+    return out
 
 
 def installed_summary(rec: InstalledRecord) -> str:
@@ -2075,9 +2169,39 @@ class CarabinerScreen(Screen):
         recs = installed_for(service, self.app.installed)                    # type: ignore[attr-defined]
         return recs[0].config if len(recs) == 1 and recs[0].config else ""
 
+    def _previous(self) -> tuple[Optional[InstalledRecord], dict]:
+        """The clip already on this box, if there is one, and what its yaml
+        says. A re-run starts from it - the clip as it is now, then the flags
+        it was installed with - instead of a blank form (14 Oct 2026: every
+        upgrade meant typing the project, python, urls and tokens again)."""
+        cards = {c.name for c in self.app.carabiners}                         # type: ignore[attr-defined]
+        recs = [r for r in self.app.installed if r.service in cards]          # type: ignore[attr-defined]
+        if not recs:
+            return None, {}
+        rec = max(recs, key=lambda r: r.installed_at or "")
+        return rec, (clip_values(rec.config) if rec.config else {})
+
     def compose(self) -> ComposeResult:
         yield Header()
         cards = self.app.carabiners                                           # type: ignore[attr-defined]
+        rec, clip = self._previous()
+        opts = dict(rec.options) if rec else {}
+        # The clip's yaml first (it is what the harness uses now), then the
+        # flags the clip was installed with, then what the ledger knows.
+        prior = {
+            "project": clip.get("project") or opts.get("project", ""),
+            "python": clip.get("python") or opts.get("python", ""),
+            "into": (rec.app_dir if rec and rec.app_dir else opts.get("into", "")),
+            "workbench-url": (clip.get("workbench-url", "") if str(clip.get("workbench-url", "")).startswith("http")
+                              else "") or opts.get("workbench-url", ""),
+            "margin-url": (clip.get("margin-url", "") if str(clip.get("margin-url", "")).startswith("http")
+                           else "") or opts.get("margin-url", ""),
+            "host": opts.get("host", "") or opts.get("carabiner-host", ""),
+            "instance": (rec.instance if rec and rec.instance else opts.get("instance", "")),
+        }
+        held = "●●●●●●●● (in the clip - blank keeps it)"
+        wb_cfg = "" if prior["workbench-url"] else (opts.get("workbench-config") or self._one("seren-workbench"))
+        mg_cfg = "" if prior["margin-url"] else (opts.get("margin-config") or self._one("seren-margin"))
         with VerticalScroll(id="kbh-root"):
             box = Vertical(id="kbh-box")
             box.border_title = "Install Carabiners"
@@ -2092,11 +2216,11 @@ class CarabinerScreen(Screen):
                 yield Select([(c, c) for c in dict.fromkeys(choices)], value=choices[0] if choices else Select.BLANK,
                              allow_blank=False, id="kbh-carabiner")
                 yield Label("project: the folder the model works in (wakes run there)")
-                yield Input(value="", placeholder=str(Path.home()), id="kbh-project")
+                yield Input(value=prior["project"], placeholder=str(Path.home()), id="kbh-project")
                 yield Label("python: runs the clip from hooks and ripples (blank = the one found on install)")
-                yield Input(value="", placeholder="(found on install)", id="kbh-python")
+                yield Input(value=prior["python"], placeholder="(found on install)", id="kbh-python")
                 yield Label("into: where the clip lives (blank = <root>/kbh, or ~/seren-kbh)")
-                yield Input(value="", placeholder="(default)", id="kbh-into")
+                yield Input(value=prior["into"], placeholder="(default)", id="kbh-into")
                 # THE WORKBENCH AND MARGIN ARE ROUTES: a url and a token, written
                 # into the clip's yaml. On the box they live on, the ledger knows
                 # their configs and the card reads the route out of those; from
@@ -2104,23 +2228,25 @@ class CarabinerScreen(Screen):
                 # when both are given. The token never becomes an argument: it
                 # rides to the card in the job's environment, and the log redacts it.
                 yield Label("workbench url: the one MCP door, when the Workbench is on another box (e.g. http://nuc:7255)")
-                yield Input(value="", placeholder="(blank: use the config below)", id="kbh-workbench-url")
+                yield Input(value=prior["workbench-url"], placeholder="(blank: use the config below)", id="kbh-workbench-url")
                 yield Label("workbench token")
-                yield Input(value="", placeholder="(the Workbench's bearer; stays out of the command line)",
+                yield Input(value="", placeholder=held if clip.get("workbench-token")
+                            else "(the Workbench's bearer; stays out of the command line)",
                             password=True, id="kbh-workbench-token")
                 yield Label("workbench config: when the Workbench is on THIS box")
-                yield Input(value=self._one("seren-workbench"), placeholder="(none on this box)", id="kbh-workbench")
+                yield Input(value=wb_cfg, placeholder="(none on this box)", id="kbh-workbench")
                 yield Label("margin url: the bookmark, when Margin is on another box (e.g. http://nuc:7251)")
-                yield Input(value="", placeholder="(blank: use the config below)", id="kbh-margin-url")
+                yield Input(value=prior["margin-url"], placeholder="(blank: use the config below)", id="kbh-margin-url")
                 yield Label("margin token")
-                yield Input(value="", placeholder="(Margin's bearer; stays out of the command line)",
+                yield Input(value="", placeholder=held if clip.get("margin-token")
+                            else "(Margin's bearer; stays out of the command line)",
                             password=True, id="kbh-margin-token")
                 yield Label("margin config: when Margin is on THIS box")
-                yield Input(value=self._one("seren-margin"), placeholder="(none on this box)", id="kbh-margin")
+                yield Input(value=mg_cfg, placeholder="(none on this box)", id="kbh-margin")
                 yield Label("host: with a config from another box, the host this box dials (its 0.0.0.0 is a name here)")
-                yield Input(value="", placeholder="(as the configs say)", id="kbh-host")
+                yield Input(value=prior["host"], placeholder="(as the configs say)", id="kbh-host")
                 yield Label("instance: the registered server is <instance>-workbench")
-                yield Input(value="", placeholder="seren", id="kbh-instance")
+                yield Input(value=prior["instance"], placeholder="seren", id="kbh-instance")
                 yield Checkbox("dry wake: belay also runs the harness binary once (--version)", id="kbh-drywake")
                 yield Static("", id="kbh-note")
         with Horizontal(id="actions"):
@@ -2132,6 +2258,11 @@ class CarabinerScreen(Screen):
         note = self.query_one("#kbh-note", Static)
         wb, mg = self._one("seren-workbench"), self._one("seren-margin")
         lines = []
+        rec, _ = self._previous()
+        if rec is not None:
+            lines.append(f"Clipped on this box already ({rec.config or rec.app_dir}): the form starts from it. "
+                         "Its yaml is kept as it is on a re-run - routes and tokens included - so Next is an "
+                         "upgrade; to change a route, edit that file.")
         if wb:
             lines.append(f"Workbench found on this box: {wb}")
         if mg:
@@ -2705,10 +2836,15 @@ class AdvancedModal(ModalScreen[dict]):
                 # Blank keeps whatever was typed before in this run (the box
                 # never shows it back); the card keeps what its config has.
                 held = (getattr(self.app, "service_secrets", {}) or {}).get(self.svc.name, {})
+                rec = (getattr(self.app, "reinstalls", {}) or {}).get(self.svc.name)
                 for flag, var in self.svc.secrets.items():
                     yield Label(f"{flag}  (passed as {var}, never on the command line or in the log)")
-                    yield Input(password=True, placeholder="●●●●●●●● (set - blank keeps it)" if held.get(var)
-                                else "(unset)", id=f"adv-secret-{flag}")
+                    # Typed this run, or already in the config it reinstalls:
+                    # either way it is there, and the box must not say unset.
+                    there = ("set - blank keeps it" if held.get(var)
+                             else "in its config - blank keeps it" if secret_in_config(self.svc, flag, rec) else "")
+                    yield Input(password=True, placeholder=f"●●●●●●●● ({there})" if there else "(unset)",
+                                id=f"adv-secret-{flag}")
             with Horizontal(id="modal-actions"):
                 yield Button("Cancel", id="cancel", variant="default")
                 yield Button("Okay", id="ok", variant="primary")

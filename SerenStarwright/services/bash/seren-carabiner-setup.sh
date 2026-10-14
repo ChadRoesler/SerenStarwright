@@ -189,6 +189,14 @@ ok "Python: $PYTHON"
 step "Resolving $CARABINER.kbh"
 mkdir -p "$INTO" "$CONNECTIONS"
 KBH_SRC=""
+# A dev wheelhouse is a universal choice in Starwright - it rides along from
+# the services' install - and seren-dev-publish builds wheels, not .kbh files.
+# A wheelhouse folder without one is not a reason to stop: build it from the
+# checkout, as with no wheelhouse at all.
+if [[ -n "$LOCAL" && "$LOCAL" != http://* && "$LOCAL" != https://* && ! -f "${LOCAL#file://}/${CARABINER}.kbh" ]]; then
+  warn "No ${CARABINER}.kbh in the wheelhouse $LOCAL - building it from the SerenCarabiners checkout instead"
+  LOCAL=""
+fi
 if [[ -n "$KBH" ]]; then
   [[ -f "$KBH" ]] || die ".kbh not found: $KBH"
   KBH_SRC="$KBH"

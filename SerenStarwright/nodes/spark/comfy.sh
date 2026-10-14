@@ -56,9 +56,8 @@ install_comfy() {
     venv_pip comfy install -r requirements.txt 2>/dev/null || \
         warn "Some ComfyUI requirements failed - usually safe to ignore"
 
-    if [ -d /mnt/nvme ]; then
-        sudo -u "$TARGET_USER" mkdir -p /mnt/nvme/comfyui-models
-    fi
+    # The model store (/mnt/nvme/comfyui-models) is made and wired by
+    # seren_register_comfy, below.
 
     log "Verifying PyTorch CUDA in venv..."
     venv_python_cuda comfy -c "

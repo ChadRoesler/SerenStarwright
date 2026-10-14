@@ -381,6 +381,13 @@ seren_describe() {
   for sec in ${SVC_SECRETS:-}; do
     secrets_json+="${secrets_json:+,}\"$(_json_esc "${sec%%=*}")\":\"$(_json_esc "${sec#*=}")\""
   done
+  # SVC_CONFIG_KEYS: where a flag's value lives in the config the card
+  # writes, "flag=block.key" space-separated. A reinstall's form starts from
+  # what the config says now; for a secret, only whether one is there.
+  local keys_json="" ck
+  for ck in ${SVC_CONFIG_KEYS:-}; do
+    keys_json+="${keys_json:+,}\"$(_json_esc "${ck%%=*}")\":\"$(_json_esc "${ck#*=}")\""
+  done
   local switches_json="" sw
   for sw in ${SVC_SWITCHES:-$(seren_switches_from_self)}; do
     switches_json+="${switches_json:+,}\"$(_json_esc "$sw")\""
@@ -401,6 +408,7 @@ seren_describe() {
   printf ',"recommends":[%s]'   "$recommends_json"
   printf ',"choices":{%s}'      "$choices_json"
   printf ',"secrets":{%s}'      "$secrets_json"
+  printf ',"config_keys":{%s}'  "$keys_json"
   printf '}\n'
 }
 
