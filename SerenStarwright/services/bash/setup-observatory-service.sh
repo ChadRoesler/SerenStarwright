@@ -12,6 +12,11 @@
 #    --config PATH     Override config path
 #    --health-port N   Override the health-check port
 #    -h, --help        This help
+#
+#  No MemoryMax fence (--memory-max none), unlike Memory's 2G. The Observatory
+#  STARTS the model backends - llama.cpp, ComfyUI, whisper, kokoro - and they
+#  run in its cgroup: the shared 2G default capped ComfyUI on the 128 GB Spark
+#  at 2 GB of RAM ("total RAM 2048 MB" in its log, 15 Oct 2026).
 # ==========================================================================
 set -euo pipefail
 
@@ -69,4 +74,5 @@ exec bash "$CORE" \
   --health-port  "$HEALTH_PORT" \
   --service-user "$SERVICE_USER" \
   --health-path  /api/v1/system/ping \
+  --memory-max   none \
   --description  "SerenObservatory$INSTANCE - per-node management plane"
