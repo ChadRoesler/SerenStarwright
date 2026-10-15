@@ -55,6 +55,11 @@ for f in "$HERE"/services/bash/seren-*-setup.sh; do
   grep -q '^SVC_GROUP="carabiners"' "$f" && { ok_ "$card: a carabiner, no service to lay out"; continue; }
   n_layout="$(grep -c '^seren_layout "' "$f")"
   n_suffix="$(grep -c 'setup_autostart .*"\$SVC_SUFFIX"' "$f")"
+  # A desktop app (Symposium) runs no service: it starts at login from an XDG
+  # autostart entry, and that entry is what carries the instance.
+  if [[ "$n_suffix" == 0 ]] && grep -q '/autostart/seren-[a-z]*\${INSTANCE:+-\$INSTANCE}\.desktop' "$f"; then
+    n_suffix=1
+  fi
   n_root="$(grep -cE '^\s+--root\)' "$f")"
   if [[ "$n_layout" == 1 && "$n_suffix" == 1 && "$n_root" == 1 ]]; then ok_ "$card: --root, seren_layout, the suffix to autostart"
   else bad "$card: layout=$n_layout suffix=$n_suffix root-flag=$n_root"; fi
