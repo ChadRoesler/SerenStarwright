@@ -323,7 +323,10 @@ if ($NoWindow) {
 # of the family (the install ledger above is the other half of that). Under an
 # install root the manifest goes to <root>\manifests, the roster that
 # install's Observatory reads; otherwise ~\.seren\services.
-$appUp = Split-Path $AppDir -Parent; $venvUp = Split-Path (Resolve-Path $VenvDir).Path -Parent
+# GetFullPath, not Resolve-Path: the latter throws when the folder is not
+# there yet, and the card's verify harness runs this with a venv it never made.
+$appUp = Split-Path ([IO.Path]::GetFullPath($AppDir)) -Parent
+$venvUp = Split-Path ([IO.Path]::GetFullPath($VenvDir)) -Parent
 $installRoot = $null
 if ((Split-Path $appUp -Leaf) -eq "apps" -and (Split-Path $venvUp -Leaf) -eq "venvs" -and
     (Split-Path $appUp -Parent) -eq (Split-Path $venvUp -Parent)) {

@@ -948,6 +948,14 @@ if (-not $pyExe) {
         if ($a.Cfg -match '(?s)folders:\s+- name: "Main"\s+voice: "claude"') { Good "...a starter project with the voice asked for" } else { Bad "no starter project: $($a.Cfg)" }
         if ($a.Cfg -match 'cluster: "http://127\.0\.0\.1:6362/viewer"') { Good "...the cluster tab points at that Lodestar" } else { Bad "cluster viewer wrong: $($a.Cfg)" }
         if ((Get-Acl -LiteralPath $symCfg).AreAccessRulesProtected) { Good "...and the config, holding a bearer, is locked" } else { Bad "a config holding a bearer was left open" }
+        # Not a service, but seen by this box's Observatory all the same: a
+        # launcher manifest in the install's roster, naming the pid file the
+        # serving Symposium writes beside its config (16 Oct 2026).
+        $symMan = Join-Path $symRoot "manifests\seren-symposium.json"
+        $manText = if (Test-Path $symMan) { [System.IO.File]::ReadAllText($symMan) } else { "" }
+        if ($manText -match '"service_type":\s*"launcher"' -and $manText -match 'seren-symposium\.pid' -and
+            $manText -match '"--tray"|"--serve"' -and $manText -match '"health_url":\s*"http://127\.0\.0\.1:\d+/health"') {
+            Good "...and a launcher manifest for this box's Observatory, naming the pid file and the tray command" } else { Bad "launcher manifest missing or wrong at ${symMan}: $manText" }
 
         $b = Install-Sym @()
         if ($b.Rc -eq 0 -and $b.Cfg -match 'bearer_token: "lodestar-bearer"' -and $b.Cfg -match 'name: "alice"' -and
