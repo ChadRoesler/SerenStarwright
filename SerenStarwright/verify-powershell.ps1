@@ -927,10 +927,18 @@ if (-not $pyExe) {
     $env:SEREN_INSTALLED_DIR = Join-Path $symTmp "ledger"     # never the real ledger
     $symRoot = Join-Path $symTmp "root"
     $symCfg = Join-Path $symRoot "apps\symposium\seren-symposium.yaml"
+    $symStartup = Join-Path $symTmp "startup"
+    $realStartup = [Environment]::GetFolderPath("Startup")
+    $startupBefore = @(Get-ChildItem $realStartup -Filter "*.lnk" -ErrorAction SilentlyContinue | ForEach-Object Name)
     function Install-Sym([string[]] $CardArgs) {
         # -NoShortcut always: the stub's python is a real one, and its
-        # pythonw would put a real entry in this box's Start menu.
-        $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $symCard, "-Root", $symRoot, "-NoShortcut") + $CardArgs
+        # pythonw would put a real entry in this box's Start menu. The logon
+        # entry goes to a scratch Startup folder (-StartupDir) and nothing is
+        # started (-NoStartNow): on 16 Oct 2026 this harness left a real
+        # "Seren Symposium.lnk" in the user's Startup, pointing at a temp
+        # config, and launched a tray against a stub package.
+        $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $symCard, "-Root", $symRoot, "-NoShortcut",
+                     "-StartupDir", $symStartup, "-NoStartNow") + $CardArgs
         $prevEap = $ErrorActionPreference; $ErrorActionPreference = "Continue"
         try { $out = & (Get-Process -Id $PID).Path @argList 2>&1 | Out-String } finally { $ErrorActionPreference = $prevEap }
         $text = if (Test-Path $symCfg) { [System.IO.File]::ReadAllText($symCfg) } else { "" }
@@ -948,6 +956,12 @@ if (-not $pyExe) {
         if ($a.Cfg -match '(?s)folders:\s+- name: "Main"\s+voice: "claude"') { Good "...a starter project with the voice asked for" } else { Bad "no starter project: $($a.Cfg)" }
         if ($a.Cfg -match 'cluster: "http://127\.0\.0\.1:6362/viewer"') { Good "...the cluster tab points at that Lodestar" } else { Bad "cluster viewer wrong: $($a.Cfg)" }
         if ((Get-Acl -LiteralPath $symCfg).AreAccessRulesProtected) { Good "...and the config, holding a bearer, is locked" } else { Bad "a config holding a bearer was left open" }
+        $scratchLnk = Join-Path $symStartup "Seren Symposium.lnk"
+        $startupAfter = @(Get-ChildItem $realStartup -Filter "*.lnk" -ErrorAction SilentlyContinue | ForEach-Object Name)
+        $leaked = @($startupAfter | Where-Object { $startupBefore -notcontains $_ })
+        if ((Test-Path $scratchLnk) -and $leaked.Count -eq 0) { Good "...the logon entry went to the scratch Startup folder, and the real one gained nothing" }
+        elseif ($leaked.Count -gt 0) { Bad "the card wrote into the real Startup folder: $($leaked -join ', ')" }
+        else { Bad "no logon entry at $scratchLnk" }
         # Not a service, but seen by this box's Observatory all the same: a
         # launcher manifest in the install's roster, naming the pid file the
         # serving Symposium writes beside its config (16 Oct 2026).

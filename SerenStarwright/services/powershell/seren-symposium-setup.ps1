@@ -53,6 +53,14 @@ param(
   [switch] $NoShortcut,
   # Not at logon: no tray, Symposium runs while its window is open.
   [switch] $NoAutostart,
+  # Where the logon entry goes. Blank = this user's Startup folder. A test
+  # harness points it at a scratch folder: on 16 Oct 2026 the verify run put
+  # a real "Seren Symposium.lnk" in the logged-in user's Startup, aimed at a
+  # temp config that was gone by the next logon.
+  [string] $StartupDir     = "",
+  # Write the logon entry but do not start the tray now (the harness again:
+  # a stub package has nothing to run).
+  [switch] $NoStartNow,
   [string] $Wheel          = "",
   [string] $Local          = "",
   [string] $Ref            = "",
@@ -290,7 +298,9 @@ function New-SymposiumShortcut([string] $Path, [string] $Arguments, [string] $Wh
 }
 $shortcut = ""
 $autostart = ""
-$startupLnk = Join-Path ([Environment]::GetFolderPath("Startup")) "$label.lnk"
+$startupDir = if ($StartupDir) { $StartupDir } else { [Environment]::GetFolderPath("Startup") }
+New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+$startupLnk = Join-Path $startupDir "$label.lnk"
 if ($NoWindow) {
   # headless: nothing to click, nothing in a tray
 } elseif (-not (Test-Path $pyw)) {
@@ -308,10 +318,14 @@ if ($NoWindow) {
   } else {
     New-SymposiumShortcut $startupLnk "-m seren_symposium --tray --config `"$CfgPath`"" "Seren Symposium, in the tray"
     $autostart = $startupLnk
-    # And now, so it is not waiting for the next logon.
-    Start-Process -FilePath $pyw -ArgumentList @("-m", "seren_symposium", "--tray", "--config", "`"$CfgPath`"") `
-                  -WorkingDirectory $AppDir -WindowStyle Hidden
-    Ok "Starts at logon, in the tray ($startupLnk) - and running now"
+    if ($NoStartNow) {
+      Ok "Starts at logon, in the tray ($startupLnk)"
+    } else {
+      # And now, so it is not waiting for the next logon.
+      Start-Process -FilePath $pyw -ArgumentList @("-m", "seren_symposium", "--tray", "--config", "`"$CfgPath`"") `
+                    -WorkingDirectory $AppDir -WindowStyle Hidden
+      Ok "Starts at logon, in the tray ($startupLnk) - and running now"
+    }
   }
 }
 

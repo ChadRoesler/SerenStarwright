@@ -1697,6 +1697,123 @@ seren_cuda_ld_path() {
     esac
 }
 
+# ── Node env: caches on the NVMe, and the hf CLI ──────────────────────────
+#
+# 16 Oct 2026: the Xaviers' 28 GB onboard disks were at 80% with nothing of
+# ours on them, and a Spark was carrying 400 GB of Hugging Face cache in its
+# home folder. Every model download since has to land on the NVMe, for people
+# and for services alike, and "for services" is the part that is easy to get
+# wrong: the Observatory starts kokoro/whisper/llama/comfy from a systemd
+# unit with no login shell, so an export in .bashrc never reaches them.
+#
+# So there is ONE file, ~/.config/seren/env.sh, and three things source it:
+# .bashrc and .profile (people), and every ~/start_*.sh this library writes
+# (services). Edit the file, not the places that source it.
+#
+# No token is involved. `hf auth login` is a person's act, done later, and it
+# lands in HF_HOME like everything else.
+SEREN_NODE_ENV_MARK="# seren node env (hf cache on nvme)"
+
+# seren_node_env_root - where the caches go: the NVMe when there is one.
+seren_node_env_root() {
+    local nv="${SEREN_NVME_ROOT:-/mnt/nvme}"
+    if [ -d "$nv" ]; then echo "$nv"; else echo "/home/$TARGET_USER/seren-cache"; fi
+}
+
+# seren_node_env_hook_lines - the two lines a start script carries so the env
+# reaches a service started with no login shell. Printed for a heredoc, so
+# $HOME stays literal.
+seren_node_env_hook_lines() {
+    printf '%s\n[ -f "$HOME/.config/seren/env.sh" ] && . "$HOME/.config/seren/env.sh"\n' "$SEREN_NODE_ENV_MARK"
+}
+
+# seren_node_env - write the env file, point the caches at the NVMe, move an
+# existing home cache there, hook the shells and the start scripts. Idempotent.
+seren_node_env() {
+    local home="/home/$TARGET_USER"
+    local nv; nv="$(seren_node_env_root)"
+    local hf="$nv/hf_cache"
+    local envsh="$home/.config/seren/env.sh"
+    _as_target mkdir -p "$hf" "$nv/torch_cache" "$nv/pip-cache" \
+        "$home/.config/seren" "$home/.config/environment.d" "$home/.local/bin" "$home/.cache"
+
+    # An existing ~/.cache/huggingface moves onto the NVMe (a rename when the
+    # two are one filesystem, a copy otherwise) and a symlink stays behind for
+    # anything that hardcoded the old path.
+    local src="$home/.cache/huggingface"
+    if [ -L "$src" ]; then
+        :
+    elif [ -d "$src" ]; then
+        if [ -z "$(ls -A "$hf" 2>/dev/null)" ]; then
+            _as_target rmdir "$hf" 2>/dev/null && _as_target mv "$src" "$hf" \
+                || { _as_target mkdir -p "$hf"; _as_target cp -a "$src/." "$hf/" && _as_target rm -rf "$src"; }
+        else
+            _as_target cp -a "$src/." "$hf/" && _as_target rm -rf "$src"
+        fi
+        log "Moved $src -> $hf"
+        _as_target ln -s "$hf" "$src"
+    else
+        _as_target ln -s "$hf" "$src"
+    fi
+
+    _as_target tee "$envsh" > /dev/null <<ENVEOF
+$SEREN_NODE_ENV_MARK
+# Written by seren-prepare-node. Sourced by .bashrc, .profile and every
+# ~/start_*.sh, so a service the Observatory starts sees it too. Edit here.
+export HF_HOME="$hf"
+export HF_HUB_CACHE="$hf/hub"
+export TORCH_HOME="$nv/torch_cache"
+export PIP_CACHE_DIR="$nv/pip-cache"
+case ":\$PATH:" in *":$home/.local/bin:"*) ;; *) export PATH="$home/.local/bin:\$PATH";; esac
+ENVEOF
+    _as_target tee "$home/.config/environment.d/50-seren.conf" > /dev/null <<ENVEOF
+HF_HOME=$hf
+HF_HUB_CACHE=$hf/hub
+TORCH_HOME=$nv/torch_cache
+PIP_CACHE_DIR=$nv/pip-cache
+ENVEOF
+
+    local rc
+    for rc in "$home/.bashrc" "$home/.profile"; do
+        [ -f "$rc" ] || _as_target touch "$rc"
+        # A hand-set cache line would fight the env file; retire it, keep it visible.
+        if grep -q -E '^export HF_(HUB_CACHE|HOME)=' "$rc"; then
+            _as_target sed -i -E 's|^(export HF_(HUB_CACHE\|HOME)=.*)$|# \1   # superseded by ~/.config/seren/env.sh|' "$rc"
+        fi
+        if ! grep -q -F "$SEREN_NODE_ENV_MARK" "$rc"; then
+            seren_node_env_hook_lines | _as_target tee -a "$rc" > /dev/null
+        fi
+    done
+    # Start scripts written before this existed get the hook too.
+    local s
+    for s in "$home"/start_*.sh; do
+        [ -f "$s" ] || continue
+        if ! grep -q -F "$SEREN_NODE_ENV_MARK" "$s"; then
+            _as_target sed -i "1r /dev/stdin" "$s" <<< "$(seren_node_env_hook_lines)"
+        fi
+    done
+    log "Node env: HF_HOME=$hf (env file $envsh)"
+}
+
+# seren_install_hf_cli - the hf CLI in its own venv, linked into ~/.local/bin.
+# huggingface_hub 2.x carries the CLI in the base package. No token.
+seren_install_hf_cli() {
+    local home="/home/$TARGET_USER"
+    ensure_venv hf || return 1
+    local venv; venv="$(_seren_venv_path hf)"
+    _as_target env HF_HOME="$(seren_node_env_root)/hf_cache" \
+        "$venv/bin/python" -m pip install -q --upgrade huggingface_hub || return 1
+    local bin
+    for bin in hf huggingface-cli; do
+        if [ -e "$home/.local/bin/$bin" ] && [ ! -L "$home/.local/bin/$bin" ]; then
+            warn "$home/.local/bin/$bin exists and is not ours - leaving it"
+        elif [ -x "$venv/bin/$bin" ]; then
+            _as_target ln -sfn "$venv/bin/$bin" "$home/.local/bin/$bin"
+        fi
+    done
+    log "hf CLI: $venv/bin/hf (linked from ~/.local/bin)"
+}
+
 # _seren_write_stop_script NAME USER_HOME LOGS - ~/stop_<name>.sh. The same for
 # every pid_file service: TERM, ten seconds' grace, KILL, clear the pid. A
 # missing pid file is "not running", which is success.
@@ -1781,6 +1898,7 @@ seren_install_whisper() {
     local LDP; LDP="$(seren_cuda_ld_path)"
     _as_target tee "$USER_HOME/start_whisper.sh" > /dev/null <<STARTEOF
 #!/bin/bash
+$(seren_node_env_hook_lines)
 # start_whisper.sh - written by seren-prepare-node (whisper). Started and
 # stopped by the Observatory through its manifest (~/.seren/services/whisper.json).
 export LD_LIBRARY_PATH=$LDP:\${LD_LIBRARY_PATH:-}
@@ -1918,6 +2036,7 @@ seren_install_llama() {
 
     _as_target tee "$USER_HOME/start_llama.sh" > /dev/null <<STARTEOF
 #!/bin/bash
+$(seren_node_env_hook_lines)
 # start_llama.sh - written by seren-prepare-node (llama). Started and stopped by
 # the Observatory through its manifest (~/.seren/services/llama.json). WHAT it
 # serves is $ENVF - edit that, not this.
@@ -2012,6 +2131,7 @@ seren_register_kokoro() {
 
     _as_target tee "$USER_HOME/start_kokoro.sh" > /dev/null <<STARTEOF
 #!/bin/bash
+$(seren_node_env_hook_lines)
 # start_kokoro.sh - written by seren-prepare-node (kokoro). Started and stopped
 # by the Observatory through its manifest (~/.seren/services/kokoro.json).
 PID="$LOGS/kokoro.pid"
@@ -2154,6 +2274,7 @@ EXTRAEOF
 
     _as_target tee "$USER_HOME/start_comfy.sh" > /dev/null <<STARTEOF
 #!/bin/bash
+$(seren_node_env_hook_lines)
 # start_comfy.sh - written by seren-prepare-node (comfyui). Started and stopped
 # by the Observatory through its manifest (~/.seren/services/comfy.json).
 PID="$LOGS/comfy.pid"

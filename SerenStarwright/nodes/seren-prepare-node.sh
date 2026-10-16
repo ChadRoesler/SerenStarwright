@@ -707,6 +707,22 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
+# Node env — caches on the NVMe, the hf CLI
+# ─────────────────────────────────────────────────────────────
+# After foundation (which mounts the NVMe) and before any component, because
+# the components' start scripts source the file this writes. Tracked, so a
+# box prepared before this phase existed gets it once on its next run; not
+# gated on $RUN_PREP, because adding a component to a prepared box must still
+# leave its service able to find the cache. No token: that is a person's act.
+phase_node_env() {
+    seren_node_env
+    seren_install_hf_cli
+}
+if $RUN_PREP || $ANY_COMPONENT; then
+    run_phase "07_node_env" "Base — Node env (caches on NVMe, hf CLI)" phase_node_env
+fi
+
+# ─────────────────────────────────────────────────────────────
 # Install root — where the components land
 # ─────────────────────────────────────────────────────────────
 # Resolved AFTER foundation, because the default is the NVMe and foundation is
