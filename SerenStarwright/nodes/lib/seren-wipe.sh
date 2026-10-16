@@ -294,6 +294,12 @@ if $DEEP; then
     if [ -f /etc/systemd/system/seren-max-power.service ]; then
         echo -e "  ${YELLOW}✗${NC} disable + remove /etc/systemd/system/seren-max-power.service"
     fi
+    if [ -f /etc/systemd/system/seren-gpu-clocks.service ]; then
+        echo -e "  ${YELLOW}✗${NC} disable + remove /etc/systemd/system/seren-gpu-clocks.service (GPU clocks back to the firmware's)"
+    fi
+    if [ -e /etc/nvfancontrol.conf ] && [ -f "$(readlink -f /etc/nvfancontrol.conf).seren-orig" ]; then
+        echo -e "  ${YELLOW}✗${NC} restore the stock fan profile: $(readlink -f /etc/nvfancontrol.conf) from its .seren-orig"
+    fi
     if [ -f /etc/sudoers.d/seren ]; then
         echo -e "  ${YELLOW}✗${NC} remove /etc/sudoers.d/seren"
     fi
@@ -387,6 +393,29 @@ if $DEEP; then
         sudo rm -f /etc/systemd/system/seren-max-power.service
         sudo systemctl daemon-reload
         log "removed: seren-max-power.service"
+    fi
+
+    # the Spark's GPU clock ceiling (phase_spark_gpu_clocks); stopping the
+    # unit runs its ExecStop, nvidia-smi -rgc
+    if [ -f /etc/systemd/system/seren-gpu-clocks.service ]; then
+        sudo systemctl disable --now seren-gpu-clocks.service 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/seren-gpu-clocks.service
+        sudo systemctl daemon-reload
+        log "removed: seren-gpu-clocks.service"
+    fi
+
+    # the fan profile prep selected (set_fan_profile in common.sh keeps the
+    # stock file beside it); nvfancontrol caches the running profile, so the
+    # cache goes too or the restore would not take
+    if [ -e /etc/nvfancontrol.conf ]; then
+        fan_conf="$(readlink -f /etc/nvfancontrol.conf)"
+        if [ -f "${fan_conf}.seren-orig" ]; then
+            sudo systemctl stop nvfancontrol.service 2>/dev/null || true
+            sudo mv -f "${fan_conf}.seren-orig" "$fan_conf"
+            sudo rm -f /var/lib/nvfancontrol/status
+            sudo systemctl start nvfancontrol.service 2>/dev/null || true
+            log "restored: stock fan profile in $fan_conf"
+        fi
     fi
 
     # sudoers, and the helper it names

@@ -3574,10 +3574,11 @@ class PrepareNodeScreen(Screen):
                 # foundation phase runs, so the control would be a switch wired
                 # to nothing.
                 if node.supports("no-max-power") and not self.is_modify:
-                    # Jetsons default to a power-capped profile; prep flips them
-                    # to MAXN + jetson_clocks. Worth being able to decline on a
-                    # box with marginal cooling or a small PSU.
-                    yield Checkbox("skip max-power profile (Jetson only: MAXN + jetson_clocks)",
+                    # Jetsons default to a power-capped profile and a quiet fan;
+                    # prep flips them to MAXN + jetson_clocks and the cool fan
+                    # profile. Worth being able to decline on a box with
+                    # marginal cooling or a small PSU.
+                    yield Checkbox("skip max-power profile (Jetson only: MAXN + jetson_clocks + cool fan)",
                                    id="np-nomaxpower")
                 # THE TWO THINGS PREP CANNOT UNDO, each its own box, Install only.
                 # Prep used to do both silently. The trim is what a dedicated

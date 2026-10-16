@@ -11,7 +11,8 @@
 #
 # This means:
 #   - No MAXN power phase (no nvpmodel - Spark manages power at the
-#     firmware/hardware level transparently)
+#     firmware/hardware level transparently); instead a GPU clock
+#     ceiling for thermals (04_spark_gpu_clocks, --gpu-clock)
 #   - No Python source build - JP7 ships Python 3.11+ natively
 #   - No SQLite source build - Ubuntu 24.04 ships SQLite 3.40+
 #   - No NVMe reformat/mount - Spark has built-in NVMe at /mnt/nvme
@@ -22,6 +23,7 @@
 #   01_spark_os_trim     - disable bloat, install build essentials
 #   02_spark_cuda        - ensure CUDA toolkit is complete for Blackwell
 #   03_spark_nvme        - verify NVMe, set up model dirs + pip relocation
+#   04_spark_gpu_clocks  - cap the GPU graphics clock, persist it at boot
 # ══════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────
@@ -283,6 +285,67 @@ phase_spark_nvme() {
 }
 
 # ─────────────────────────────────────────────────────────────
+# Phase 4 - GPU clock ceiling (thermals)
+# ─────────────────────────────────────────────────────────────
+# The Spark has no nvpmodel and no fan profile to pick: power and cooling are
+# the firmware's. What it does have is a GB10 that boosts to 3 GHz and, in a
+# sustained draw, runs to 95C and throttles - a hard spike, not a slow climb.
+# A ceiling on the graphics clock (nvidia-smi -lgc 0,<max>) holds the
+# temperature steady with no measurable loss on inference. 2200 MHz is the
+# ceiling that held on the first Spark; GPU_CLOCK_MAX (--gpu-clock) moves it,
+# and 0 means no ceiling (the phase then only removes one it set before).
+#
+# The lock does not survive a reboot, so a oneshot re-applies it after the
+# persistence daemon is up (without persistenced the setting can be dropped
+# when the last client lets go of the device).
+phase_spark_gpu_clocks() {
+    local max="${GPU_CLOCK_MAX:-2200}"
+    local unit=/etc/systemd/system/seren-gpu-clocks.service
+    if ! command -v nvidia-smi &>/dev/null; then
+        warn "nvidia-smi not found - no GPU clock ceiling set"
+        return 0
+    fi
+    if [ "$max" = "0" ]; then
+        if [ -f "$unit" ]; then
+            sudo systemctl disable --now seren-gpu-clocks.service 2>/dev/null || true
+            sudo rm -f "$unit"
+            sudo systemctl daemon-reload
+            sudo nvidia-smi -rgc >/dev/null 2>&1 || true
+            log "GPU clock ceiling removed (--gpu-clock 0): clocks are the firmware's again"
+        else
+            info "No GPU clock ceiling (--gpu-clock 0)"
+        fi
+        return 0
+    fi
+    if ! [[ "$max" =~ ^[0-9]+$ ]]; then
+        fail "--gpu-clock wants a whole number of MHz, got '$max'"
+        return 1
+    fi
+    log "Capping the GPU graphics clock at ${max} MHz..."
+    sudo nvidia-smi -lgc "0,${max}" >/dev/null || warn "nvidia-smi -lgc failed - continuing; the boot unit will try again"
+    log "Installing seren-gpu-clocks.service for boot persistence..."
+    sudo tee "$unit" > /dev/null << EOF
+[Unit]
+Description=Seren - cap the GPU graphics clock at ${max} MHz (thermals)
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nvidia-smi -lgc 0,${max}
+ExecStop=/usr/bin/nvidia-smi -rgc
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo chmod 644 "$unit"
+    sudo systemctl daemon-reload
+    sudo systemctl enable seren-gpu-clocks.service
+    log "seren-gpu-clocks.service installed and enabled (ceiling ${max} MHz; nvidia-smi -q -d CLOCK shows it)"
+}
+
+# ─────────────────────────────────────────────────────────────
 # Foundation entry point
 # ─────────────────────────────────────────────────────────────
 run_foundation() {
@@ -294,4 +357,7 @@ run_foundation() {
         phase_unmark "03_spark_nvme"
     fi
     run_phase "03_spark_nvme"     "Phase 3 - NVMe + pip"          phase_spark_nvme
+    # Re-run on request: a new --gpu-clock is a new ceiling, not "already done".
+    phase_unmark "04_spark_gpu_clocks"
+    run_phase "04_spark_gpu_clocks" "Phase 4 - GPU clock ceiling"  phase_spark_gpu_clocks
 }

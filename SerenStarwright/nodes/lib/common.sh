@@ -766,14 +766,95 @@ run_service() {
 # ─────────────────────────────────────────────────────────────
 # Max power mode (shared by Xavier and Nano)
 # ─────────────────────────────────────────────────────────────
-# Sets nvpmodel mode 0 (MAXN) and locks all clocks via jetson_clocks.
-# Default: ON. Skipped if SKIP_MAX_POWER=true (set by --no-max-power flag).
-# Drops a systemd oneshot to re-apply at every boot, since both settings
-# revert on reboot.
+# Sets nvpmodel mode 0 (MAXN), locks all clocks via jetson_clocks, and puts
+# the fan on a profile that keeps up with MAXN. Default: ON. Skipped if
+# SKIP_MAX_POWER=true (set by --no-max-power flag). Drops a systemd oneshot to
+# re-apply the power mode and clocks at every boot, since both revert; the fan
+# profile is written into nvfancontrol's own config, which already persists.
+#
+# THE FAN IS PART OF THIS PHASE, not an afterthought. On JetPack 5 and 6
+# jetson_clocks does NOT touch the fan (that is its --fan option, which pins
+# it at full speed, loud and pointless at idle). The fan is nvfancontrol's,
+# driven by a profile in /etc/nvfancontrol.conf, and the stock profile is
+# `quiet`: on an AGX Xavier that is fan OFF until 50C and full speed only at
+# 81C, which under MAXN is a GPU parked at 95C and throttling during a draw.
+# The same file ships a `cool` profile (fan from 35C, full at 73C). We select
+# it. FAN_PROFILE (--fan-profile) chooses another one the file defines.
+#
+# nvfancontrol caches the profile it is running in /var/lib/nvfancontrol/status
+# and reads THAT on start, not the conf, so an edited conf changes nothing
+# until the cache is removed and the service restarted. That is why the
+# stop / rm / start below, and why a hand edit of the conf never "took".
 #
 # WARNING for callers: MAXN draws full TDP. Orin Nano Super at MAXN draws
 # ~25W and WILL thermal throttle without active cooling. Xavier AGX at
 # MAXN draws ~30W and needs the heatsink fan (which the dev kit ships with).
+
+# The fan device, as "<hwmon dir> <pwm>" - or nothing. JetPack 5/6 expose it
+# as the hwmon named pwmfan (hwmon0 on an Orin, hwmon3 on an AGX Xavier: the
+# number is not stable, the name is); JetPack 4 as /sys/devices/pwm-fan.
+# A pwm of 0 is not "no fan": under a profile the fan idles OFF below its
+# first step. Only a missing device is worth a warning.
+find_fan() {
+    local h
+    for h in /sys/class/hwmon/hwmon*; do
+        if [ "$(cat "$h/name" 2>/dev/null)" = "pwmfan" ] && [ -r "$h/pwm1" ]; then
+            echo "$h $(cat "$h/pwm1" 2>/dev/null)"
+            return 0
+        fi
+    done
+    for h in /sys/devices/platform/pwm-fan/hwmon/hwmon*; do
+        if [ -r "$h/pwm1" ]; then
+            echo "$h $(cat "$h/pwm1" 2>/dev/null)"
+            return 0
+        fi
+    done
+    if [ -r /sys/devices/pwm-fan/target_pwm ]; then
+        echo "/sys/devices/pwm-fan $(cat /sys/devices/pwm-fan/target_pwm 2>/dev/null)"
+        return 0
+    fi
+    return 1
+}
+
+# Select a FAN_PROFILE in nvfancontrol's config and make nvfancontrol run it.
+# Edits the real file behind the /etc/nvfancontrol.conf symlink (the per-board
+# file under /etc/nvpower/nvfancontrol/), keeping a one-time copy of the
+# original beside it. Refuses a profile the file does not define rather than
+# leave nvfancontrol pointing at nothing.
+set_fan_profile() {
+    local want="$1"
+    if ! command -v nvfancontrol &>/dev/null || [ ! -e /etc/nvfancontrol.conf ]; then
+        # JetPack 4 and earlier: no nvfancontrol, the fan is the kernel's and
+        # jetson_clocks already drove it to full. Nothing to select.
+        info "No nvfancontrol here - fan profile left to the platform"
+        return 0
+    fi
+    local conf
+    conf=$(readlink -f /etc/nvfancontrol.conf)
+    if ! grep -qE "^[[:space:]]*FAN_PROFILE[[:space:]]+${want}[[:space:]]*\{" "$conf"; then
+        warn "Fan profile '${want}' is not defined in ${conf} - leaving the fan profile as it is."
+        warn "Profiles this board defines: $(grep -oE '^[[:space:]]*FAN_PROFILE[[:space:]]+[a-z_]+' "$conf" | awk '{print $2}' | tr '\n' ' ')"
+        return 0
+    fi
+    local have
+    have=$(grep -oE '^[[:space:]]*FAN_DEFAULT_PROFILE[[:space:]]+[a-z_]+' "$conf" | awk '{print $2}')
+    if [ "$have" = "$want" ]; then
+        log "Fan profile already '${want}' (${conf})"
+    else
+        [ -e "${conf}.seren-orig" ] || sudo cp -p "$conf" "${conf}.seren-orig"
+        sudo sed -i -E "s/^([[:space:]]*FAN_DEFAULT_PROFILE[[:space:]]+)[a-z_]+/\1${want}/" "$conf"
+        log "Fan profile '${have:-unset}' -> '${want}' in ${conf} (original kept as $(basename "$conf").seren-orig)"
+    fi
+    # Make it so now, not at the next flash: drop the cached state and restart.
+    sudo systemctl stop nvfancontrol.service 2>/dev/null || true
+    sudo rm -f /var/lib/nvfancontrol/status
+    if sudo systemctl start nvfancontrol.service; then
+        log "nvfancontrol restarted on profile '${want}'"
+    else
+        warn "nvfancontrol did not restart - check: systemctl status nvfancontrol"
+    fi
+}
+
 phase_max_power() {
     if [ "${SKIP_MAX_POWER:-false}" = "true" ]; then
         info "Max power mode skipped (--no-max-power)"
@@ -799,24 +880,24 @@ phase_max_power() {
         warn "jetson_clocks not found - clocks will scale dynamically"
     fi
 
-    # Best-effort fan check - warn if MAXN on a Jetson with no detectable fan
-    local fan_rpm=""
-    if [ -r /sys/devices/pwm-fan/target_pwm ]; then
-        fan_rpm=$(cat /sys/devices/pwm-fan/target_pwm 2>/dev/null || echo "")
-    elif [ -r /sys/class/hwmon/hwmon0/fan1_input ]; then
-        fan_rpm=$(cat /sys/class/hwmon/hwmon0/fan1_input 2>/dev/null || echo "")
-    fi
-    if [ -z "$fan_rpm" ] || [ "$fan_rpm" = "0" ]; then
-        warn "No active fan detected - MAXN power may cause thermal throttling."
+    # The fan: a device we can see, on a profile that keeps up with MAXN.
+    local fan
+    if fan=$(find_fan); then
+        log "Fan: ${fan% *} (pwm ${fan##* }/255 now)"
+        set_fan_profile "${FAN_PROFILE:-cool}"
+    else
+        warn "No fan device found (no pwmfan hwmon, no pwm-fan) - MAXN power may cause thermal throttling."
         warn "If perf seems bad after this completes, check temps: cat /sys/class/thermal/thermal_zone*/temp"
     fi
 
-    # Persist across reboots via systemd oneshot
+    # Persist across reboots via systemd oneshot. After nvpmodel.service: the
+    # stock unit applies /etc/nvpmodel.conf's default mode at boot (7 on an
+    # AGX Xavier) and must not get the last word.
     log "Installing seren-max-power.service for boot persistence..."
     sudo tee /etc/systemd/system/seren-max-power.service > /dev/null << 'EOF'
 [Unit]
 Description=Seren - Set Jetson to max power mode at boot
-After=multi-user.target
+After=multi-user.target nvpmodel.service nvfancontrol.service
 DefaultDependencies=no
 
 [Service]

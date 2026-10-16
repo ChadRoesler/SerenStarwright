@@ -104,6 +104,13 @@ FORCE_PREP=""
 USE_BUILD_FLAG=false
 USER_PREBUILT_TAG=""
 SKIP_MAX_POWER=false
+# The nvfancontrol profile the max-power phase selects (see set_fan_profile in
+# lib/common.sh). `cool` is the one every JetPack board file defines beside
+# `quiet`, and the one that keeps up with MAXN.
+FAN_PROFILE="cool"
+# The Spark's GPU graphics-clock ceiling in MHz (see phase_spark_gpu_clocks);
+# 0 = none. The Spark has no fan profile to pick, so this is its thermals knob.
+GPU_CLOCK_MAX="2200"
 # THE TWO THINGS PREP DOES THAT CANNOT BE UNDONE, each behind its own flag.
 # They used to run whenever prep ran: a fresh box got its desktop, docker and
 # snap purged and its NVMe reformatted with no question asked, reachable from
@@ -172,10 +179,18 @@ Options:
                         Never the disk the OS boots from. Without it an ext4
                         NVMe is mounted and kept, and a non-ext4 one STOPS the
                         run and says so.
-      --no-max-power    Skip MAXN power mode + jetson_clocks (default: ON).
-                        Jetson platforms only — a node without nvpmodel skips
-                        this phase anyway. Use on passively-cooled or
-                        battery-powered Jetsons.
+      --no-max-power    Skip MAXN power mode + jetson_clocks + the fan profile
+                        (default: ON). Jetson platforms only — a node without
+                        nvpmodel skips this phase anyway. Use on passively-
+                        cooled or battery-powered Jetsons.
+      --fan-profile P   The nvfancontrol profile to run under MAXN (default:
+                        cool). The board's /etc/nvfancontrol.conf defines the
+                        choices, normally quiet and cool; a name it does not
+                        define is refused and the fan is left as it was.
+      --gpu-clock MHZ   Spark only: cap the GPU graphics clock at MHZ and keep
+                        the cap across boots (default: 2200, which holds the
+                        GB10 steady under a sustained draw at no measurable
+                        cost). 0 removes the cap.
   -h, --help            Show this help
 
 Examples:
@@ -226,6 +241,8 @@ while [[ $# -gt 0 ]]; do
         # machine - and useful on anything new enough to fool the heuristics.
         --platform)    export SEREN_PLATFORM="$2"; shift 2 ;;
         --no-max-power) SKIP_MAX_POWER=true; shift ;;
+        --fan-profile) FAN_PROFILE="$2"; shift 2 ;;
+        --gpu-clock)   GPU_CLOCK_MAX="$2"; shift 2 ;;
         --trim-os)     TRIM_OS=true; shift ;;
         --wipe-nvme)   WIPE_NVME=true; shift ;;
         # Starwright contracts. --events points at a JSON Lines file the caller
@@ -371,7 +388,7 @@ LOG_FILE="$SCRIPT_DIR/seren-setup.log"
 # and every foundation phase re-run by default.
 STATE_FILE="$(seren_state_path)"
 LEGACY_STATE_FILE="$SCRIPT_DIR/.seren-setup.state.json"
-export LOG_FILE STATE_FILE SKIP_MAX_POWER TRIM_OS WIPE_NVME
+export LOG_FILE STATE_FILE SKIP_MAX_POWER FAN_PROFILE GPU_CLOCK_MAX TRIM_OS WIPE_NVME
 
 # Decided BEFORE the state file is created, because creating it is what makes a
 # node look prepared. Read it now, act on it later.
@@ -462,7 +479,7 @@ fi
 log "Build mode:      $($USE_BUILD_FLAG && echo 'BUILD FROM SOURCE' || echo 'prebuilt download')"
 log "OS trim:         $($TRIM_OS && echo 'YES (--trim-os)' || echo 'no')"
 log "NVMe wipe:       $($WIPE_NVME && echo 'YES (--wipe-nvme)' || echo 'no')"
-log "Max power:       $($SKIP_MAX_POWER && echo 'SKIPPED (--no-max-power)' || echo 'ON (MAXN + jetson_clocks)')"
+log "Max power:       $($SKIP_MAX_POWER && echo 'SKIPPED (--no-max-power)' || echo "ON (MAXN + jetson_clocks + fan profile '$FAN_PROFILE')")"
 log "Services:        llama=$INSTALL_LLAMA kokoro=$INSTALL_KOKORO whisper=$INSTALL_WHISPER comfy=$INSTALL_COMFYUI chroma=$INSTALL_CHROMADB coral=$INSTALL_CORAL msmoe=$INSTALL_MSMOE"
 
 # Initialize state file. jq first: phase_mark and the provisioned stamp need it,
