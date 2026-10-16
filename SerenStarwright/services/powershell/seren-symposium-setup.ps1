@@ -315,6 +315,51 @@ if ($NoWindow) {
   }
 }
 
+# -- 7. a manifest for this box's Observatory (service_type launcher) ---------
+# Symposium is a per-user app, not a service: no SCM entry, and a service has
+# no desktop session to show a tray in. The Observatory's `launcher` type
+# starts it detached and knows it by the pid file Symposium writes beside its
+# config - so Lodestar lists it, restarts it, and upgrades it like the rest
+# of the family (the install ledger above is the other half of that). Under an
+# install root the manifest goes to <root>\manifests, the roster that
+# install's Observatory reads; otherwise ~\.seren\services.
+$appUp = Split-Path $AppDir -Parent; $venvUp = Split-Path (Resolve-Path $VenvDir).Path -Parent
+$installRoot = $null
+if ((Split-Path $appUp -Leaf) -eq "apps" -and (Split-Path $venvUp -Leaf) -eq "venvs" -and
+    (Split-Path $appUp -Parent) -eq (Split-Path $venvUp -Parent)) {
+  $installRoot = Split-Path $appUp -Parent
+}
+$rosterDir = if ($installRoot) { Join-Path $installRoot "manifests" } else { Join-Path $env:USERPROFILE ".seren\services" }
+$svcName = if ($Instance) { "seren-symposium-$Instance" } else { "seren-symposium" }
+# What the Observatory runs to start it: the tray (pythonw, no console) as
+# the Startup shortcut does; headless, python --serve.
+$startCmd = if ($NoWindow -or -not (Test-Path $pyw)) { @($vpy, "-m", "seren_symposium", "--serve", "--config", $CfgPath) }
+            else { @($pyw, "-m", "seren_symposium", "--tray", "--config", $CfgPath) }
+try {
+  New-Item -ItemType Directory -Force -Path $rosterDir | Out-Null
+  $manifest = [ordered]@{
+    schema_version = 2
+    service        = $svcName
+    service_type   = "launcher"
+    start_command  = $startCmd
+    cwd            = $AppDir
+    pid_path       = (Join-Path (Split-Path $CfgPath -Parent) "seren-symposium.pid")
+    port           = $Port
+    health_url     = "http://127.0.0.1:$Port/health"
+    description    = "Seren Symposium - the desktop front door (a per-user app, started detached)"
+    config_path    = $CfgPath
+    app_dir        = $AppDir
+    log_path       = (Join-Path $AppDir "symposium.log")
+    installed_by   = "seren-symposium-setup.ps1"
+  }
+  $manifestPath = Join-Path $rosterDir "$svcName.json"
+  # UTF-8 WITHOUT a BOM: the Observatory's json.load rejects one.
+  [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+  Ok "manifest: $manifestPath - this box's Observatory lists Symposium now"
+} catch {
+  Warn "Couldn't write $rosterDir ($_) - the Observatory won't list Symposium"
+}
+
 # -- done -------------------------------------------------------------------
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
