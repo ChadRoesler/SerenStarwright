@@ -56,8 +56,10 @@ for f in "$HERE"/services/bash/seren-*-setup.sh; do
   n_layout="$(grep -c '^seren_layout "' "$f")"
   n_suffix="$(grep -c 'setup_autostart .*"\$SVC_SUFFIX"' "$f")"
   # A desktop app (Symposium) runs no service: it starts at login from an XDG
-  # autostart entry, and that entry is what carries the instance.
-  if [[ "$n_suffix" == 0 ]] && grep -q '/autostart/seren-[a-z]*\${INSTANCE:+-\$INSTANCE}\.desktop' "$f"; then
+  # autostart entry, and that entry is what carries the instance. Pinned on
+  # the entry's name, not its folder: the folder is a seam (--startup-dir)
+  # so a test harness can keep the real autostart folder clean.
+  if [[ "$n_suffix" == 0 ]] && grep -q '^AUTOSTART_FILE=.*/seren-[a-z]*\${INSTANCE:+-\$INSTANCE}\.desktop' "$f"; then
     n_suffix=1
   fi
   n_root="$(grep -cE '^\s+--root\)' "$f")"

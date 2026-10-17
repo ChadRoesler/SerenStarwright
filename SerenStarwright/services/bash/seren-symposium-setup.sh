@@ -323,7 +323,9 @@ AUTOSTART=""
 # --startup-dir exists for the same reason as the PowerShell card's: a test
 # harness that runs the real card must not leave a login entry in the real
 # autostart folder, nor start a tray from a stub package (--no-start-now).
-AUTOSTART_FILE="${STARTUP_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/autostart}/seren-symposium${INSTANCE:+-$INSTANCE}.desktop"
+AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+[[ -n "$STARTUP_DIR" ]] && AUTOSTART_DIR="$STARTUP_DIR"
+AUTOSTART_FILE="$AUTOSTART_DIR/seren-symposium${INSTANCE:+-$INSTANCE}.desktop"
 if $NO_WINDOW || $IS_MAC; then
   : # headless, or macOS (no tray autostart there yet)
 elif $NO_AUTOSTART; then
