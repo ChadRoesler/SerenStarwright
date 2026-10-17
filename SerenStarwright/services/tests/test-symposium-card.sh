@@ -35,6 +35,7 @@ check "voice is a dropdown of lodestar and claude" "[[ \$(field 'd[\"choices\"][
 check "no-window and no-shortcut are switches" \
   "[[ \$(field '\"no-window\" in d[\"switches\"] and \"no-shortcut\" in d[\"switches\"]') == true ]]"
 check "no-autostart is a switch (the tray at login is the default)" "[[ \$(field '\"no-autostart\" in d[\"switches\"]') == true ]]"
+check "startup-dir takes a value and no-start-now is a switch (the harness seams, same as the twin's)"   "[[ \$(field '\"startup-dir\" in d[\"flags\"] and \"startup-dir\" not in d[\"switches\"] and \"no-start-now\" in d[\"switches\"]') == true ]]"
 check "it says where each flag lives in its config"   "[[ \$(field 'd[\"config_keys\"][\"claude-name\"]') == '\"claude.name\"' && \$(field 'd[\"config_keys\"][\"lodestar-token\"]') == '\"lodestar.bearer_token\"' ]]"
 check "the only pick-list extra is corp ([desktop] rides on --no-window)" "[[ \$(field 'd[\"extras\"]') == '[\"corp\"]' ]]"
 for f in host port lodestar-config lodestar-url voice claude-name claude-cwd claude-tools local wheel ref repo instance root venv no-updates corp; do
@@ -48,7 +49,7 @@ if [[ -z "$PS" ]]; then
 else
   W="$("$PS" -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$TWIN" 2>/dev/null || echo "$TWIN")" -Describe | tr -d '\r')"
   same() { "$PY" -c 'import json,sys; a=json.loads(sys.argv[1]); b=json.loads(sys.argv[2]); k=sys.argv[3]; sys.exit(0 if a[k]==b[k] else 1)' "$D" "$W" "$1"; }
-  for k in name group default_port default_host recommends requires extras accent config_keys; do
+  for k in name group default_port default_host recommends requires extras accent config_keys flags switches; do
     check "both twins agree on $k" "same $k"
   done
   check "both offer the same voices" "$PY -c 'import json,sys; a=json.loads(sys.argv[1]); b=json.loads(sys.argv[2]); sys.exit(0 if a[\"choices\"][\"voice\"]==b[\"choices\"][\"voice\"] else 1)' \"\$D\" \"\$W\""

@@ -36,6 +36,9 @@
 #    --no-window             No native window: serve to a browser instead
 #    --no-shortcut           No application-menu entry
 #    --no-autostart          Not at login: Symposium runs while its window is open
+#    --startup-dir DIR       Where the login entry goes (default: the XDG
+#                            autostart folder; a test harness points it at scratch)
+#    --no-start-now          Write the login entry but do not start the tray now
 #    --corp                  Install the [corp] extra (OS trust store)
 #    --wheel PATH            Install from a local .whl
 #    --local DIR|URL         Install from a dev wheelhouse (seren-dev-publish.sh)
@@ -88,6 +91,8 @@ CLAUDE_TOOLS=""
 NO_WINDOW=false
 NO_SHORTCUT=false
 NO_AUTOSTART=false
+STARTUP_DIR=""
+NO_START_NOW=false
 WHEEL=""
 LOCAL=""
 REF=""
@@ -139,6 +144,8 @@ while [[ $# -gt 0 ]]; do
     --no-window)       NO_WINDOW=true; shift ;;
     --no-shortcut)     NO_SHORTCUT=true; shift ;;
     --no-autostart)    NO_AUTOSTART=true; shift ;;
+    --startup-dir)     STARTUP_DIR="$2"; shift 2 ;;
+    --no-start-now)    NO_START_NOW=true; shift ;;
     --wheel)           WHEEL="$2"; shift 2 ;;
     --local)           LOCAL="$2"; shift 2 ;;
     --ref)             REF="$2"; shift 2 ;;
@@ -313,7 +320,10 @@ DESKTOP
   ok "Application menu entry: $SHORTCUT"
 fi
 AUTOSTART=""
-AUTOSTART_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/seren-symposium${INSTANCE:+-$INSTANCE}.desktop"
+# --startup-dir exists for the same reason as the PowerShell card's: a test
+# harness that runs the real card must not leave a login entry in the real
+# autostart folder, nor start a tray from a stub package (--no-start-now).
+AUTOSTART_FILE="${STARTUP_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/autostart}/seren-symposium${INSTANCE:+-$INSTANCE}.desktop"
 if $NO_WINDOW || $IS_MAC; then
   : # headless, or macOS (no tray autostart there yet)
 elif $NO_AUTOSTART; then
@@ -332,7 +342,7 @@ X-GNOME-Autostart-enabled=true
 DESKTOP
   AUTOSTART="$AUTOSTART_FILE"
   # And now, when there is a desktop to put a tray icon on.
-  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+  if ! $NO_START_NOW && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     (cd "$APP_DIR" && nohup "$VPY" -m seren_symposium --tray --config "$CFG_PATH" >/dev/null 2>&1 &)
     ok "Starts at login, in the tray ($AUTOSTART_FILE) - and running now"
   else
