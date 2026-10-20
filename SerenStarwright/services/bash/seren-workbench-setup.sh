@@ -116,7 +116,7 @@ SVC_RECOMMENDS="seren-memory seren-loci seren-corpus-callosum seren-hippocampus 
 # derivation (which allowlists mcp for the family) would over-report it.
 SVC_EXTRAS="corp"
 # Card colour in Seren Starwright - matches seren_workbench/app.py viewer accent
-SVC_ACCENT="#8e9aaf"
+SVC_ACCENT="#afdbdb"
 
 # --describe must answer with ZERO side effects: no venv, no network, no python.
 # Scanned ahead of the parse loop so no other flag can have run anything first.

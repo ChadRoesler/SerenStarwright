@@ -93,7 +93,7 @@ if ($Describe) {
         Description = 'The tools bench where things get done'
         Group       = 'core'
         Package     = 'seren-workbench'
-        Accent      = '#8e9aaf'
+        Accent      = '#afdbdb'
         DefaultHost = $WbHost
         DefaultPort = $Port
         Extras      = @('corp')
