@@ -74,6 +74,12 @@ fi
 # Probe is private, localhost-only, no token:
 #   --memory-max none  -> no systemd MemoryMax fence (it's tiny)
 #   no --env-file      -> no secret to keep out of the unit
+#   --owns-docker-project seren-probe-*
+#                      -> the pods it spins up (routes/docker.py names the
+#                         compose project seren-probe-target by default) are
+#                         its children on Lodestar's card, with their memory,
+#                         so the card does not lie about what Probe has
+#                         (Chad, 20 Oct 2026)
 exec bash "$CORE" \
   --service-name "$SERVICE_NAME" \
   --module       "$MODULE" \
@@ -83,4 +89,5 @@ exec bash "$CORE" \
   --health-port  "$HEALTH_PORT" \
   --service-user "$SERVICE_USER" \
   --memory-max   none \
+  --owns-docker-project "seren-probe-*" \
   --description  "SerenProbe$INSTANCE - memory (RAG) Evaluation probe"

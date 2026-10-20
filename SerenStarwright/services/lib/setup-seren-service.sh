@@ -61,6 +61,12 @@
 #    --service-user USER   systemd User= (default: the invoking user). This is
 #                          the systemd twin of Windows' LocalSystem trap - read
 #                          the warning printed at install time before using it.
+#    --owns-docker-project GLOB
+#                          what this service starts itself and has no manifest
+#                          for: every container whose compose project label
+#                          matches (fnmatch), written as `children` into the
+#                          Observatory manifest so Lodestar folds them under it
+#                          (Probe's pods: "seren-probe-*"; 20 Oct 2026)
 #    -h, --help            this help
 # ==========================================================================
 set -euo pipefail
@@ -95,6 +101,7 @@ LAUNCHD_PREFIX="com.chadroesler"
 # Empty means "the user running this script", which is the right default and
 # the only one that keeps ~ pointing where the installer just wrote things.
 SERVICE_USER=""
+OWNS_DOCKER_PROJECT=""
 
 # -- flag parsing (while/case) ----------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -114,6 +121,7 @@ while [[ $# -gt 0 ]]; do
     --memory-max)      MEMORY_MAX="$2"; shift 2 ;;
     --launchd-prefix)  LAUNCHD_PREFIX="$2"; shift 2 ;;
     --service-user)    SERVICE_USER="$2"; shift 2 ;;
+    --owns-docker-project) OWNS_DOCKER_PROJECT="$2"; shift 2 ;;
     # --help prints the header block by SHAPE, not by line number. It used to be
     # `sed -n '2,63p'`, which is a magic number that has to be hand-updated every
     # time the header grows - and when it isn't, --help just quietly stops
@@ -333,6 +341,11 @@ if ! $IS_MAC; then
   fi
   if mkdir -p "$SEREN_SERVICES_DIR" 2>/dev/null; then
     MANIFEST_PATH="$SEREN_SERVICES_DIR/${SERVICE_NAME}.json"
+    # `children`: what the service owns without a manifest of its own (the
+    # Observatory reads it, Lodestar's card folds the family under the owner
+    # with its memory). Only written when the wrapper said so.
+    CHILDREN_LINE=""
+    [[ -n "$OWNS_DOCKER_PROJECT" ]] && CHILDREN_LINE="  \"children\": {\"docker_project\": \"${OWNS_DOCKER_PROJECT}\"},"
     cat > "$MANIFEST_PATH" <<JSON
 {
   "schema_version": 2,
@@ -344,7 +357,8 @@ if ! $IS_MAC; then
   "config_path": "${CFG_PATH}",
   "app_dir": "${APP_DIR}",
   "health_url": "http://127.0.0.1:${HEALTH_PORT:-0}${HEALTH_PATH}",
-  "installed_by": "setup-seren-service.sh"
+${CHILDREN_LINE:+$CHILDREN_LINE
+}  "installed_by": "setup-seren-service.sh"
 }
 JSON
     ok "Registered with this node's Observatory ($MANIFEST_PATH)"

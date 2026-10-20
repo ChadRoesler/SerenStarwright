@@ -114,6 +114,14 @@ PY
   printf "  %-26s port=%-6s unit=%-28s %s\n" "$name" "$port" "$unit" "$status"
   [[ -n "$root" ]] && printf "  %-26s -> %s\n" "" "$roster"
 
+  # What the service owns (Observatory manifests: `children`). Probe spins up
+  # pods of containers with no manifest of their own; the key says how to find
+  # them (compose project label, a glob), and Lodestar's card folds them under
+  # Probe with their memory (Chad, 20 Oct 2026: "probe should own its sub
+  # processes"). Same line the install writes; a backfill must not lose it.
+  children=""
+  [[ "$name" == *probe* ]] && children='  "children": {"docker_project": "seren-probe-*"},'
+
   if $APPLY && [[ "$status" == "write" ]]; then
     mkdir -p "$roster"
     ROSTERS["$roster"]=1
@@ -127,7 +135,8 @@ PY
   "description": "${desc}",
   "config_path": "${cfg}",
   "health_url": "http://127.0.0.1:${port}${HEALTH_PATH}",
-  "installed_by": "seren-register-services.sh"
+${children:+$children
+}  "installed_by": "seren-register-services.sh"
 }
 JSON
     WROTE=$((WROTE+1))
