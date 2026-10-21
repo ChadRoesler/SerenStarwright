@@ -117,7 +117,7 @@ PY
   # What the service owns (Observatory manifests: `children`). Probe spins up
   # pods of containers with no manifest of their own; the key says how to find
   # them (compose project label, a glob), and Lodestar's card folds them under
-  # Probe with their memory (Chad, 20 Oct 2026: "probe should own its sub
+  # Probe with their memory (20 Oct 2026: "probe should own its sub
   # processes"). Same line the install writes; a backfill must not lose it.
   children=""
   [[ "$name" == *probe* ]] && children='  "children": {"docker_project": "seren-probe-*"},'

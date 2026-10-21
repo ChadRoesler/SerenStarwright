@@ -79,7 +79,7 @@ fi
 #                         compose project seren-probe-target by default) are
 #                         its children on Lodestar's card, with their memory,
 #                         so the card does not lie about what Probe has
-#                         (Chad, 20 Oct 2026)
+#                         (20 Oct 2026)
 exec bash "$CORE" \
   --service-name "$SERVICE_NAME" \
   --module       "$MODULE" \
