@@ -83,7 +83,15 @@ param(
   # SEREN_SUPERVISED=1 so the service's /migrate/restart may self-exit knowing
   # NSSM's AppExit Default Restart will revive it). Pass -ExtraEnv @("K=V","K2=V2").
   # (Named ExtraEnv, not Env, to avoid visual collision with the $env: drive.)
-  [string[]] $ExtraEnv = @()
+  [string[]] $ExtraEnv = @(),
+
+  # -- what it forks ------------------------------------------------------------
+  # NSSM stops a service by killing its whole process tree (AppKillProcessTree
+  # 1). A service that forks long work on purpose - the Lyceum's trainer, a
+  # detached child that a restart must not kill mid-epoch - passes this, and
+  # only the service itself is stopped. The twin of the bash core's
+  # --kill-mode process (23 Oct 2026).
+  [switch] $KeepChildren
 )
 
 $ErrorActionPreference = "Stop"
@@ -250,6 +258,10 @@ Step "Installing $ServiceName"
 & $nssm set $ServiceName AppStderr       $ErrLog | Out-Null
 & $nssm set $ServiceName AppExit Default Restart | Out-Null
 & $nssm set $ServiceName AppRestartDelay 3000 | Out-Null   # 3s between restarts - don't hammer on a crash-loop
+if ($KeepChildren) {
+  & $nssm set $ServiceName AppKillProcessTree 0 | Out-Null
+  Ok "stopping it leaves what it forked running"
+}
 & $nssm set $ServiceName Start SERVICE_AUTO_START | Out-Null
 & $nssm set $ServiceName DisplayName $DisplayName | Out-Null
 & $nssm set $ServiceName Description $Description | Out-Null

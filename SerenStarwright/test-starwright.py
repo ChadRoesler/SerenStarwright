@@ -1065,10 +1065,10 @@ async def test_advanced_values_can_be_changed_and_cleared() -> None:
 
         m = await open_modal(pilot)
         check(m.query_one("#adv-instance", Input).value == "wren", "reopening shows the value")
-        m.query_one("#adv-instance", Input).value = "rhys"
+        m.query_one("#adv-instance", Input).value = "bob"
         await pilot.pause(); await pilot.pause()          # let the widgets settle
         await pilot.click("#ok"); await pilot.pause(); await pilot.pause()
-        check(app.per_service[target].get("instance") == "rhys", "changed: %r" % app.per_service[target])
+        check(app.per_service[target].get("instance") == "bob", "changed: %r" % app.per_service[target])
 
         m = await open_modal(pilot)
         m.query_one("#adv-instance", Input).value = ""
@@ -1239,7 +1239,7 @@ async def test_install_ledger() -> None:
         check(any("installed seren-memory" in w for w in warn), f"hippocampus on 7420 collides with the installed memory: {warn}")
         warn = sw.port_conflicts(["seren-memory"], svcs, {}, recs)
         check(warn == [], f"memory re-installing on its own 7420 is not a collision: {warn}")
-        warn = sw.port_conflicts(["seren-memory"], svcs, {"seren-memory": {"instance": "rhys"}}, recs)
+        warn = sw.port_conflicts(["seren-memory"], svcs, {"seren-memory": {"instance": "bob"}}, recs)
         check(any("7420" in w for w in warn), f"a NEW memory instance on 7420 is: {warn}")
         # a dependency's address is filled in only when exactly one instance is installed
         hip = svcs["seren-hippocampus"]
@@ -1247,7 +1247,7 @@ async def test_install_ledger() -> None:
         check("memory-url" not in cfg, f"two memories installed: nothing guessed ({cfg})")
         cfg = sw.prefill_from_installed(hip, {}, [wren])
         check(cfg.get("memory-url") == "http://127.0.0.1:7267", f"one memory installed: memory-url prefilled ({cfg})")
-        notes = sw.reinstall_notes(["seren-memory", "seren-hippocampus"], {"seren-memory": {"instance": "rhys"}}, recs)
+        notes = sw.reinstall_notes(["seren-memory", "seren-hippocampus"], {"seren-memory": {"instance": "bob"}}, recs)
         check(len(notes) == 1 and "beside" in notes[0], f"a new instance is 'beside': {notes}")
         notes = sw.reinstall_notes(["seren-memory"], {}, recs)
         check(len(notes) == 1 and "re-installs it in place" in notes[0], f"same instance is 'in place': {notes}")
@@ -1316,7 +1316,7 @@ async def test_select_layout() -> None:
                 check("already exists" in widget_text(scr.query_one("#setup-warn", Static)), "a clashing new name is called out")
                 await pilot.click("#next"); await pilot.pause()
                 check(isinstance(app.screen, sw.SelectScreen), "...and Next will not overwrite that setup")
-                scr.query_one("#setup-name", Input).value = "rhys"; await pilot.pause()
+                scr.query_one("#setup-name", Input).value = "bob"; await pilot.pause()
                 check(not widget_text(scr.query_one("#setup-warn", Static)), "another name clears it")
                 # continuing shows the setup and not the rest of the box
                 scr.query_one("#use-setup", Checkbox).value = True; await pilot.pause()

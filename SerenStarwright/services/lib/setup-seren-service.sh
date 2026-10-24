@@ -61,6 +61,11 @@
 #    --service-user USER   systemd User= (default: the invoking user). This is
 #                          the systemd twin of Windows' LocalSystem trap - read
 #                          the warning printed at install time before using it.
+#    --kill-mode MODE      systemd KillMode (default: systemd's, control-group).
+#                          `process` stops only the service itself, leaving what
+#                          it forked to finish: the Lyceum's trainer is a
+#                          detached child that a restart must not kill
+#                          mid-epoch (23 Oct 2026). Ignored on macOS.
 #    --owns-docker-project GLOB
 #                          what this service starts itself and has no manifest
 #                          for: every container whose compose project label
@@ -102,6 +107,7 @@ LAUNCHD_PREFIX="com.chadroesler"
 # the only one that keeps ~ pointing where the installer just wrote things.
 SERVICE_USER=""
 OWNS_DOCKER_PROJECT=""
+KILL_MODE=""
 
 # -- flag parsing (while/case) ----------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -122,6 +128,7 @@ while [[ $# -gt 0 ]]; do
     --launchd-prefix)  LAUNCHD_PREFIX="$2"; shift 2 ;;
     --service-user)    SERVICE_USER="$2"; shift 2 ;;
     --owns-docker-project) OWNS_DOCKER_PROJECT="$2"; shift 2 ;;
+    --kill-mode)       KILL_MODE="$2"; shift 2 ;;
     # --help prints the header block by SHAPE, not by line number. It used to be
     # `sed -n '2,63p'`, which is a magic number that has to be hand-updated every
     # time the header grows - and when it isn't, --help just quietly stops
@@ -279,7 +286,8 @@ User=$RUN_AS
 WorkingDirectory=$APP_DIR
 ExecStart="$VPY" -m $MODULE --config "$CFG_PATH"
 $( $WIRE_ENV && echo "EnvironmentFile=$ENV_FILE" )
-${SYSTEMD_ENV_LINES}Restart=on-failure
+${SYSTEMD_ENV_LINES}$( [[ -n "$KILL_MODE" ]] && echo "KillMode=$KILL_MODE" )
+Restart=on-failure
 RestartSec=5
 $( [[ "$MEMORY_MAX" != "none" && "$MEMORY_MAX" != "0" ]] && echo "MemoryMax=$MEMORY_MAX" )
 
