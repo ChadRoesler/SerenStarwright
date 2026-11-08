@@ -15,23 +15,24 @@
 #
 #  USAGE
 #    bash seren-soma-setup.sh --pypi --service --gen-token
-#    bash seren-soma-setup.sh --root /mnt/nvme/seren/wren --instance wren --pypi \
-#         --robot-url http://192.168.0.201:8080 --advertise 192.168.0.200 \
-#         --lodestar-config /mnt/nvme/seren/wren/apps/lodestar/seren-lodestar.yaml --service
+#    bash seren-soma-setup.sh --root ~/seren/home --instance home --pypi \
+#         --robot-url http://192.0.2.21:8080 --advertise 192.0.2.10 \
+#         --lodestar-config ~/seren/home/apps/lodestar/seren-lodestar.yaml --service
 #
 #  FLAGS
 #    --port N               Port to listen on            (default 7480: where the firmware has always found it)
 #    --host HOST            Bind address                 (default 0.0.0.0: the robot dials in over the LAN)
 #    --token TOKEN          The API token the robot and the Workbench present
 #    --gen-token            Generate a random API token (else the service makes one into <state>/token)
-#    --robot-url URL        The robot's control API     (default http://192.168.0.201:8080)
+#    --robot-url URL        The robot's control API, REQUIRED: its screen shows the address,
+#                           like http://192.0.2.21:8080 (seren_soma itself will not start without one)
 #    --robot-token TOKEN    The robot's control token (CONFIG_STACKCHAN_CONTROL_TOKEN in the firmware);
 #                           written to <state>/control_token, mode 600, never into the config.
 #                           May arrive as SEREN_SOMA_ROBOT_TOKEN in the environment instead
 #    --advertise ADDR       This box's address as the robot reaches it (default: worked out at startup)
 #    --device-from IPS      Addresses the robot reaches this box from, comma-separated, when it comes
 #                           through NAT or a proxy (default: the host in --robot-url; the check-in answers only them)
-#    --voice NAME           The voice Lodestar speaks in (default wren)
+#    --voice NAME           The voice Lodestar speaks in (default: blank, Lodestar's own default voice)
 #    --lodestar-url URL     A Lodestar for hearing and speaking
 #    --lodestar-token T     Its bearer (may arrive as SEREN_LODESTAR_TOKEN)
 #    --lodestar-config P    A Lodestar's own config: url AND bearer, read from the file
@@ -85,11 +86,11 @@ PORT=7480
 HOST="0.0.0.0"
 TOKEN=""
 GEN_TOKEN=false
-ROBOT_URL="http://192.168.0.201:8080"
+ROBOT_URL=""
 ROBOT_TOKEN=""
 ADVERTISE=""
 DEVICE_FROM=""
-VOICE="wren"
+VOICE=""
 LODE_URL=""
 LODE_TOKEN=""
 LODE_CONFIG=""
@@ -172,6 +173,10 @@ done
 # a secret may arrive in the environment instead (Starwright's password box)
 [[ -z "$ROBOT_TOKEN" && -n "${SEREN_SOMA_ROBOT_TOKEN:-}" ]] && ROBOT_TOKEN="$SEREN_SOMA_ROBOT_TOKEN"
 [[ -z "$LODE_TOKEN" && -n "${SEREN_LODESTAR_TOKEN:-}" ]] && LODE_TOKEN="$SEREN_LODESTAR_TOKEN"
+
+# The robot's address is the one thing nobody can guess for you, and seren_soma
+# refuses to start without it; so the card refuses too, before anything is installed.
+[[ -n "$ROBOT_URL" ]] || die "--robot-url is required: the robot's control API, like http://192.0.2.21:8080 (the robot's screen shows its address)"
 
 seren_layout "soma"
 CFG_PATH="$APP_DIR/seren-soma.yaml"
@@ -308,7 +313,7 @@ state_dir: '${STATE_DIR}'
 # This box's address as the robot reaches it. Blank: the address this box uses toward the robot.
 $( [[ -n "$ADVERTISE" ]] && printf 'advertise: %s\n' "$ADVERTISE" || printf '# advertise: 192.0.2.10\n' )
 
-voice: ${VOICE}                # the voice Lodestar speaks in
+$( [[ -n "$VOICE" ]] && printf 'voice: %s                # the voice Lodestar speaks in\n' "$VOICE" || printf 'voice: ""                # blank: Lodestar speaks in its own default voice\n' )
 idle_close_seconds: 60     # an open channel with no words this long hangs up
 
 robot:

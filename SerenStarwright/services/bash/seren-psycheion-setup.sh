@@ -14,8 +14,8 @@
 #
 #  USAGE
 #    bash seren-psycheion-setup.sh --pypi --service
-#    bash seren-psycheion-setup.sh --root /mnt/nvme/seren/wren --instance wren --pypi \
-#         --soma-config /mnt/nvme/seren/wren/apps/soma/seren-soma.yaml --service
+#    bash seren-psycheion-setup.sh --root ~/seren/home --instance home --pypi \
+#         --soma-config ~/seren/home/apps/soma/seren-soma.yaml --service
 #
 #  FLAGS
 #    --port N               Port to listen on            (default 7429)
@@ -24,7 +24,8 @@
 #    --gen-token            Generate a random bearer token
 #    --soma-config PATH     A Soma's own config on this box: the robot, the voice
 #                           server and where their token files live, read from it
-#    --robot-url URL        The robot's control API      (default http://192.168.0.201:8080)
+#    --robot-url URL        The robot's control API (default: the one in --soma-config; with
+#                           neither, the page says "no robot set up yet" until it is filled in)
 #    --robot-token-file P   A file holding only the robot's control token
 #    --voice-url URL        The body's voice server (Soma) (default http://127.0.0.1:7480)
 #    --voice-token-file P   A file holding only the voice server's API token
@@ -241,7 +242,7 @@ if [[ -n "$SOMA_CONFIG" ]]; then
   fi
   ok "The body from $SOMA_CONFIG: robot ${ROBOT_URL:-?}, voice ${VOICE_URL:-?}"
 fi
-[[ -n "$ROBOT_URL" ]] || ROBOT_URL="http://192.168.0.201:8080"
+[[ -n "$ROBOT_URL" ]] || warn "No robot address (none given, none in a Soma config): /api/soma will say \"no robot set up yet\" until soma.robot.url is filled in."
 [[ -n "$VOICE_URL" ]] || VOICE_URL="http://127.0.0.1:7480"
 for f in "$ROBOT_TOKEN_FILE" "$VOICE_TOKEN_FILE"; do
   [[ -n "$f" && ! -s "${f/#\~/$HOME}" ]] && warn "Token file not there yet: $f (Psycheion reads it when it is)"
@@ -260,8 +261,9 @@ case "$HOST" in
   *) [[ -z "$TOKEN" ]] && warn "--host $HOST with no bearer: SerenPsycheion will REFUSE TO START. Re-run with --gen-token (or --token)." ;;
 esac
 # Psycheion's whole job is a page opened from another machine. A service bound
-# to loopback is reachable from nowhere but this box (found 7 Nov 2026 on the
-# NUC: the wren instance came up on 127.0.0.1 and the desktop could not load it).
+# to loopback is reachable from nowhere but this box (found 7 Nov 2026 on a
+# node: a fresh instance came up on 127.0.0.1 and its page would not open from
+# any other machine).
 if $LOOPBACK_ONLY && $INSTALL_SERVICE; then
   warn "LOOPBACK ONLY: bound to ${HOST}, so the page is reachable from this box and nowhere else."
   warn "  To open it from another machine, re-run with: --host 0.0.0.0 --gen-token"
@@ -279,7 +281,7 @@ $( [[ -n "$TOKEN" ]] && printf '  bearer_token: "%s"\n' "$TOKEN" || printf '  # 
 # browser never sees these; Psycheion makes the calls itself.
 soma:
   robot:                   # the robot's control API (firmware)
-    url: ${ROBOT_URL}
+$( [[ -n "$ROBOT_URL" ]] && printf '    url: %s\n' "$ROBOT_URL" || printf '    url: ""               # no robot set up yet: its control API goes here\n' )
 $( [[ -n "$ROBOT_TOKEN_FILE" ]] && printf "    token_file: '%s'\n" "$ROBOT_TOKEN_FILE" || printf '    # token_file: ~/seren-soma/state/control_token\n' )
   voice:                   # the body's voice server (Soma)
     url: ${VOICE_URL}
@@ -313,7 +315,7 @@ fi
 echo -e "  Viewer:          ${B}http://${CONNECT_HOST}:${PORT}/viewer${NC}"
 echo -e "  Health:          ${B}http://${CONNECT_HOST}:${PORT}/health${NC}"
 $LOOPBACK_ONLY && echo -e "  ${Y}Loopback only: not reachable from other machines. Re-run with --host 0.0.0.0 --gen-token to open it up.${NC}"
-echo -e "  The body:        ${B}robot ${ROBOT_URL}, voice ${VOICE_URL}${NC}"
+echo -e "  The body:        ${B}robot ${ROBOT_URL:-(none yet)}, voice ${VOICE_URL}${NC}"
 [[ -n "$TOKEN" ]] && echo -e "  Bearer token:    ${Y}${TOKEN}${NC}"
 echo
 echo -e "  ${Y}Watch what it senses, set how it behaves. Faces come when Face Studio moves in.${NC}"

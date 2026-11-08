@@ -7,7 +7,7 @@
 #      to files), every flag says where it lives in the config
 #    - its twin, seren-psycheion-setup.ps1, describes the same card (when a
 #      PowerShell is on this box)
-#    - setup-psycheion-service.sh under a root: unit seren-psycheion-wren
+#    - setup-psycheion-service.sh under a root: unit seren-psycheion-home
 #      running seren_psycheion with its config, the manifest in <root>/manifests
 #  Nothing real is installed: sudo is a stub that keeps the unit text.
 #  Run:  bash services/tests/test-psycheion-card.sh   (Linux / WSL / Git Bash)
@@ -72,14 +72,14 @@ cat > "$T/bin/sudo" <<SH
 exit 0
 SH
 chmod +x "$T/bin/sudo"
-H="$T/home"; R="$H/seren/wren"
+H="$T/home"; R="$H/seren/home"
 mkdir -p "$R/apps/psycheion" "$R/venvs/psycheion/bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$R/venvs/psycheion/bin/python"; chmod +x "$R/venvs/psycheion/bin/python"
 : > "$R/apps/psycheion/seren-psycheion.yaml"
-out="$(HOME="$H" PATH="$T/bin:$PATH" bash "$WRAP" --app-dir "$R/apps/psycheion" --venv "$R/venvs/psycheion" --instance -wren 2>&1)"
+out="$(HOME="$H" PATH="$T/bin:$PATH" bash "$WRAP" --app-dir "$R/apps/psycheion" --venv "$R/venvs/psycheion" --instance -home 2>&1)"
 check "it runs seren_psycheion with its config" "grep -q 'seren_psycheion --config' \"$T/unit\""
 check "PYTHONUTF8 for the log" "grep -q 'PYTHONUTF8=1' \"$T/unit\""
-check "manifest in the root's roster: seren-psycheion-wren.json" "[[ -f \"$R/manifests/seren-psycheion-wren.json\" ]]"
+check "manifest in the root's roster: seren-psycheion-home.json" "[[ -f \"$R/manifests/seren-psycheion-home.json\" ]]"
 
 echo
 echo "$PASS passed, $FAILS failed"

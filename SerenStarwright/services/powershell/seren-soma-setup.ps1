@@ -15,8 +15,8 @@
 #
 #  USAGE
 #    powershell -ExecutionPolicy Bypass -File .\seren-soma-setup.ps1 -Pypi -Service -GenToken
-#    powershell -ExecutionPolicy Bypass -File .\seren-soma-setup.ps1 -Root C:\seren\wren -Instance wren -Pypi `
-#        -RobotUrl http://192.168.0.201:8080 -Advertise 192.168.0.110 -LodestarConfig C:\seren\wren\apps\lodestar\seren-lodestar.yaml -Service
+#    powershell -ExecutionPolicy Bypass -File .\seren-soma-setup.ps1 -Root C:\seren\home -Instance home -Pypi `
+#        -RobotUrl http://192.0.2.21:8080 -Advertise 192.0.2.10 -LodestarConfig C:\seren\home\apps\lodestar\seren-lodestar.yaml -Service
 #  The robot's control token may arrive as $env:SEREN_SOMA_ROBOT_TOKEN and Lodestar's
 #  bearer as $env:SEREN_LODESTAR_TOKEN instead of on the command line.
 # ══════════════════════════════════════════════════════════════════════════
@@ -27,11 +27,11 @@ param(
   [string] $SomaHost    = "0.0.0.0",
   [string] $Token       = "",
   [switch] $GenToken,
-  [string] $RobotUrl    = "http://192.168.0.201:8080",
+  [string] $RobotUrl    = "",
   [string] $RobotToken  = "",
   [string] $Advertise   = "",
   [string] $DeviceFrom  = "",
-  [string] $Voice       = "wren",
+  [string] $Voice       = "",
   [string] $LodestarUrl = "",
   [string] $LodestarToken = "",
   [string] $LodestarConfig = "",
@@ -96,6 +96,9 @@ if ($Describe) {
 }
 if ($Json) { Enable-SerenJson }
 if (-not $RobotToken -and $env:SEREN_SOMA_ROBOT_TOKEN) { $RobotToken = $env:SEREN_SOMA_ROBOT_TOKEN }
+# The robot's address is the one thing nobody can guess for you, and seren_soma refuses
+# to start without it; so the card refuses too, before anything is installed.
+if (-not $RobotUrl) { Die "-RobotUrl is required: the robot's control API, like http://192.0.2.21:8080 (the robot's screen shows its address)" }
 if (-not $LodestarToken -and $env:SEREN_LODESTAR_TOKEN) { $LodestarToken = $env:SEREN_LODESTAR_TOKEN }
 if (-not $VenvDir) { $VenvDir = "$env:USERPROFILE\seren-venvs\soma" }
 $layout  = Get-SerenLayout -Root $Root -Short "soma" -Instance $Instance -VenvDir $VenvDir -AppDir "$env:USERPROFILE\seren-soma"
@@ -209,6 +212,7 @@ if ($RobotToken) {
 }
 $tokenLine = if ($Token) { "  bearer_token: `"$Token`"" } else { "  # The API token: blank means the file ``token`` in the state folder, made the first time." }
 $advLine = if ($Advertise) { "advertise: $Advertise" } else { "# advertise: 192.0.2.10" }
+$voiceLine = if ($Voice) { "voice: $Voice                # the voice Lodestar speaks in" } else { 'voice: ""                # blank: Lodestar speaks in its own default voice' }
 $stateYaml = $StateDir -replace '\\', '/'
 $robotFileYaml = $robotTokenFile -replace '\\', '/'
 @"
@@ -225,7 +229,7 @@ state_dir: '$stateYaml'
 # This box's address as the robot reaches it. Blank: the address this box uses toward the robot.
 $advLine
 
-voice: $Voice                # the voice Lodestar speaks in
+$voiceLine
 idle_close_seconds: 60     # an open channel with no words this long hangs up
 
 robot:

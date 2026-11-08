@@ -311,7 +311,7 @@ UNITEOF
   sudo systemctl daemon-reload
   # `enable --now` only STARTS a unit that is stopped; a running one keeps its
   # old process, serving the old code with the old config (found 7 Nov 2026:
-  # seren-soma-wren kept its hours-old process through a card install of 1.0.0
+  # a soma unit kept its hours-old process through a card install of 1.0.0
   # and ignored the bearer the card had just written). A reinstall over a
   # running service restarts it onto what was just installed, and says so.
   if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then

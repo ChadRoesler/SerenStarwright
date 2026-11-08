@@ -14,8 +14,8 @@
 #
 #  USAGE
 #    powershell -ExecutionPolicy Bypass -File .\seren-psycheion-setup.ps1 -Pypi -Service
-#    powershell -ExecutionPolicy Bypass -File .\seren-psycheion-setup.ps1 -Root C:\seren\wren -Instance wren -Pypi `
-#        -SomaConfig C:\seren\wren\apps\soma\seren-soma.yaml -Service
+#    powershell -ExecutionPolicy Bypass -File .\seren-psycheion-setup.ps1 -Root C:\seren\home -Instance home -Pypi `
+#        -SomaConfig C:\seren\home\apps\soma\seren-soma.yaml -Service
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -171,7 +171,7 @@ if ($SomaConfig) {
   }
   Ok "The body from ${SomaConfig}: robot $(if ($RobotUrl) { $RobotUrl } else { '?' }), voice $(if ($VoiceUrl) { $VoiceUrl } else { '?' })"
 }
-if (-not $RobotUrl) { $RobotUrl = "http://192.168.0.201:8080" }
+if (-not $RobotUrl) { Warn "No robot address (none given, none in a Soma config): /api/soma will say 'no robot set up yet' until soma.robot.url is filled in." }
 if (-not $VoiceUrl) { $VoiceUrl = "http://127.0.0.1:7480" }
 foreach ($f in @($RobotTokenFile, $VoiceTokenFile)) {
   if ($f -and -not ((Test-Path $f) -and (Get-Item $f).Length -gt 0)) { Warn "Token file not there yet: $f (Psycheion reads it when it is)" }
@@ -195,12 +195,13 @@ if (-not $loopbackOnly -and -not $Token) {
   Warn "-PsycheionHost $PsycheionHost with no bearer: SerenPsycheion will REFUSE TO START. Re-run with -GenToken (or -Token)."
 }
 # Psycheion's whole job is a page opened from another machine; a service bound to
-# loopback is reachable from this box and nowhere else (found 7 Nov 2026 on the NUC).
+# loopback is reachable from this box and nowhere else (found 7 Nov 2026 on a node).
 if ($loopbackOnly -and $Service) {
   Warn "LOOPBACK ONLY: bound to $PsycheionHost, so the page is reachable from this box and nowhere else."
   Warn "  To open it from another machine, re-run with: -PsycheionHost 0.0.0.0 -GenToken"
 }
 $tokenLine = if ($Token) { "  bearer_token: `"$Token`"" } else { "  # bearer_token_env: SEREN_PSYCHEION_TOKEN   # needed once host is not loopback" }
+$robotUrlLine = if ($RobotUrl) { "    url: $RobotUrl" } else { '    url: ""               # no robot set up yet: its control API goes here' }
 $robotFileLine = if ($RobotTokenFile) { "    token_file: '$($RobotTokenFile -replace '\\', '/')'" } else { "    # token_file: ~/seren-soma/state/control_token" }
 $voiceFileLine = if ($VoiceTokenFile) { "    token_file: '$($VoiceTokenFile -replace '\\', '/')'" } else { "    # token_file: ~/seren-soma/state/token" }
 @"
@@ -216,7 +217,7 @@ $tokenLine
 # browser never sees these; Psycheion makes the calls itself.
 soma:
   robot:                   # the robot's control API (firmware)
-    url: $RobotUrl
+$robotUrlLine
 $robotFileLine
   voice:                   # the body's voice server (Soma)
     url: $VoiceUrl
@@ -254,7 +255,7 @@ if (-not $Service) {
 Write-Host "  Viewer:          http://${connectHost}:$Port/viewer" -ForegroundColor Blue
 Write-Host "  Health:          http://${connectHost}:$Port/health" -ForegroundColor Blue
 if ($loopbackOnly) { Write-Host "  Loopback only: not reachable from other machines. Re-run with -PsycheionHost 0.0.0.0 -GenToken to open it up." -ForegroundColor Yellow }
-Write-Host "  The body:        robot $RobotUrl, voice $VoiceUrl" -ForegroundColor Blue
+Write-Host "  The body:        robot $(if ($RobotUrl) { $RobotUrl } else { '(none yet)' }), voice $VoiceUrl" -ForegroundColor Blue
 if ($Token) { Write-Host "  Bearer token:    $Token" -ForegroundColor Yellow }
 Write-Host ""
 Write-Host "  Watch what it senses, set how it behaves. Faces come when Face Studio moves in." -ForegroundColor Yellow

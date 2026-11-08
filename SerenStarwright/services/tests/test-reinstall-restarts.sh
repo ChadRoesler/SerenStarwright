@@ -4,7 +4,7 @@
 #
 #  `systemctl enable --now` only starts a unit that is stopped: a running one
 #  keeps its old process, serving the old code with the old config. Found
-#  7 Nov 2026 on the NUC, where seren-soma-wren kept its hours-old process
+#  7 Nov 2026 on a node, where a soma unit kept its hours-old process
 #  through a card install of 1.0.0 and ignored the bearer the card had just
 #  written. Every card upgrade of every service went through this line.
 #

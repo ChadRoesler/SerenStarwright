@@ -8,7 +8,7 @@
 #      says where it lives in the config, every flag the TUI needs is there
 #    - its twin, seren-soma-setup.ps1, describes the same card (when a
 #      PowerShell is on this box)
-#    - setup-soma-service.sh under a root: unit seren-soma-wren running
+#    - setup-soma-service.sh under a root: unit seren-soma-home running
 #      seren_soma with its config, an env file for the bearer, PYTHONUTF8,
 #      and the manifest in <root>/manifests
 #  Nothing real is installed: sudo is a stub that keeps the unit text.
@@ -79,17 +79,22 @@ cat > "$T/bin/sudo" <<SH
 exit 0
 SH
 chmod +x "$T/bin/sudo"
-H="$T/home"; R="$H/seren/wren"
+H="$T/home"; R="$H/seren/home"
 mkdir -p "$R/apps/soma" "$R/venvs/soma/bin"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$R/venvs/soma/bin/python"; chmod +x "$R/venvs/soma/bin/python"
 : > "$R/apps/soma/seren-soma.yaml"
+
+# -- no robot address: the card refuses before anything is installed --------
+blank="$(bash "$CARD" --root "$T/blank" --pypi 2>&1 || true)"
+check "no --robot-url: the card refuses and says what it needs" "grep -q -- '--robot-url is required' <<<\"\$blank\""
+check "and installed nothing" "[[ ! -e '$T/blank' ]]"
 : > "$R/apps/soma/seren-soma.env"     # the installer writes it when a bearer was given; the core wires it only when it exists
-out="$(HOME="$H" PATH="$T/bin:$PATH" bash "$WRAP" --app-dir "$R/apps/soma" --venv "$R/venvs/soma" --instance -wren 2>&1)"
+out="$(HOME="$H" PATH="$T/bin:$PATH" bash "$WRAP" --app-dir "$R/apps/soma" --venv "$R/venvs/soma" --instance -home 2>&1)"
 check "it runs seren_soma with its config" "grep -q 'seren_soma --config' \"$T/unit\""
 check "the bearer rides in an env file, not the unit" "grep -q '^EnvironmentFile=.*seren-soma.env' \"$T/unit\" && ! grep -q 'BEARER' \"$T/unit\""
 check "PYTHONUTF8 for the log" "grep -q 'PYTHONUTF8=1' \"$T/unit\""
 check "no KillMode line (the body has no detached children)" "! grep -q 'KillMode' \"$T/unit\""
-check "manifest in the root's roster: seren-soma-wren.json" "[[ -f \"$R/manifests/seren-soma-wren.json\" ]]"
+check "manifest in the root's roster: seren-soma-home.json" "[[ -f \"$R/manifests/seren-soma-home.json\" ]]"
 
 echo
 echo "$PASS passed, $FAILS failed"
