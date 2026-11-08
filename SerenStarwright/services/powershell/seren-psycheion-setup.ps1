@@ -190,8 +190,15 @@ if (Test-Path $CfgPath) {
   Copy-Item $CfgPath $bak; (Get-Item $bak).LastWriteTime = Get-Date
   Warn "Existing config backed up to $(Split-Path $bak -Leaf)"
 }
-if ($PsycheionHost -notmatch '^(127\.|localhost$|::1$)' -and -not $Token) {
+$loopbackOnly = ($PsycheionHost -match '^(127\.|localhost$|::1$)')
+if (-not $loopbackOnly -and -not $Token) {
   Warn "-PsycheionHost $PsycheionHost with no bearer: SerenPsycheion will REFUSE TO START. Re-run with -GenToken (or -Token)."
+}
+# Psycheion's whole job is a page opened from another machine; a service bound to
+# loopback is reachable from this box and nowhere else (found 7 Nov 2026 on the NUC).
+if ($loopbackOnly -and $Service) {
+  Warn "LOOPBACK ONLY: bound to $PsycheionHost, so the page is reachable from this box and nowhere else."
+  Warn "  To open it from another machine, re-run with: -PsycheionHost 0.0.0.0 -GenToken"
 }
 $tokenLine = if ($Token) { "  bearer_token: `"$Token`"" } else { "  # bearer_token_env: SEREN_PSYCHEION_TOKEN   # needed once host is not loopback" }
 $robotFileLine = if ($RobotTokenFile) { "    token_file: '$($RobotTokenFile -replace '\\', '/')'" } else { "    # token_file: ~/seren-soma/state/control_token" }
@@ -225,7 +232,8 @@ updates:
 "@ | Add-SerenTextFile -Path $CfgPath
     Ok "Update checking disabled in config"
 }
-if ($Token) { Protect-SerenConfig -Path $CfgPath -ServiceUser $ServiceUser }
+# 600 whenever the file carries a bearer OR a token pointer (the family rule, pointer or not).
+if ($Token -or $RobotTokenFile -or $VoiceTokenFile) { Protect-SerenConfig -Path $CfgPath -ServiceUser $ServiceUser }
 Ok "Config written"
 
 # -- 6b. launcher -----------------------------------------------------------
@@ -245,6 +253,7 @@ if (-not $Service) {
 }
 Write-Host "  Viewer:          http://${connectHost}:$Port/viewer" -ForegroundColor Blue
 Write-Host "  Health:          http://${connectHost}:$Port/health" -ForegroundColor Blue
+if ($loopbackOnly) { Write-Host "  Loopback only: not reachable from other machines. Re-run with -PsycheionHost 0.0.0.0 -GenToken to open it up." -ForegroundColor Yellow }
 Write-Host "  The body:        robot $RobotUrl, voice $VoiceUrl" -ForegroundColor Blue
 if ($Token) { Write-Host "  Bearer token:    $Token" -ForegroundColor Yellow }
 Write-Host ""

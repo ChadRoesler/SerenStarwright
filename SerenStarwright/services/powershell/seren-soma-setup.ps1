@@ -256,7 +256,8 @@ updates:
 "@ | Add-SerenTextFile -Path $CfgPath
     Ok "Update checking disabled in config"
 }
-if ($Token -or $lodeTokenLines) { Protect-SerenConfig -Path $CfgPath -ServiceUser $ServiceUser }
+# The file always carries robot.token_file, a pointer, and often a bearer: protected, the family rule.
+Protect-SerenConfig -Path $CfgPath -ServiceUser $ServiceUser
 Ok "Config written"
 
 # -- 6b. launcher -----------------------------------------------------------

@@ -342,8 +342,8 @@ $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
 updates:
   enabled: false
 YAML
-# Bearers live in this file whenever one was written inline.
-[[ -n "$TOKEN" || -n "$LODE_TOKEN_LINES" ]] && chmod 600 "$CFG_PATH"
+# The file always carries robot.token_file, a pointer, and often a bearer: 600, the family rule.
+chmod 600 "$CFG_PATH"
 ok "Config written"
 
 # -- 6b. launcher -----------------------------------------------------------

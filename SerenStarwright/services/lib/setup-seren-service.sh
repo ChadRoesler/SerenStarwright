@@ -295,8 +295,19 @@ $( [[ "$MEMORY_MAX" != "none" && "$MEMORY_MAX" != "0" ]] && echo "MemoryMax=$MEM
 WantedBy=multi-user.target
 UNITEOF
   sudo systemctl daemon-reload
-  sudo systemctl enable --now "$SERVICE_NAME"
-  ok "Service installed and started"
+  # `enable --now` only STARTS a unit that is stopped; a running one keeps its
+  # old process, serving the old code with the old config (found 7 Nov 2026:
+  # seren-soma-wren kept its hours-old process through a card install of 1.0.0
+  # and ignored the bearer the card had just written). A reinstall over a
+  # running service restarts it onto what was just installed, and says so.
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    sudo systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    sudo systemctl restart "$SERVICE_NAME"
+    ok "Service installed; it was already running, so it was RESTARTED onto the new code and config"
+  else
+    sudo systemctl enable --now "$SERVICE_NAME"
+    ok "Service installed and started"
+  fi
   LOG_HINT="journalctl -u $SERVICE_NAME -f"
 fi
 
