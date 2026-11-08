@@ -1,4 +1,4 @@
-<#
+﻿<#
 ══════════════════════════════════════════════════════════════════════════
   setup-psycheion-service.ps1  -  SerenPsycheion pointed wrapper (Windows/NSSM)
 

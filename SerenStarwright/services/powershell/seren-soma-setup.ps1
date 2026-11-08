@@ -1,4 +1,4 @@
-<#
+﻿<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-soma-setup.ps1  -  one-shot SerenSoma installer (Windows)
 #

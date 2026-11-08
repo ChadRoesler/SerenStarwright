@@ -1,4 +1,4 @@
-<#
+﻿<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-psycheion-setup.ps1  -  one-shot SerenPsycheion installer (Windows)
 #

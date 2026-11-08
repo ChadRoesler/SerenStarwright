@@ -1,4 +1,4 @@
-<#
+﻿<#
 ══════════════════════════════════════════════════════════════════════════
   setup-soma-service.ps1  -  SerenSoma pointed wrapper (Windows/NSSM)
 
