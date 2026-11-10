@@ -122,6 +122,9 @@ jobs:
       - name: the psycheion card describes the mind's workshop (loopback, port 7429, recommends soma, its unit)
         run: bash SerenStarwright/services/tests/test-psycheion-card.sh
 
+      - name: the kitchen card describes the kitchen (loopback, port 7431, fonts as paths, the GitHub token as an env var's name, its unit)
+        run: bash SerenStarwright/services/tests/test-kitchen-card.sh
+
       - name: a card run over a running service restarts it (enable --now only starts a stopped unit)
         run: bash SerenStarwright/services/tests/test-reinstall-restarts.sh
 
