@@ -34,12 +34,15 @@ check "loopback by default" "[[ \$(field 'd[\"default_host\"]') == '\"127.0.0.1\
 check "accent #e0514b" "[[ \$(field 'd[\"accent\"]') == '\"#e0514b\"' ]]"
 check "requires and recommends nothing" \
   "[[ \$(field 'd[\"recommends\"]') == '[]' && \$(field 'd[\"requires\"]') == '[]' ]]"
-check "no secrets: the GitHub token is the NAME of an env var" "[[ \$(field 'd[\"secrets\"]') == '{}' ]]"
-check "it says where each flag lives in its config" \
-  "[[ \$(field 'd[\"config_keys\"][\"font-hand\"]') == '\"fonts.hand\"' && \$(field 'd[\"config_keys\"][\"github-token-env\"]') == '\"github.token_env\"' && \$(field 'd[\"config_keys\"][\"sour-days\"]') == '\"sour_after_days\"' ]]"
+check "no secrets: the GitHub token is pasted into the page, never a card flag" "[[ \$(field 'd[\"secrets\"]') == '{}' ]]"
+check "the only config key is the state folder; fonts, token, fridges and names are set from the page" \
+  "[[ \$(field 'd[\"config_keys\"]') == '{\"state-dir\": \"state_dir\"}' ]]"
 check "no pip extras" "[[ \$(field 'd[\"extras\"]') == '[]' ]]"
-for f in host port token state-dir font-name font-freezer font-hand github-token-env github-interval sour-days local wheel ref repo instance root venv no-updates; do
+for f in host port token state-dir local wheel ref repo instance root venv no-updates; do
   check "flag --$f is advertised" "[[ \$(field '\"$f\" in d[\"flags\"]') == true ]]"
+done
+for f in font-hand github-token-env sour-days; do
+  check "flag --$f is NOT a card flag any more (it is a page setting)" "[[ \$(field '\"$f\" in d[\"flags\"]') == false ]]"
 done
 
 echo "== the package says the same"

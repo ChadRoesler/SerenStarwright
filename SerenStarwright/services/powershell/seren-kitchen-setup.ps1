@@ -3,21 +3,19 @@
 #  seren-kitchen-setup.ps1  -  one-shot SerenKitchen installer (Windows)
 #
 #  Dot-sources seren-install-lib.ps1 (shared installer library). The identity
-#  lines, the state folder, the fonts and the freezer's GitHub settings are
-#  the unique parts. Twin of seren-kitchen-setup.sh.
+#  lines and the state folder are the unique parts: everything a house decides
+#  after moving in (fonts, the GitHub token, which fridges, whose names) is set
+#  from the kitchen's own page and kept in its state folder, never here. Twin
+#  of seren-kitchen-setup.sh.
 #
 #  The kitchen is the shared board of a house: a fridge per app in its own
 #  colour, magnets for whoever holds a repo, and the sheets we leave each
-#  other. Fonts are PATHS on this box, never shipped. Loopback by default; a
-#  wider bind needs a bearer or the kitchen refuses to start.
+#  other. Loopback by default; a wider bind needs a bearer or the kitchen
+#  refuses to start.
 #
 #  USAGE
-#    powershell -ExecutionPolicy Bypass -File .\seren-kitchen-setup.ps1 -Service
-#    powershell -ExecutionPolicy Bypass -File .\seren-kitchen-setup.ps1 -Root C:\seren\home -Instance home -Service `
-#        -FontHand C:\seren\home\fonts\MyHand.ttf -GithubTokenEnv SEREN_KITCHEN_GITHUB_TOKEN
-#
-#  The kitchen's repo is private, so -Pypi and -Ref need access; the default
-#  builds from a SerenKitchen checkout beside this repo.
+#    powershell -ExecutionPolicy Bypass -File .\seren-kitchen-setup.ps1 -Pypi -Service
+#    powershell -ExecutionPolicy Bypass -File .\seren-kitchen-setup.ps1 -Root C:\seren\home -Instance home -Pypi -KitchenHost 0.0.0.0 -GenToken -Service
 # ══════════════════════════════════════════════════════════════════════════
 #>
 [CmdletBinding()]
@@ -27,12 +25,6 @@ param(
   [string] $Token           = "",
   [switch] $GenToken,
   [string] $StateDir        = "",
-  [string] $FontName        = "",
-  [string] $FontFreezer     = "",
-  [string] $FontHand        = "",
-  [string] $GithubTokenEnv  = "",
-  [int]    $GithubInterval  = 60,
-  [int]    $SourDays        = 7,
   [string] $RepoDir         = "",
   [string] $Wheel           = "",
   [string] $Local           = "",
@@ -81,8 +73,7 @@ if ($Describe) {
         Accent      = '#e0514b'
         DefaultHost = $KitchenHost
         DefaultPort = $Port
-        ConfigKeys  = @{ 'state-dir' = 'state_dir'; 'font-name' = 'fonts.name'; 'font-freezer' = 'fonts.freezer'; 'font-hand' = 'fonts.hand';
-                         'github-token-env' = 'github.token_env'; 'github-interval' = 'github.interval_minutes'; 'sour-days' = 'sour_after_days' }
+        ConfigKeys  = @{ 'state-dir' = 'state_dir' }
     }
     Get-SerenDescribe @describeArgs
     exit 0
@@ -151,16 +142,10 @@ if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue 
 # -- 4. sanity check (import + the page) ------------------------------------
 Sanity-Check -Vpy $vpy -Module "seren_kitchen" -AssetRelPath "viewer\ui" -AssetLabel "the page"
 
-# -- 5. the state folder and the fonts ----------------------------------------
+# -- 5. the state folder -------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
-Ok "Sheets, magnets and pictures live in $StateDir"
-foreach ($pair in @(@("name", $FontName), @("freezer", $FontFreezer), @("hand", $FontHand))) {
-  if ($pair[1] -and -not (Test-Path $pair[1])) { Warn "Font for the $($pair[0]) is not there: $($pair[1]) (the page falls back to system fonts until it is)" }
-}
-if (-not ($FontName -or $FontFreezer -or $FontHand)) { Ok "No fonts given: system fonts on the page (fonts are each house's own; set them in $CfgPath)" }
-if ($GithubTokenEnv -and -not [Environment]::GetEnvironmentVariable($GithubTokenEnv)) {
-  Warn "`$env:$GithubTokenEnv is not set in this shell; the freezer reads it from the service's environment at runtime"
-}
+Ok "Sheets, magnets, pictures, fonts and settings live in $StateDir"
+Ok "Fonts, the GitHub token, the fridges and whose house it is are set from the page ('The house' tab) once it runs"
 
 # -- 6. config --------------------------------------------------------------
 Step "Writing config at $CfgPath"
@@ -184,10 +169,6 @@ if ($loopbackOnly -and $Service) {
 }
 $tokenLine = if ($Token) { "  bearer_token: `"$Token`"" } else { "  # bearer_token_env: SEREN_KITCHEN_TOKEN   # needed once host is not loopback" }
 $stateYaml = $StateDir -replace '\\', '/'
-$fontName    = if ($FontName)    { "  name: '$($FontName -replace '\\', '/')'" }       else { "  # name: C:/fonts/SomeDisplayFace.ttf" }
-$fontFreezer = if ($FontFreezer) { "  freezer: '$($FontFreezer -replace '\\', '/')'" } else { "  # freezer: C:/fonts/SomeMagnetLetters.ttf" }
-$fontHand    = if ($FontHand)    { "  hand: '$($FontHand -replace '\\', '/')'" }       else { "  # hand: C:/fonts/MyHand.ttf" }
-$ghLine = if ($GithubTokenEnv) { "  token_env: $GithubTokenEnv" } else { "  # token_env: SEREN_KITCHEN_GITHUB_TOKEN   # the NAME of an env var; lifts 60 calls an hour to 5000" }
 @"
 # SerenKitchen config - generated by seren-kitchen-setup.ps1
 # Full reference: see seren-kitchen.yaml.sample in the repo.
@@ -196,24 +177,10 @@ server:
   port: $Port
 $tokenLine
 
-# Sheets, magnets, freezer facts (one JSON file) and the pictures beside it.
+# Sheets, magnets, freezer facts (one JSON file), the pictures, the fonts and
+# settings.json beside it. Fonts, the GitHub token, the fridges and whose house
+# it is are set from the page (The house) and kept there, not in this file.
 state_dir: '$stateYaml'
-
-# Fonts are PATHS on this box, never shipped: the display faces on the freezer
-# are whatever this house holds a licence for, the hand is whoever lives here.
-fonts:
-$fontName
-$fontFreezer
-$fontHand
-
-# The freezer: latest release and build read from GitHub for every fridge with a repo.
-github:
-  enabled: true
-  interval_minutes: $GithubInterval
-$ghLine
-
-# A choice nobody has picked in this many days goes off like milk.
-sour_after_days: $SourDays
 "@ | Write-SerenTextFile -Path $CfgPath
 if ($NoUpdates) {
     @"

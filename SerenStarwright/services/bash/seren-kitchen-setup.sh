@@ -3,38 +3,27 @@
 #  seren-kitchen-setup.sh  -  one-shot SerenKitchen installer (Linux + macOS)
 #
 #  Sources seren-install-lib.sh (shared installer library). The identity
-#  lines, the state folder, the fonts and the freezer's GitHub settings are
-#  the unique parts.
+#  lines and the state folder are the unique parts: everything a house decides
+#  after moving in (fonts, the GitHub token, which fridges, whose names) is set
+#  from the kitchen's own page and kept in its state folder, never here.
 #
 #  The kitchen is the shared board of a house where a person and one or more
 #  Wrens work on the same stack: a fridge per app in its own colour, magnets
 #  for whoever holds a repo, and the sheets we leave each other. Its state is
-#  one JSON file plus the pictures beside it. Fonts are PATHS on this box,
-#  never shipped. Loopback by default; a wider bind needs a bearer or the
-#  kitchen refuses to start.
+#  one JSON file plus the pictures and fonts beside it. Loopback by default; a
+#  wider bind needs a bearer or the kitchen refuses to start.
 #
 #  USAGE
-#    bash seren-kitchen-setup.sh --service
-#    bash seren-kitchen-setup.sh --root ~/seren/home --instance home --service \
-#         --font-hand ~/seren/home/fonts/MyHand.ttf --github-token-env SEREN_KITCHEN_GITHUB_TOKEN
-#
-#  The kitchen's repo is private, so --pypi and --ref need access; the default
-#  builds from a SerenKitchen checkout beside this repo.
+#    bash seren-kitchen-setup.sh --pypi --service
+#    bash seren-kitchen-setup.sh --root ~/seren/home --instance home --pypi --host 0.0.0.0 --gen-token --service
 #
 #  FLAGS
 #    --port N               Port to listen on            (default 7431)
 #    --host HOST            Bind address                 (default 127.0.0.1)
 #    --token TOKEN          Set a bearer token (needed when --host is not loopback)
 #    --gen-token            Generate a random bearer token
-#    --state-dir DIR        Sheets, magnets, facts and pictures
+#    --state-dir DIR        Sheets, magnets, facts, pictures, fonts and settings
 #                           (default: the install root's stores/kitchen, else ~/seren-kitchen/state)
-#    --font-name PATH       Font file for the repo names on the freezers      (optional)
-#    --font-freezer PATH    Font file for the release and build on the freezers (optional)
-#    --font-hand PATH       Font file for the handwriting on the notes         (optional)
-#    --github-token-env N   NAME of an env var holding a GitHub token for the freezer
-#                           (lifts GitHub's 60 calls an hour to 5000; never the token itself)
-#    --github-interval MIN  Minutes between the freezer's passes over GitHub (default 60)
-#    --sour-days N          Days before an unpicked choice goes sour (default 7)
 #    --repo-dir PATH        SerenKitchen repo checkout    (default: sibling ../SerenKitchen)
 #    --wheel PATH           Install from a local .whl
 #    --local DIR|URL        Install from a dev wheelhouse (seren-dev-publish.sh)
@@ -83,12 +72,6 @@ HOST="127.0.0.1"
 TOKEN=""
 GEN_TOKEN=false
 STATE_DIR=""
-FONT_NAME=""
-FONT_FREEZER=""
-FONT_HAND=""
-GITHUB_TOKEN_ENV=""
-GITHUB_INTERVAL=60
-SOUR_DAYS=7
 REPO_DIR="$(find_upward "SerenKitchen" || true)"   # sibling checkout (build source)
 WHEEL=""
 LOCAL=""
@@ -117,9 +100,9 @@ SVC_ACCENT="#e0514b"
 SVC_REQUIRES=""
 SVC_RECOMMENDS=""
 SVC_EXTRAS=""
-# The GitHub token travels as the NAME of an env var, never as a value: no secret on this card.
+# The GitHub token is pasted into the kitchen's own page and kept as a 600 file in its state: no secret on this card.
 SVC_SECRETS=""
-SVC_CONFIG_KEYS="state-dir=state_dir font-name=fonts.name font-freezer=fonts.freezer font-hand=fonts.hand github-token-env=github.token_env github-interval=github.interval_minutes sour-days=sour_after_days"
+SVC_CONFIG_KEYS="state-dir=state_dir"
 
 # --describe must answer with ZERO side effects: no venv, no network, no python.
 SEREN_INSTALL_ARGV="$(printf '%s
@@ -135,12 +118,6 @@ while [[ $# -gt 0 ]]; do
     --token)     TOKEN="$2"; shift 2 ;;
     --gen-token) GEN_TOKEN=true; shift ;;
     --state-dir)        STATE_DIR="$2"; shift 2 ;;
-    --font-name)        FONT_NAME="$2"; shift 2 ;;
-    --font-freezer)     FONT_FREEZER="$2"; shift 2 ;;
-    --font-hand)        FONT_HAND="$2"; shift 2 ;;
-    --github-token-env) GITHUB_TOKEN_ENV="$2"; shift 2 ;;
-    --github-interval)  GITHUB_INTERVAL="$2"; shift 2 ;;
-    --sour-days)        SOUR_DAYS="$2"; shift 2 ;;
     --repo-dir)  REPO_DIR="$2"; shift 2 ;;
     --wheel)     WHEEL="$2"; shift 2 ;;
     --local)     LOCAL="$2"; shift 2 ;;
@@ -234,15 +211,10 @@ case "$CHECK" in
   *) die "Install looks broken: $CHECK" ;;
 esac
 
-# -- 5. the state folder and the fonts ----------------------------------------
+# -- 5. the state folder -------------------------------------------------------
 mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
-ok "Sheets, magnets and pictures live in $STATE_DIR"
-for pair in "name:$FONT_NAME" "freezer:$FONT_FREEZER" "hand:$FONT_HAND"; do
-  slot="${pair%%:*}"; f="${pair#*:}"
-  [[ -n "$f" && ! -f "${f/#\~/$HOME}" ]] && warn "Font for the $slot is not there: $f (the page falls back to system fonts until it is)"
-done
-[[ -z "$FONT_NAME$FONT_FREEZER$FONT_HAND" ]] && ok "No fonts given: system fonts on the page (fonts are each house's own; set them in $CFG_PATH)"
-[[ -n "$GITHUB_TOKEN_ENV" && -z "${!GITHUB_TOKEN_ENV:-}" ]] && warn "\$$GITHUB_TOKEN_ENV is not set in this shell; the freezer reads it from the service's environment at runtime"
+ok "Sheets, magnets, pictures, fonts and settings live in $STATE_DIR"
+ok "Fonts, the GitHub token, the fridges and whose house it is are set from the page ('The house' tab) once it runs"
 
 # -- 6. config --------------------------------------------------------------
 step "Writing config at $CFG_PATH"
@@ -269,24 +241,10 @@ server:
   port: ${PORT}
 $( [[ -n "$TOKEN" ]] && printf '  bearer_token: "%s"\n' "$TOKEN" || printf '  # bearer_token_env: SEREN_KITCHEN_TOKEN   # needed once host is not loopback\n' )
 
-# Sheets, magnets, freezer facts (one JSON file) and the pictures beside it.
+# Sheets, magnets, freezer facts (one JSON file), the pictures, the fonts and
+# settings.json beside it. Fonts, the GitHub token, the fridges and whose house
+# it is are set from the page (The house) and kept there, not in this file.
 state_dir: '${STATE_DIR}'
-
-# Fonts are PATHS on this box, never shipped: the display faces on the freezer
-# are whatever this house holds a licence for, the hand is whoever lives here.
-fonts:
-$( [[ -n "$FONT_NAME" ]] && printf "  name: '%s'\n" "$FONT_NAME" || printf '  # name: ~/fonts/SomeDisplayFace.ttf\n' )
-$( [[ -n "$FONT_FREEZER" ]] && printf "  freezer: '%s'\n" "$FONT_FREEZER" || printf '  # freezer: ~/fonts/SomeMagnetLetters.ttf\n' )
-$( [[ -n "$FONT_HAND" ]] && printf "  hand: '%s'\n" "$FONT_HAND" || printf '  # hand: ~/fonts/MyHand.ttf\n' )
-
-# The freezer: latest release and build read from GitHub for every fridge with a repo.
-github:
-  enabled: true
-  interval_minutes: ${GITHUB_INTERVAL}
-$( [[ -n "$GITHUB_TOKEN_ENV" ]] && printf '  token_env: %s\n' "$GITHUB_TOKEN_ENV" || printf '  # token_env: SEREN_KITCHEN_GITHUB_TOKEN   # the NAME of an env var; lifts 60 calls an hour to 5000\n' )
-
-# A choice nobody has picked in this many days goes off like milk.
-sour_after_days: ${SOUR_DAYS}
 YAML
 $UPDATES_OFF && cat >> "$CFG_PATH" <<'YAML'
 
