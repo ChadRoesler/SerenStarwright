@@ -7,9 +7,9 @@
 #  after moving in (fonts, the GitHub token, which fridges, whose names) is set
 #  from the kitchen's own page and kept in its state folder, never here.
 #
-#  The kitchen is the shared board of a house where a person and one or more
-#  Wrens work on the same stack: a fridge per app in its own colour, magnets
-#  for whoever holds a repo, and the sheets we leave each other. Its state is
+#  The kitchen is the shared board of a house where a person and their AI
+#  partner work on the same stack: a fridge per app in its own colour, magnets
+#  for whoever holds a repo, and the sheets they leave each other. Its state is
 #  one JSON file plus the pictures and fonts beside it. Loopback by default; a
 #  wider bind needs a bearer or the kitchen refuses to start.
 #
