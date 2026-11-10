@@ -1,4 +1,4 @@
-﻿<#
+<#
 ══════════════════════════════════════════════════════════════════════════
   seren-lyceum-setup.ps1  -  one-shot SerenLyceum installer (Windows)
 

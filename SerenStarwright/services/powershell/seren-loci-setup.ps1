@@ -1,4 +1,4 @@
-﻿<#
+<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-loci-setup.ps1  -  one-shot SerenLoci installer (Windows)
 #
@@ -42,7 +42,8 @@ param(
   # Starwright's install root (~/seren/<install>): venvs, apps, stores, logs
   # under one folder, absolute paths. Empty = the old layout.
   [string] $Root      = "",
-  [string] $VenvDir   = "",
+  [string] $VenvDir   = ""
+,
   [switch] $Describe,   # print service metadata as JSON and exit (no side effects)
   [switch] $Json        # stream JSON Lines events on stdout; humans go to stderr
 )
