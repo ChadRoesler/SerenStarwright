@@ -1,4 +1,4 @@
-<#
+﻿<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-loci-setup.ps1  -  one-shot SerenLoci installer (Windows)
 #

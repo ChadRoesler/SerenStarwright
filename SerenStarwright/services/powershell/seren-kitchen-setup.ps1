@@ -1,4 +1,4 @@
-<#
+﻿<#
 # ══════════════════════════════════════════════════════════════════════════
 #  seren-kitchen-setup.ps1  -  one-shot SerenKitchen installer (Windows)
 #
