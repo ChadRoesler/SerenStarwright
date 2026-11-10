@@ -47,7 +47,6 @@
 # whole-file churn across nine scripts, blowing up `git blame`, to fix
 # nothing. `* text=auto` handles them well enough. Only pin an ending when
 # the wrong one BREAKS something.
-*.ps1 text working-tree-encoding=UTF-8-BOM
 
 # ── Config / docs ─────────────────────────────────────────────────────────
 # YAML and systemd units are read by Linux tooling; keep them LF too.
