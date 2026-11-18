@@ -201,7 +201,7 @@ if ($mg) {
     $bookmarkArgs = @("--bookmark", $mg.Value)
     if ($mg.Pointer) { $bookmarkArgs += @("--bookmark-token-env", $mg.Pointer) }
 } else {
-    Warn "No Margin (-MarginUrl or -MarginConfig): no bookmark at session start."
+    Warn "No Margin (-MarginUrl or -MarginConfig): sessions start with the piton's dedication and no letter count."
 }
 foreach ($s in $Server) {
     if ($s -notmatch "=") { Die "-Server wants NAME=FILE|URL: $s" }
@@ -223,11 +223,12 @@ if ($serverArgs.Count -gt 0) {
     & $Python $KbhPath $Carabiner register apply --config $CfgPath
     if ($LASTEXITCODE -ne 0) { Warn "register apply did not finish; see above (the harness may not be installed for this account yet)" }
 }
-if ($bookmarkArgs.Count -gt 0) {
-    Step "kbh $Carabiner bookmark install"
-    & $Python $KbhPath $Carabiner bookmark install --config $CfgPath
-    if ($LASTEXITCODE -ne 0) { Warn "bookmark install did not finish; see above" }
-}
+# Always, Margin or not (kbh 5.5+, PITON.md): the dedication lives in the box's piton,
+# which install just made, so the session-start hook is what puts it in front of
+# the model. Margin, when there is one, only adds the letter count to it.
+Step "kbh $Carabiner bookmark install"
+& $Python $KbhPath $Carabiner bookmark install --config $CfgPath
+if ($LASTEXITCODE -ne 0) { Warn "bookmark install did not finish; see above" }
 
 # -- 6. belay -----------------------------------------------------------------------------
 Step "kbh $Carabiner belay"

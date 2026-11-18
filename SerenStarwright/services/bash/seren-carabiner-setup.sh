@@ -292,7 +292,7 @@ if _route "Margin" bookmark "$MARGIN_URL" "$MARGIN_CONFIG" SEREN_MARGIN_TOKEN; t
   BOOKMARK_ARG=(--bookmark "$ROUTE_VALUE")
   [[ -n "$ROUTE_POINTER" ]] && BOOKMARK_ARG+=(--bookmark-token-env "$ROUTE_POINTER")
 else
-  warn "No Margin (--margin-url or --margin-config): no bookmark at session start."
+  warn "No Margin (--margin-url or --margin-config): sessions start with the piton's dedication and no letter count."
 fi
 for s in ${SERVERS[@]+"${SERVERS[@]}"}; do
   [[ "$s" == *=* ]] || die "--server wants NAME=FILE|URL: $s"
@@ -313,10 +313,11 @@ if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then
   step "kbh $CARABINER register apply"
   "$PYTHON" "$KBH_PATH" "$CARABINER" register apply --config "$CFG_PATH" || warn "register apply did not finish; see above (the harness may not be installed for this account yet)"
 fi
-if [[ ${#BOOKMARK_ARG[@]} -gt 0 ]]; then
-  step "kbh $CARABINER bookmark install"
-  "$PYTHON" "$KBH_PATH" "$CARABINER" bookmark install --config "$CFG_PATH" || warn "bookmark install did not finish; see above"
-fi
+# Always, Margin or not (kbh 5.5+, PITON.md): the dedication lives in the box's piton,
+# which install just made, so the session-start hook is what puts it in front of
+# the model. Margin, when there is one, only adds the letter count to it.
+step "kbh $CARABINER bookmark install"
+"$PYTHON" "$KBH_PATH" "$CARABINER" bookmark install --config "$CFG_PATH" || warn "bookmark install did not finish; see above"
 
 # -- 6. belay ----------------------------------------------------------------------------
 step "kbh $CARABINER belay"
