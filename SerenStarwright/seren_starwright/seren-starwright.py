@@ -2037,18 +2037,22 @@ def build_command(svc: ServiceDef, cfg: dict, universal: dict) -> list[str]:
 # This one is 38 columns. It fits the 80-column headless terminal this whole
 # tool exists to be used from, so there is nothing left to switch between and
 # no threshold left to drift.
-BANNER = r"""
- ╭====╮  ╓─────┐ ╥──┐ ╥──┐ ╥──┐ ╓──┐
- ╱╮..╭╲  ║       ╟─   ╟─┬┘ ╟─   ║  │
- │(ᶓᶔ)│  ╙─────┐ ╨──┘ ╨ ┴  ╨──┘ ╨  ┴
-╭│─ᴽᴽ─│╮       │                    
-╰──────╯ ╙─────┘ S T A R W R I G H T
-"""
+METAL = "#2AACE2"
+SHELL = "#997257"
+FLAME = "#F26622"
+GLASS = "#FFFFFF"
+SHELL = "#997257"
 
+BANNER = (
+    f"[{SHELL}] ╭[/][{METAL}]====[/][{SHELL}]╮  ╓─────┐ ╥──┐ ╥──┐ ╥──┐ ╓──┐[/]\n"
+    f"[{METAL}] ╱╮..╭╲  [/][{SHELL}]║       ╟─   ╟─┬┘ ╟─   ║  │[/]\n"
+    f"[{SHELL}] │[/][{GLASS}]([/][{FLAME}]ᶓᶔ[/][{GLASS}])[/][{SHELL}]│  ╙─────┐ ╨──┘ ╨ ┴  ╨──┘ ╨  ┴[/]\n"
+    f"[{METAL}]╭[/][{SHELL}]│[/][{METAL}]─[/][{FLAME}]ᴽᴽ[/][{METAL}]─[/][{SHELL}]│[/][{METAL}]╮ [/][{SHELL}]      │                    [/]\n"
+    f"[{METAL}]╰──────╯ [/][{SHELL}]╙─────┘ S T A R W R I G H T[/]"
+)
 
 class SplashScreen(Screen):
     """Mode selector. Node work and Install Services share almost no config
-    surface, so they get separate doors rather than one overloaded grid.
 
     NODE WORK IS TWO DOORS, NOT ONE. There used to be a single "Prepare Node",
     and one door meant one screen that had to offer everything - foundation prep,
@@ -4099,7 +4103,11 @@ class StarwrightApp(App):
        exists for. 100% with a max keeps the art roomy on a wide terminal and
        usable on a narrow one. */
     #splash { width: 100%; max-width: 92; align: center middle; padding: 1 2; }
-    #banner { color: #997256; text-align: center; }
+    #banner { color: #997257; text-align: center; }
+    #metal { color: #2AACE2 }
+    #flame { color: #F26622; }
+    #glass { color: #FFFFFF; }
+    #shell { color: #997257 }
     #tagline { color: #6c7086; text-align: center; padding-bottom: 1; }
     /* Bottom margin only. A symmetric vertical margin collapses to nothing
        between siblings in some layouts and to double elsewhere; one side is

@@ -536,7 +536,10 @@ def _node(provisioned: bool, script, components, **kw):
 
 def _fixture():
     node0, _ = sw.discover_node(platform_override="nano")
-    script = node0.script if node0 else Path("nodes/seren-prepare-node.sh")
+    # Off a node (Windows, say) discovery finds nothing; fall back to the
+    # dispatcher beside this file, not one relative to wherever we were run
+    # from, or seren-wipe.sh is never found and Modify draws no wipe button.
+    script = node0.script if node0 else HERE / "nodes" / "seren-prepare-node.sh"
     comps = [sw.NodeComponent(name="llama", display="llama.cpp", description="x"),
              sw.NodeComponent(name="kokoro", display="Kokoro", description="y")]
     services, problems = sw.discover()
