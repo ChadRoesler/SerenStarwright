@@ -46,6 +46,7 @@ param(
   [switch] $Service,
   [string] $ServiceUser = "",
   [switch] $NoUpdates,
+  [switch] $NoUsb,      # skip the [usb] extra: no setting up a new robot by plugging it in
   [string] $Instance    = "",
   [string] $Root        = "",
   [string] $VenvDir     = "",
@@ -86,6 +87,7 @@ if ($Describe) {
         DefaultHost = $SomaHost
         DefaultPort = $Port
         Recommends  = @('seren-lodestar')
+        Extras      = @('usb')
         Secrets     = @{ 'robot-token' = 'SEREN_SOMA_ROBOT_TOKEN'; 'lodestar-token' = 'SEREN_LODESTAR_TOKEN' }
         ConfigKeys  = @{ 'robot-url' = 'robot.url'; 'robot-token' = 'robot.token_file'; 'device-from' = 'robot.device_from'; 'advertise' = 'advertise';
                          'voice' = 'voice'; 'state-dir' = 'state_dir'; 'lodestar-url' = 'lodestar.url';
@@ -157,7 +159,7 @@ if ($Wheel) {
 
 # -- 3. venv + install ---------------------------------------------------------
 $vpy = Create-Venv -VenvDir $VenvDir -PyExe $pyExe -PyArgs $pyArgs
-Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras "" -Label ""
+Install-Package -Vpy $vpy -WheelSrc $wheelSrc -Extras $(if ($NoUsb) { "" } else { "[usb]" }) -Label ""
 if ($cleanupWheel) { Remove-Item -Force $wheelSrc -ErrorAction SilentlyContinue }
 
 # -- 4. sanity check (import + the viewer's page) ----------------------------

@@ -50,6 +50,8 @@
 #    --root DIR             Install root: venvs, apps, stores, logs in one folder
 #    --venv PATH            Override venv location
 #    --no-updates           Turn update checking OFF in the generated config
+#    --no-usb               Skip setting up new robots over USB: no [usb] extra (esptool, pyserial,
+#                           the NVS generator) and, on Linux, no udev rule for Espressif's USB id
 #    -h, --help             This help
 # ==========================================================================
 set -euo pipefail
@@ -105,6 +107,7 @@ REPO=""
 INSTALL_SERVICE=false
 SERVICE_USER=""
 UPDATES_OFF=false
+USB=true
 INSTANCE=""
 ROOT=""
 VENV_DIR="$HOME/seren-venvs/soma"
@@ -124,7 +127,8 @@ SVC_ACCENT="#8fbf88"
 # touch and keeps night, so it is recommended, not required.
 SVC_REQUIRES=""
 SVC_RECOMMENDS="seren-lodestar"
-SVC_EXTRAS=""
+# usb: setting up a new robot by plugging it in (seren_soma/usb.py). On by default; --no-usb drops it.
+SVC_EXTRAS="usb"
 SVC_SECRETS="robot-token=SEREN_SOMA_ROBOT_TOKEN lodestar-token=SEREN_LODESTAR_TOKEN"
 SVC_CONFIG_KEYS="robot-url=robot.url robot-token=robot.token_file device-from=robot.device_from advertise=advertise voice=voice state-dir=state_dir lodestar-url=lodestar.url lodestar-token=lodestar.token symposium-yaml=lodestar.symposium_yaml"
 
@@ -159,6 +163,7 @@ while [[ $# -gt 0 ]]; do
     --repo)      REPO="$2"; shift 2 ;;
     --service)   INSTALL_SERVICE=true; shift ;;
     --no-updates) UPDATES_OFF=true; shift ;;
+    --no-usb)    USB=false; shift ;;
     --service-user) SERVICE_USER="$2"; shift 2 ;;
     --instance)  INSTANCE="$2"; shift 2 ;;
     --root)      ROOT="$2"; shift 2 ;;
@@ -231,7 +236,7 @@ fi
 # -- 3. venv + install ------------------------------------------------------
 create_venv "$VENV_DIR"
 VPY="$VENV_DIR/bin/python"
-pip_install "$VPY" "$WHEEL_SRC" "" "" ""
+pip_install "$VPY" "$WHEEL_SRC" "$($USB && echo '[usb]')" "" ""
 $CLEANUP_WHEEL && rm -f "$WHEEL_SRC"
 
 # -- 4. sanity check (import + the viewer's page) -----------------------------
@@ -353,6 +358,31 @@ ok "Config written"
 
 # -- 6b. launcher -----------------------------------------------------------
 write_launcher "$APP_DIR" "seren-soma" "$VPY" "seren_soma" "$CFG_PATH"
+
+# -- 6c. a new robot over USB (Linux: the udev rule) ----------------------------
+# A plugged-in CoreS3 is /dev/ttyACM*, root:dialout 0660 by default, so the user Soma runs as couldn't
+# open it to set a new robot up. One rule for Espressif's USB id (303a), every ESP32-S3, hands those
+# ports to that user's group, and to whoever sits at the desk (uaccess), and to nothing else: no
+# 'dialout' membership, which would give every serial port on the box. macOS and Windows need nothing.
+if $USB && ! $IS_MAC; then
+  USB_USER="${SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
+  USB_GROUP="$(id -gn "$USB_USER" 2>/dev/null || true)"
+  RULE=/etc/udev/rules.d/60-seren-soma-stackchan.rules
+  if [[ -z "$USB_GROUP" ]]; then
+    warn "Couldn't find $USB_USER's group, so no USB rule: plugging in a new robot will need sudo usermod -aG dialout $USB_USER"
+  elif ! command -v udevadm >/dev/null 2>&1; then
+    warn "No udevadm on this box, so no USB rule: plugging in a new robot will need sudo usermod -aG dialout $USB_USER"
+  else
+    step "Letting Soma open a new robot's USB port (udev, needs sudo)"
+    sudo tee "$RULE" >/dev/null <<RULEEOF
+# seren-soma: an Espressif chip on USB (a StackChan's CoreS3 is one) belongs to the group Soma runs in,
+# so Soma can set a new robot up by plugging it in. Written by seren-soma-setup.sh; --no-usb skips it.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", MODE="0660", GROUP="${USB_GROUP}", TAG+="uaccess"
+RULEEOF
+    sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=tty || true
+    ok "USB rule written: $RULE (group $USB_GROUP)"
+  fi
+fi
 
 # -- 7. optional autostart ----------------------------------------------------
 $INSTALL_SERVICE && setup_autostart "$SCRIPT_DIR" "seren-soma" "$APP_DIR" "$TOKEN" "$SVC_SUFFIX" "$VENV_DIR" "$SERVICE_USER"

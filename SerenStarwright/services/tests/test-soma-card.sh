@@ -41,10 +41,12 @@ check "the robot's token and Lodestar's bearer ride in the environment" \
 check "it says where each flag lives in its config" \
   "[[ \$(field 'd[\"config_keys\"][\"robot-url\"]') == '\"robot.url\"' && \$(field 'd[\"config_keys\"][\"robot-token\"]') == '\"robot.token_file\"' && \$(field 'd[\"config_keys\"][\"voice\"]') == '\"voice\"' ]]"
 check "device-from lives at robot.device_from" "[[ \$(field 'd[\"config_keys\"][\"device-from\"]') == '\"robot.device_from\"' ]]"
-check "no pip extras" "[[ \$(field 'd[\"extras\"]') == '[]' ]]"
-check "gen-token, pypi, service and no-updates are switches" \
-  "[[ \$(field '\"gen-token\" in d[\"switches\"] and \"pypi\" in d[\"switches\"] and \"service\" in d[\"switches\"] and \"no-updates\" in d[\"switches\"]') == true ]]"
-for f in host port token robot-url robot-token device-from advertise voice lodestar-url lodestar-token lodestar-config symposium-yaml state-dir local wheel ref repo instance root venv no-updates; do
+check "one pip extra, usb: setting a new robot up by plugging it in" "[[ \$(field 'd[\"extras\"]') == '[\"usb\"]' ]]"
+check "gen-token, pypi, service, no-updates and no-usb are switches" \
+  "[[ \$(field '\"gen-token\" in d[\"switches\"] and \"pypi\" in d[\"switches\"] and \"service\" in d[\"switches\"] and \"no-updates\" in d[\"switches\"] and \"no-usb\" in d[\"switches\"]') == true ]]"
+check "the Linux card writes the udev rule for Espressif's USB id, and --no-usb skips it" \
+  "grep -q 'ATTRS{idVendor}==\"303a\"' \"$CARD\" && grep -q 'if \$USB && ! \$IS_MAC' \"$CARD\""
+for f in host port token robot-url robot-token device-from advertise voice lodestar-url lodestar-token lodestar-config symposium-yaml state-dir local wheel ref repo instance root venv no-updates no-usb; do
   check "flag --$f is advertised" "[[ \$(field '\"$f\" in d[\"flags\"]') == true ]]"
 done
 
